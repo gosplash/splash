@@ -79,5 +79,53 @@ func TestEmitTypeName(t *testing.T) {
 	}
 }
 
-// Silence "strings imported and not used" — used by later tasks' tests in this file.
-var _ = strings.Contains
+func TestEmitTypeDecl(t *testing.T) {
+	src := `
+module user
+type User {
+    name: String
+    age: Int
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "type User struct") {
+		t.Errorf("expected 'type User struct', got:\n%s", out)
+	}
+	if !strings.Contains(out, "name string") {
+		t.Errorf("expected field 'name string', got:\n%s", out)
+	}
+}
+
+func TestEmitEnumDecl(t *testing.T) {
+	src := `
+module result
+enum Status {
+    Pending
+    Done
+    Failed
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "type Status interface") {
+		t.Errorf("expected 'type Status interface', got:\n%s", out)
+	}
+	if !strings.Contains(out, "StatusPending") {
+		t.Errorf("expected variant type StatusPending, got:\n%s", out)
+	}
+}
+
+func TestEmitFunctionDecl(t *testing.T) {
+	src := `
+module greet
+fn greet(name: String) -> String {
+    return name
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "func greet(name string) string") {
+		t.Errorf("expected function signature, got:\n%s", out)
+	}
+}

@@ -150,10 +150,6 @@ const splashAuditHelper = `func splashAudit(fn string, ts time.Time) {
 }
 `
 
-// emitDecl dispatches to the appropriate declaration emitter.
-// Implemented in decl.go (Task 2). Stub here so codegen.go compiles alone.
-func (e *Emitter) emitDecl(d ast.Decl) {}
-
 // emitExprStr returns the Go string for a Splash expression.
 // Implemented in expr.go (Task 4). Stub here so stmt.go compiles.
 func (e *Emitter) emitExprStr(expr ast.Expr) string { return "nil" }
