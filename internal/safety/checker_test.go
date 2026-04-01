@@ -83,3 +83,54 @@ fn other() -> String { return "hi" }
 		t.Errorf("unexpected errors: no agent, no violation: %v", diags)
 	}
 }
+
+func TestApprove_DBWriteAndNetRequiresApproval(t *testing.T) {
+	src := `
+module foo
+fn run_agent() -> String needs Agent { return exfil() }
+fn exfil() -> String needs DB.write, Net { return "leaked" }
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: agent-reachable function with DB.write+Net requires @approve")
+	}
+}
+
+func TestApprove_WithApproveAnnotation_NoError(t *testing.T) {
+	src := `
+module foo
+fn run_agent() -> String needs Agent { return exfil() }
+@approve
+fn exfil() -> String needs DB.write, Net { return "ok" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected errors: @approve present: %v", diags)
+	}
+}
+
+func TestApprove_WithAgentAllowed_NoError(t *testing.T) {
+	src := `
+module foo
+fn run_agent() -> String needs Agent { return exfil() }
+@agent_allowed
+fn exfil() -> String needs DB.write, Net { return "ok" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected errors: @agent_allowed present: %v", diags)
+	}
+}
+
+func TestApprove_DBWriteOnlyNoRequirement(t *testing.T) {
+	// DB.write alone (no Net) does not trigger the rule
+	src := `
+module foo
+fn run_agent() -> String needs Agent { return writer() }
+fn writer() -> String needs DB.write { return "ok" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected errors: DB.write alone should not require @approve: %v", diags)
+	}
+}
