@@ -197,3 +197,65 @@ fn printAll(items: List<String>) {
 		t.Errorf("expected 'for _, item := range items', got:\n%s", out)
 	}
 }
+
+func TestEmitBinaryExpr(t *testing.T) {
+	src := `
+module math
+fn sum(a: Int, b: Int) -> Int {
+    return a + b
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "(a + b)") {
+		t.Errorf("expected '(a + b)', got:\n%s", out)
+	}
+}
+
+func TestEmitCallExpr(t *testing.T) {
+	src := `
+module greet
+fn hello(name: String) -> String {
+    return name
+}
+fn run() {
+    hello("world")
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, `hello("world")`) {
+		t.Errorf(`expected 'hello("world")', got:\n%s`, out)
+	}
+}
+
+func TestEmitStructLiteralExpr(t *testing.T) {
+	src := `
+module user
+type User {
+    name: String
+}
+fn makeUser() -> User {
+    return User { name: "alice" }
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, `User{name: "alice"}`) {
+		t.Errorf("expected struct literal, got:\n%s", out)
+	}
+}
+
+func TestEmitListLiteralExpr(t *testing.T) {
+	src := `
+module lists
+fn nums() -> List<Int> {
+    return [1, 2, 3]
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "[]any{1, 2, 3}") {
+		t.Errorf("expected list literal, got:\n%s", out)
+	}
+}
