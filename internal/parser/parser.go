@@ -44,6 +44,7 @@ var tokenPrecedence = map[token.Kind]precedence{
 	token.SLASH:     precMul,
 	token.PERCENT:   precMul,
 	token.LPAREN:    precCall,
+	token.LBRACKET:  precCall,
 	token.DOT:       precMember,
 	token.OPT_CHAIN: precMember,
 }
@@ -113,7 +114,7 @@ func (p *Parser) sync() {
 	for {
 		switch p.current().Kind {
 		case token.FN, token.TYPE, token.ENUM, token.CONSTRAINT,
-			token.MODULE, token.EXPOSE, token.USE, token.AT, token.EOF:
+			token.MODULE, token.EXPOSE, token.USE, token.AT, token.RBRACE, token.SEMICOLON, token.EOF:
 			return
 		}
 		p.advance()
