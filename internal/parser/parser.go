@@ -101,6 +101,7 @@ func (p *Parser) eat(k token.Kind) token.Token {
 	}
 	cur := p.current()
 	p.errorf(cur.Pos, "expected %v, got %v (%q)", k, cur.Kind, cur.Literal)
+	p.advance() // always advance to prevent infinite loops
 	return cur
 }
 
@@ -786,7 +787,7 @@ func (p *Parser) parseExpr(minPrec precedence) ast.Expr {
 			left = &ast.BinaryExpr{Left: left, Op: cur.Kind, Right: right, Position: cur.Pos}
 		default:
 			p.advance()
-			right := p.parseExpr(prec)
+			right := p.parseExpr(prec + 1)
 			left = &ast.BinaryExpr{Left: left, Op: cur.Kind, Right: right, Position: cur.Pos}
 		}
 	}
@@ -895,7 +896,7 @@ func (p *Parser) parseIndexExpr(obj ast.Expr) ast.Expr {
 func (p *Parser) parseNullCoalesceExpr(left ast.Expr) ast.Expr {
 	pos := p.current().Pos
 	p.advance() // consume ??
-	right := p.parseExpr(precAdd)
+	right := p.parseExpr(precAdd - 1)
 	return &ast.NullCoalesceExpr{Left: left, Right: right, Position: pos}
 }
 
