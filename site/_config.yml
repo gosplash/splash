@@ -1,0 +1,25 @@
+title: Splash
+description: >
+  Splash is a compiled, statically-typed programming language for backend
+  systems and AI agent infrastructure. Its compiler enforces capability bounds,
+  data classification, and agent safety properties before the binary is produced.
+baseurl: ""
+url: "https://gosplash.dev"
+
+plugins:
+  - jekyll-feed
+
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    css_class: highlight
+    block:
+      line_numbers: false
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor/
