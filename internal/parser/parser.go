@@ -136,9 +136,23 @@ func isTopLevelKeyword(k token.Kind) bool {
 func (p *Parser) ParseFile() (*ast.File, []diagnostic.Diagnostic) {
 	file := &ast.File{}
 
+	// collect any annotations that precede the module declaration
+	var moduleAnnots []ast.Annotation
+	for p.check(token.AT) {
+		moduleAnnots = append(moduleAnnots, p.parseAnnotation())
+	}
+
 	// module declaration (required, must come first)
 	if p.check(token.MODULE) {
 		file.Module = p.parseModuleDecl()
+		if file.Module != nil {
+			file.Module.Annotations = moduleAnnots
+		}
+	} else if len(moduleAnnots) > 0 {
+		// annotations were collected but no module keyword followed
+		for _, ann := range moduleAnnots {
+			p.errorf(ann.Pos, "annotation before non-module declaration")
+		}
 	}
 
 	// expose list

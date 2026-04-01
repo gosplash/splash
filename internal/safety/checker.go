@@ -23,6 +23,7 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnos
 
 	diags = append(diags, c.checkRedline(file, g, agentReachable)...)
 	diags = append(diags, c.checkApprove(file, g, agentReachable)...)
+	diags = append(diags, c.checkContainment(file, g, agentReachable)...)
 
 	return diags
 }
@@ -49,6 +50,100 @@ func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentReachabl
 				"@redline function %q is reachable from an agent context",
 				fn.Name,
 			))
+		}
+	}
+
+	return diags
+}
+
+type containmentPolicy int
+
+const (
+	containmentNone         containmentPolicy = iota // no agent access
+	containmentReadOnly                              // DB.read only
+	containmentApprovedOnly                          // @approve or @agent_allowed required
+	containmentUnrestricted                          // no containment annotation
+)
+
+// moduleContainment reads the @containment annotation from the module declaration.
+func moduleContainment(file *ast.File) containmentPolicy {
+	if file.Module == nil {
+		return containmentUnrestricted
+	}
+	for _, ann := range file.Module.Annotations {
+		if ann.Kind != ast.AnnotContainment {
+			continue
+		}
+		agentExpr, ok := ann.Args["agent"]
+		if !ok {
+			continue
+		}
+		lit, ok := agentExpr.(*ast.StringLiteral)
+		if !ok {
+			continue
+		}
+		switch lit.Value {
+		case "none":
+			return containmentNone
+		case "read_only":
+			return containmentReadOnly
+		case "approved_only":
+			return containmentApprovedOnly
+		}
+	}
+	return containmentUnrestricted
+}
+
+// checkContainment enforces the module-level @containment policy against the agent-reachable set.
+func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReachable map[string]bool) []diagnostic.Diagnostic {
+	policy := moduleContainment(file)
+	if policy == containmentUnrestricted {
+		return nil
+	}
+
+	var diags []diagnostic.Diagnostic
+
+	for _, decl := range file.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		if !agentReachable[fn.Name] {
+			continue
+		}
+		node := g.Node(fn.Name)
+		if node == nil {
+			continue
+		}
+
+		switch policy {
+		case containmentNone:
+			diags = append(diags, diagnostic.Errorf(
+				fn.Position,
+				"function %q is agent-reachable but module has @containment(agent: \"none\")",
+				fn.Name,
+			))
+		case containmentReadOnly:
+			if node.Effects.Has(effects.DBWrite) {
+				diags = append(diags, diagnostic.Errorf(
+					fn.Position,
+					"function %q has DB.write but module has @containment(agent: \"read_only\")",
+					fn.Name,
+				))
+			}
+		case containmentApprovedOnly:
+			// Agent-root functions (those with the Agent effect) are the entry points;
+			// only non-root agent-reachable functions need explicit annotation.
+			if node.Effects.Has(effects.Agent) {
+				continue
+			}
+			if !node.HasAnnotation(ast.AnnotApprove) && !node.HasAnnotation(ast.AnnotAgentAllowed) {
+				diags = append(diags, diagnostic.Errorf(
+					fn.Position,
+					"function %q is agent-reachable but module has @containment(agent: \"approved_only\") — add @approve or @agent_allowed",
+					fn.Name,
+				))
+			}
 		}
 	}
 

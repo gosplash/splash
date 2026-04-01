@@ -134,3 +134,81 @@ fn writer() -> String needs DB.write { return "ok" }
 		t.Errorf("unexpected errors: DB.write alone should not require @approve: %v", diags)
 	}
 }
+
+func TestContainment_None_BlocksAllAgentAccess(t *testing.T) {
+	src := `
+@containment(agent: "none")
+module payments
+fn run_agent() -> String needs Agent { return process() }
+fn process() -> String needs DB.write { return "ok" }
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: @containment(agent: none) blocks all agent-reachable functions")
+	}
+}
+
+func TestContainment_None_NoAgent_NoError(t *testing.T) {
+	src := `
+@containment(agent: "none")
+module payments
+fn process() -> String needs DB.write { return "ok" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected error: no agent, containment none is satisfied: %v", diags)
+	}
+}
+
+func TestContainment_ReadOnly_BlocksWrite(t *testing.T) {
+	src := `
+@containment(agent: "read_only")
+module payments
+fn run_agent() -> String needs Agent { return process() }
+fn process() -> String needs DB.write { return "ok" }
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: read_only containment blocks DB.write in agent context")
+	}
+}
+
+func TestContainment_ReadOnly_AllowsRead(t *testing.T) {
+	src := `
+@containment(agent: "read_only")
+module payments
+fn run_agent() -> String needs Agent { return query() }
+fn query() -> String needs DB.read { return "ok" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected error: read_only allows DB.read: %v", diags)
+	}
+}
+
+func TestContainment_ApprovedOnly_RequiresAnnotation(t *testing.T) {
+	src := `
+@containment(agent: "approved_only")
+module payments
+fn run_agent() -> String needs Agent { return process() }
+fn process() -> String needs DB.write { return "ok" }
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: approved_only requires @approve or @agent_allowed")
+	}
+}
+
+func TestContainment_ApprovedOnly_WithApprove_NoError(t *testing.T) {
+	src := `
+@containment(agent: "approved_only")
+module payments
+fn run_agent() -> String needs Agent { return process() }
+@approve
+fn process() -> String needs DB.write { return "ok" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected error: @approve satisfies approved_only: %v", diags)
+	}
+}
