@@ -851,7 +851,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case token.IDENT:
 		p.advance()
 		// Struct literal: TypeName { field: expr, ... }
-		if p.check(token.LBRACE) {
+		// Only attempt if identifier starts with uppercase (type names are capitalized).
+		if p.check(token.LBRACE) && len(cur.Literal) > 0 && cur.Literal[0] >= 'A' && cur.Literal[0] <= 'Z' {
 			return p.parseStructLiteral(cur)
 		}
 		return &ast.Ident{Name: cur.Literal, Position: cur.Pos}

@@ -151,5 +151,27 @@ const splashAuditHelper = `func splashAudit(fn string, ts time.Time) {
 `
 
 // emitExprStr returns the Go string for a Splash expression.
-// Implemented in expr.go (Task 4). Stub here so stmt.go compiles.
-func (e *Emitter) emitExprStr(expr ast.Expr) string { return "nil" }
+// Full implementation in expr.go (Task 4). Partial stub handles identifiers and literals.
+func (e *Emitter) emitExprStr(expr ast.Expr) string {
+	if expr == nil {
+		return "nil"
+	}
+	switch ex := expr.(type) {
+	case *ast.Ident:
+		return ex.Name
+	case *ast.IntLiteral:
+		return fmt.Sprintf("%d", ex.Value)
+	case *ast.FloatLiteral:
+		return fmt.Sprintf("%g", ex.Value)
+	case *ast.StringLiteral:
+		return fmt.Sprintf("%q", ex.Value)
+	case *ast.BoolLiteral:
+		if ex.Value {
+			return "true"
+		}
+		return "false"
+	case *ast.NoneLiteral:
+		return "nil"
+	}
+	return "nil"
+}

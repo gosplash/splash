@@ -66,6 +66,3 @@ func (e *Emitter) funcSignature(decl *ast.FunctionDecl) string {
 	}
 	return sig
 }
-
-// emitBlock is defined in stmt.go (Task 3). Stub here so decl.go compiles.
-func (e *Emitter) emitBlock(b *ast.BlockStmt) {}

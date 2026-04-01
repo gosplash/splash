@@ -1,0 +1,101 @@
+package codegen
+
+import "gosplash.dev/splash/internal/ast"
+
+func (e *Emitter) emitBlock(b *ast.BlockStmt) {
+	if b == nil {
+		return
+	}
+	for _, s := range b.Stmts {
+		e.emitStmt(s)
+	}
+}
+
+func (e *Emitter) emitStmt(s ast.Stmt) {
+	switch stmt := s.(type) {
+	case *ast.LetStmt:
+		e.emitLetStmt(stmt)
+	case *ast.ReturnStmt:
+		e.emitReturnStmt(stmt)
+	case *ast.ExprStmt:
+		e.emitExprStmt(stmt)
+	case *ast.IfStmt:
+		e.emitIfStmt(stmt)
+	case *ast.GuardStmt:
+		e.emitGuardStmt(stmt)
+	case *ast.ForStmt:
+		e.emitForStmt(stmt)
+	case *ast.AssignStmt:
+		e.writeLine("%s = %s", e.emitExprStr(stmt.Target), e.emitExprStr(stmt.Value))
+	case *ast.BlockStmt:
+		e.writeLine("{")
+		e.indent++
+		e.emitBlock(stmt)
+		e.indent--
+		e.writeLine("}")
+	}
+}
+
+func (e *Emitter) emitLetStmt(s *ast.LetStmt) {
+	if s.Type != nil {
+		e.writeLine("var %s %s = %s", s.Name, e.emitTypeName(s.Type), e.emitExprStr(s.Value))
+	} else {
+		e.writeLine("%s := %s", s.Name, e.emitExprStr(s.Value))
+	}
+}
+
+func (e *Emitter) emitReturnStmt(s *ast.ReturnStmt) {
+	if s.Value == nil {
+		e.writeLine("return")
+		return
+	}
+	// @approve call inside return: emit audit first
+	if call, ok := s.Value.(*ast.CallExpr); ok {
+		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && e.approvedFns[ident.Name] {
+			e.needsAudit = true
+			e.writeLine("splashAudit(%q, time.Now())", ident.Name)
+		}
+	}
+	e.writeLine("return %s", e.emitExprStr(s.Value))
+}
+
+func (e *Emitter) emitExprStmt(s *ast.ExprStmt) {
+	// @approve call as a statement: emit audit first
+	if call, ok := s.Expr.(*ast.CallExpr); ok {
+		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && e.approvedFns[ident.Name] {
+			e.needsAudit = true
+			e.writeLine("splashAudit(%q, time.Now())", ident.Name)
+		}
+	}
+	e.writeLine("%s", e.emitExprStr(s.Expr))
+}
+
+func (e *Emitter) emitIfStmt(s *ast.IfStmt) {
+	e.writeLine("if %s {", e.emitExprStr(s.Cond))
+	e.indent++
+	e.emitBlock(s.Then)
+	e.indent--
+	if s.Else != nil {
+		e.writeLine("} else {")
+		e.indent++
+		e.emitStmt(s.Else)
+		e.indent--
+	}
+	e.writeLine("}")
+}
+
+func (e *Emitter) emitGuardStmt(s *ast.GuardStmt) {
+	e.writeLine("if !(%s) {", e.emitExprStr(s.Cond))
+	e.indent++
+	e.emitBlock(s.Else)
+	e.indent--
+	e.writeLine("}")
+}
+
+func (e *Emitter) emitForStmt(s *ast.ForStmt) {
+	e.writeLine("for _, %s := range %s {", s.Binding, e.emitExprStr(s.Iter))
+	e.indent++
+	e.emitBlock(s.Body)
+	e.indent--
+	e.writeLine("}")
+}

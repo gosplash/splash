@@ -129,3 +129,53 @@ fn greet(name: String) -> String {
 		t.Errorf("expected function signature, got:\n%s", out)
 	}
 }
+
+func TestEmitLetAndReturn(t *testing.T) {
+	src := `
+module calc
+fn add(x: Int, y: Int) -> Int {
+    let result = x
+    return result
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "result := x") {
+		t.Errorf("expected 'result := x', got:\n%s", out)
+	}
+	if !strings.Contains(out, "return result") {
+		t.Errorf("expected 'return result', got:\n%s", out)
+	}
+}
+
+func TestEmitIfStmt(t *testing.T) {
+	src := `
+module check
+fn isPositive(n: Int) -> Bool {
+    if n > 0 {
+        return true
+    }
+    return false
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "if (n > 0)") {
+		t.Errorf("expected 'if (n > 0)', got:\n%s", out)
+	}
+}
+
+func TestEmitForStmt(t *testing.T) {
+	src := `
+module loop
+fn printAll(items: List<String>) {
+    for item in items {
+    }
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "for _, item := range items") {
+		t.Errorf("expected 'for _, item := range items', got:\n%s", out)
+	}
+}
