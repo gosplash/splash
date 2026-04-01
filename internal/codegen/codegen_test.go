@@ -314,3 +314,35 @@ fn run() {
 		t.Errorf("expected encoding/json import, got:\n%s", out)
 	}
 }
+
+func TestEmitFileEndToEnd(t *testing.T) {
+	src := `
+module main
+type Point {
+    x: Int
+    y: Int
+}
+fn add(a: Int, b: Int) -> Int {
+    return a + b
+}
+fn main() {
+    let result = add(1, 2)
+    let pt = Point { x: result, y: 0 }
+    let r = pt
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "package main") {
+		t.Errorf("expected 'package main', got:\n%s", out)
+	}
+	if !strings.Contains(out, "type Point struct") {
+		t.Errorf("expected Point struct, got:\n%s", out)
+	}
+	if !strings.Contains(out, "func add(a int, b int) int") {
+		t.Errorf("expected add signature, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Point{x: result, y: 0}") {
+		t.Errorf("expected Point struct literal, got:\n%s", out)
+	}
+}
