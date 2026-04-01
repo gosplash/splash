@@ -78,10 +78,20 @@ func (e *Emitter) emitIfStmt(s *ast.IfStmt) {
 	if s.Else != nil {
 		e.writeLine("} else {")
 		e.indent++
-		e.emitStmt(s.Else)
+		// s.Else is always a *ast.BlockStmt or *ast.IfStmt from the parser.
+		// Call emitBlock for BlockStmt (avoids double-brace from emitStmt's BlockStmt case).
+		// Call emitStmt for IfStmt (else-if chain).
+		switch els := s.Else.(type) {
+		case *ast.BlockStmt:
+			e.emitBlock(els)
+		default:
+			e.emitStmt(els)
+		}
 		e.indent--
+		e.writeLine("}") // closes the else block
+	} else {
+		e.writeLine("}") // closes the if block
 	}
-	e.writeLine("}")
 }
 
 func (e *Emitter) emitGuardStmt(s *ast.GuardStmt) {

@@ -165,6 +165,24 @@ fn isPositive(n: Int) -> Bool {
 	}
 }
 
+func TestEmitIfElseStmt(t *testing.T) {
+	src := `
+module check
+fn classify(n: Int) -> Bool {
+    if n > 0 {
+        return true
+    } else {
+        return false
+    }
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if strings.Count(out, "}") < 3 {
+		t.Errorf("expected at least 3 closing braces (if, else, func), got:\n%s", out)
+	}
+}
+
 func TestEmitForStmt(t *testing.T) {
 	src := `
 module loop
