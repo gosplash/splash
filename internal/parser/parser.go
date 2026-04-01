@@ -249,7 +249,11 @@ func (p *Parser) parseTopLevelDecl() ast.Decl {
 	default:
 		cur := p.current()
 		p.errorf(cur.Pos, "unexpected token %q at top level", cur.Literal)
+		before := p.pos
 		p.sync()
+		if p.pos == before {
+			p.advance() // sync didn't move; force past the stuck token
+		}
 		return nil
 	}
 }
@@ -832,6 +836,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 
 	case token.IDENT:
 		p.advance()
+		// Struct literal: TypeName { field: expr, ... }
+		if p.check(token.LBRACE) {
+			return p.parseStructLiteral(cur)
+		}
 		return &ast.Ident{Name: cur.Literal, Position: cur.Pos}
 
 	case token.BANG, token.MINUS:
@@ -898,6 +906,25 @@ func (p *Parser) parseNullCoalesceExpr(left ast.Expr) ast.Expr {
 	p.advance() // consume ??
 	right := p.parseExpr(precAdd - 1)
 	return &ast.NullCoalesceExpr{Left: left, Right: right, Position: pos}
+}
+
+func (p *Parser) parseStructLiteral(nameTok token.Token) *ast.StructLiteral {
+	pos := nameTok.Pos
+	p.eat(token.LBRACE)
+	var fields []ast.StructField
+	for !p.check(token.RBRACE) && !p.check(token.EOF) {
+		fpos := p.current().Pos
+		name := p.eat(token.IDENT)
+		p.eat(token.COLON)
+		val := p.parseExpr(precLowest)
+		fields = append(fields, ast.StructField{Name: name.Literal, Value: val, Pos: fpos})
+		if !p.check(token.COMMA) {
+			break
+		}
+		p.advance()
+	}
+	p.eat(token.RBRACE)
+	return &ast.StructLiteral{TypeName: nameTok.Literal, Fields: fields, Position: pos}
 }
 
 func (p *Parser) parseListLiteral() *ast.ListLiteral {
