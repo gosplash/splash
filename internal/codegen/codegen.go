@@ -3,6 +3,7 @@ package codegen
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"gosplash.dev/splash/internal/ast"
@@ -63,7 +64,13 @@ func (e *Emitter) EmitFile(f *ast.File) string {
 
 	if len(e.imports) > 0 {
 		out.WriteString("import (\n")
+		// Collect and sort imports for deterministic output
+		importList := make([]string, 0, len(e.imports))
 		for imp := range e.imports {
+			importList = append(importList, imp)
+		}
+		sort.Strings(importList)
+		for _, imp := range importList {
 			fmt.Fprintf(&out, "\t%q\n", imp)
 		}
 		out.WriteString(")\n\n")

@@ -90,6 +90,11 @@ func runCheck(path string) error {
 }
 
 func runBuild(path, out string) error {
+	out, err := filepath.Abs(out)
+	if err != nil {
+		return err
+	}
+
 	f, err := parseFile(path)
 	if err != nil {
 		return err
