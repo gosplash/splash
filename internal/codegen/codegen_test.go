@@ -259,3 +259,58 @@ fn nums() -> List<Int> {
 		t.Errorf("expected list literal, got:\n%s", out)
 	}
 }
+
+func TestOptionalParamType(t *testing.T) {
+	src := `
+module optional
+fn greet(name: String?) -> String {
+    return name ?? "world"
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, "name *string") {
+		t.Errorf("expected 'name *string' for optional param, got:\n%s", out)
+	}
+}
+
+func TestNullCoalesceEmitsHelper(t *testing.T) {
+	src := `
+module optional
+fn greeting(name: String?) -> String {
+    return name ?? "stranger"
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, `splashCoalesce(name, "stranger")`) {
+		t.Errorf("expected splashCoalesce call, got:\n%s", out)
+	}
+	if !strings.Contains(out, "func splashCoalesce") {
+		t.Errorf("expected splashCoalesce helper in preamble, got:\n%s", out)
+	}
+}
+
+func TestApproveAuditLog(t *testing.T) {
+	src := `
+module payments
+@approve
+fn processPayment(amount: Int) {
+    let x = amount
+}
+fn run() {
+    processPayment(100)
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+	if !strings.Contains(out, `splashAudit("processPayment", time.Now())`) {
+		t.Errorf("expected splashAudit call before processPayment, got:\n%s", out)
+	}
+	if !strings.Contains(out, "func splashAudit") {
+		t.Errorf("expected splashAudit helper in preamble, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"encoding/json"`) {
+		t.Errorf("expected encoding/json import, got:\n%s", out)
+	}
+}
