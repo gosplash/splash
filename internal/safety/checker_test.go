@@ -33,7 +33,7 @@ func hasError(diags []diagnostic.Diagnostic) bool {
 func TestRedline_AgentCannotReach(t *testing.T) {
 	src := `
 module foo
-fn run_agent() -> String needs Agent { return dangerous() }
+fn run_agent() needs Agent -> String { return dangerous() }
 @redline
 fn dangerous() -> String { return "boom" }
 `
@@ -60,7 +60,7 @@ func TestRedline_TransitiveViolation(t *testing.T) {
 	// agent -> helper -> dangerous: should still error
 	src := `
 module foo
-fn run_agent() -> String needs Agent { return helper() }
+fn run_agent() needs Agent -> String { return helper() }
 fn helper() -> String { return dangerous() }
 @redline
 fn dangerous() -> String { return "boom" }
@@ -87,8 +87,8 @@ fn other() -> String { return "hi" }
 func TestApprove_DBWriteAndNetRequiresApproval(t *testing.T) {
 	src := `
 module foo
-fn run_agent() -> String needs Agent { return exfil() }
-fn exfil() -> String needs DB.write, Net { return "leaked" }
+fn run_agent() needs Agent -> String { return exfil() }
+fn exfil() needs DB.write, Net -> String { return "leaked" }
 `
 	diags := check(src)
 	if !hasError(diags) {
@@ -99,9 +99,9 @@ fn exfil() -> String needs DB.write, Net { return "leaked" }
 func TestApprove_WithApproveAnnotation_NoError(t *testing.T) {
 	src := `
 module foo
-fn run_agent() -> String needs Agent { return exfil() }
+fn run_agent() needs Agent -> String { return exfil() }
 @approve
-fn exfil() -> String needs DB.write, Net { return "ok" }
+fn exfil() needs DB.write, Net -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {
@@ -112,9 +112,9 @@ fn exfil() -> String needs DB.write, Net { return "ok" }
 func TestApprove_WithAgentAllowed_NoError(t *testing.T) {
 	src := `
 module foo
-fn run_agent() -> String needs Agent { return exfil() }
+fn run_agent() needs Agent -> String { return exfil() }
 @agent_allowed
-fn exfil() -> String needs DB.write, Net { return "ok" }
+fn exfil() needs DB.write, Net -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {
@@ -126,8 +126,8 @@ func TestApprove_DBWriteOnlyNoRequirement(t *testing.T) {
 	// DB.write alone (no Net) does not trigger the rule
 	src := `
 module foo
-fn run_agent() -> String needs Agent { return writer() }
-fn writer() -> String needs DB.write { return "ok" }
+fn run_agent() needs Agent -> String { return writer() }
+fn writer() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {
@@ -139,8 +139,8 @@ func TestContainment_None_BlocksAllAgentAccess(t *testing.T) {
 	src := `
 @containment(agent: "none")
 module payments
-fn run_agent() -> String needs Agent { return process() }
-fn process() -> String needs DB.write { return "ok" }
+fn run_agent() needs Agent -> String { return process() }
+fn process() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if !hasError(diags) {
@@ -152,7 +152,7 @@ func TestContainment_None_NoAgent_NoError(t *testing.T) {
 	src := `
 @containment(agent: "none")
 module payments
-fn process() -> String needs DB.write { return "ok" }
+fn process() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {
@@ -164,8 +164,8 @@ func TestContainment_ReadOnly_BlocksWrite(t *testing.T) {
 	src := `
 @containment(agent: "read_only")
 module payments
-fn run_agent() -> String needs Agent { return process() }
-fn process() -> String needs DB.write { return "ok" }
+fn run_agent() needs Agent -> String { return process() }
+fn process() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if !hasError(diags) {
@@ -177,8 +177,8 @@ func TestContainment_ReadOnly_AllowsRead(t *testing.T) {
 	src := `
 @containment(agent: "read_only")
 module payments
-fn run_agent() -> String needs Agent { return query() }
-fn query() -> String needs DB.read { return "ok" }
+fn run_agent() needs Agent -> String { return query() }
+fn query() needs DB.read -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {
@@ -190,8 +190,8 @@ func TestContainment_ApprovedOnly_RequiresAnnotation(t *testing.T) {
 	src := `
 @containment(agent: "approved_only")
 module payments
-fn run_agent() -> String needs Agent { return process() }
-fn process() -> String needs DB.write { return "ok" }
+fn run_agent() needs Agent -> String { return process() }
+fn process() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if !hasError(diags) {
@@ -203,9 +203,9 @@ func TestContainment_ApprovedOnly_WithApprove_NoError(t *testing.T) {
 	src := `
 @containment(agent: "approved_only")
 module payments
-fn run_agent() -> String needs Agent { return process() }
+fn run_agent() needs Agent -> String { return process() }
 @approve
-fn process() -> String needs DB.write { return "ok" }
+fn process() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {

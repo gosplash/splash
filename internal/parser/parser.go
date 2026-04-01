@@ -306,7 +306,7 @@ func (p *Parser) parseAnnotation() ast.Annotation {
 	}
 }
 
-// parseFunctionDecl parses: fn name[<TypeParams>](params) [-> ReturnType] [needs Effects] Block
+// parseFunctionDecl parses: fn name[<TypeParams>](params) [needs Effects] [-> ReturnType] Block
 func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool) *ast.FunctionDecl {
 	pos := p.current().Pos
 	p.eat(token.FN)
@@ -321,17 +321,17 @@ func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool) *ast.F
 	params := p.parseParams()
 	p.eat(token.RPAREN)
 
+	// optional needs clause (effects come before return type)
+	var effects []ast.EffectExpr
+	if p.check(token.NEEDS) {
+		effects = p.parseEffects()
+	}
+
 	// optional return type
 	var returnType ast.TypeExpr
 	if p.check(token.ARROW) {
 		p.advance() // consume ->
 		returnType = p.parseTypeExpr()
-	}
-
-	// optional needs clause
-	var effects []ast.EffectExpr
-	if p.check(token.NEEDS) {
-		effects = p.parseEffects()
 	}
 
 	// body

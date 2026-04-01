@@ -51,7 +51,7 @@ fn greet(name: String) -> String {
 func TestParseFunctionWithEffects(t *testing.T) {
 	src := `
 module foo
-fn load(id: String) -> User needs DB, Net {
+fn load(id: String) needs DB, Net -> User {
   return db.find(id)
 }`
 	file := parse(t, src)
