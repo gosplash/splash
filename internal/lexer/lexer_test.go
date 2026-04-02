@@ -137,3 +137,11 @@ func TestDocComment_MultiLine(t *testing.T) {
 		t.Errorf("expected FN after doc comments, got kind %d", toks[2].Kind)
 	}
 }
+
+func TestDocComment_FourSlashesNotDocComment(t *testing.T) {
+	// //// should not be treated as a doc comment
+	toks := tokens("////foo")
+	if toks[0].Kind == token.DOC_COMMENT {
+		t.Error("four slashes //// should not produce a DOC_COMMENT token")
+	}
+}

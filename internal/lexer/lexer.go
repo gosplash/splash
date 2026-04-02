@@ -295,7 +295,7 @@ func (l *Lexer) nextToken() token.Token {
 		return token.Token{Kind: token.STAR, Literal: "*", Pos: pos}
 
 	case '/':
-		if l.peek() == '/' && l.peekAt(2) == '/' {
+		if l.peek() == '/' && l.peekAt(2) == '/' && l.peekAt(3) != '/' {
 			// Doc comment: consume "///" plus optional leading space
 			l.advance() // first /
 			l.advance() // second /
@@ -307,12 +307,7 @@ func (l *Lexer) nextToken() token.Token {
 			for l.current() != '\n' && l.current() != 0 {
 				l.advance()
 			}
-			// trim trailing whitespace
-			src := l.src[start:l.pos]
-			for len(src) > 0 && (src[len(src)-1] == ' ' || src[len(src)-1] == '\t' || src[len(src)-1] == '\r') {
-				src = src[:len(src)-1]
-			}
-			return token.Token{Kind: token.DOC_COMMENT, Literal: string(src), Pos: pos}
+			return token.Token{Kind: token.DOC_COMMENT, Literal: string(l.src[start:l.pos]), Pos: pos}
 		}
 		l.advance()
 		return token.Token{Kind: token.SLASH, Literal: "/", Pos: pos}
