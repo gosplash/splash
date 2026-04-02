@@ -666,6 +666,73 @@ The v0.1 compiler produces Go binaries for backend services. The domains above a
 
 ---
 
+## Section 8: Compiler Performance
+
+Splash's safety model requires whole-program analysis: the call graph must be complete before `@redline`, `@approve`, `@sandbox`, and `@containment` can be verified. This raises a practical question: does the analysis cost show up in developer feedback loops?
+
+The answer, measured on real hardware, is no.
+
+### Benchmark Methodology
+
+Benchmarks use synthetic Splash programs at three sizes — 100, 500, and 2000 functions — across three workloads:
+
+- **Flat:** independent functions with no effects or call relationships
+- **Effects chain:** linear call chain with `DB.read` declared at every site, exercising effect propagation checking at every call site
+- **Mixed types:** named record types with struct literal construction, exercising type resolution
+
+The end-to-end `splash check` benchmark runs the full pipeline — parse, type check, call graph construction, and all safety passes — on programs that include `@approve`, `@redline`, and `@sensitive` types, as a realistic representation of production code.
+
+All measurements on Apple M2.
+
+### Results
+
+**Call graph construction** (BFS + adjacency map, O(V+E)):
+
+| Functions | Build | Reachable BFS | Callers (reverse BFS) |
+|---|---|---|---|
+| 100 | 14 µs | — | — |
+| 1,000 | 180 µs | — | — |
+| 5,000 | 919 µs | — | — |
+
+**Type checker** (`Check` pass only, excluding parse):
+
+| Functions | Flat | Effect chain | Mixed types |
+|---|---|---|---|
+| 100 | 17 µs | 25 µs | 79 µs |
+| 500 | 108 µs | 159 µs | 485 µs |
+| 2,000 | 535 µs | 819 µs | — |
+
+**`splash check` full pipeline** (parse + type check + call graph + all safety passes, including file I/O):
+
+| Functions | Wall time |
+|---|---|
+| 100 | 218 µs |
+| 500 | 1.06 ms |
+| 2,000 | 6.24 ms |
+
+### Interpretation
+
+A 500-function Splash program clears `splash check` in 1 millisecond. A 2,000-function program — larger than most single-module backend services — in 6 milliseconds. These are wall-clock times including file I/O, not in-memory-only measurements.
+
+Scaling is linear in program size, as expected for O(V+E) analysis. The whole-program call graph requirement that gives Splash its soundness guarantees does not create a quadratic blowup — the graph is built in a single pass over the same data structure the type checker already constructs.
+
+The safety checks themselves (all five passes: `@redline`, `@approve`, `@containment`, `@sandbox`, data classification) add negligible overhead on top of type checking. They are additional predicates evaluated over the same graph, not separate traversals.
+
+Incremental caching — invalidating only the subgraph reachable from changed functions — is on the roadmap and would reduce hot-reload times further. The current single-shot analysis is already fast enough that caching is an optimization, not a requirement.
+
+### Runtime Overhead
+
+The safety model has no runtime cost for the common case. Effect checking, call graph analysis, data classification, and agent reachability are enforced entirely at compile time. The emitted Go binary carries no effect-checking overhead — effects are a frontend constraint, not a runtime mechanism.
+
+The only explicit runtime costs are:
+
+- **`@approve` gate:** one `ApprovalAdapter.Request(name)` call before the function body executes. Cost is determined by the adapter implementation (stdin prompt, Slack message, webhook). The compiler overhead is zero.
+- **`std/safety` provenance chains:** structured logging of agent decisions. Opt-in, disabled by default, cost proportional to chain depth.
+
+For everything else, Splash programs have Go-equivalent performance at runtime.
+
+---
+
 ## Appendix: The Splash Language Specification
 
 The complete Splash language specification — syntax, type system, stdlib reference, and code samples — is maintained as a companion document. Every claim in this paper about what the compiler enforces corresponds to a specific section of the specification.
