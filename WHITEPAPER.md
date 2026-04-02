@@ -5,8 +5,8 @@
 *White Paper — v0.1*
 
 **Authors**
-Zach Graves &lt;zach@zachgraves.com&gt;
-Claude Sonnet 4.6 (Anthropic)
+- Zach Graves &lt;zach@zachgraves.com&gt;
+- Claude Sonnet 4.6 (Anthropic)
 
 ---
 
