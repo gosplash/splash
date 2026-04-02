@@ -207,3 +207,69 @@ fn bad(p: Person) -> String {
 		t.Error("expected type error for unknown field access")
 	}
 }
+
+func TestMemberAccess_OptionalChaining(t *testing.T) {
+	// p?.name where p: Person? — ?. returns String? (nil-propagating)
+	src := `
+module demo
+type Person {
+  name: String
+}
+fn get_name(p: Person?) -> String? { return p?.name }
+`
+	if hasError(check(src)) {
+		t.Error("unexpected type errors for optional chaining")
+	}
+}
+
+func TestMemberAccess_ChainedAccess(t *testing.T) {
+	// Access two different fields in the same function
+	src := `
+module demo
+type Point {
+  x: Int
+  y: Int
+}
+fn sum(p: Point) -> Int { return p.x + p.y }
+`
+	if hasError(check(src)) {
+		t.Error("unexpected type errors for chained field access")
+	}
+}
+
+func TestMemberAccess_HelloSplashPattern(t *testing.T) {
+	// The hello.splash pattern: struct literal + optional field + null coalesce
+	src := `
+module hello
+type Person {
+  name: String
+  nickname: String?
+}
+fn greet(p: Person) -> String {
+  let display_name = p.nickname ?? p.name
+  return "Hello, " + display_name
+}
+fn main() {
+  let p = Person { name: "world", nickname: none }
+  println(greet(p))
+}
+`
+	if hasError(check(src)) {
+		t.Error("unexpected type errors in hello.splash pattern")
+	}
+}
+
+func TestMemberAccess_WrongReturnType(t *testing.T) {
+	// p.age is Int — returning it as String should be a type error
+	src := `
+module demo
+type Person {
+  name: String
+  age: Int
+}
+fn bad(p: Person) -> String { return p.age }
+`
+	if !hasError(check(src)) {
+		t.Error("expected type error: returning Int field as String")
+	}
+}
