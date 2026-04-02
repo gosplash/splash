@@ -197,3 +197,35 @@ fn search(
 		t.Errorf("expected param[1].Doc %q, got %q", "Max results to return", fn.Params[1].Doc)
 	}
 }
+
+func TestDocComment_BeforeTypeDecl_NoError(t *testing.T) {
+	// Doc before a type decl is silently accepted (TypeDecl has no Doc field in v0.1).
+	src := `
+module foo
+/// This comment is intentionally ignored.
+type Person {
+    name: String
+}`
+	file := parse(t, src)
+	if len(file.Declarations) != 1 {
+		t.Fatalf("expected 1 declaration, got %d", len(file.Declarations))
+	}
+	if _, ok := file.Declarations[0].(*ast.TypeDecl); !ok {
+		t.Errorf("expected TypeDecl, got %T", file.Declarations[0])
+	}
+}
+
+func TestDocComment_AfterAnnotation_NotAttached(t *testing.T) {
+	// Doc after an annotation does not attach: the required ordering is doc-then-annotation.
+	src := `
+module foo
+@tool
+fn search(query: String) -> String {
+  return query
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	if fn.Doc != "" {
+		t.Errorf("expected empty doc when no /// precedes the fn, got %q", fn.Doc)
+	}
+}
