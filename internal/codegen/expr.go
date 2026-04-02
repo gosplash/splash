@@ -93,6 +93,10 @@ func (e *Emitter) emitCallExpr(ex *ast.CallExpr) string {
 	for _, arg := range ex.Args {
 		args = append(args, e.emitExprStr(arg))
 	}
+	if ident, ok := ex.Callee.(*ast.Ident); ok && ident.Name == "println" {
+		e.imports["fmt"] = true
+		return fmt.Sprintf("fmt.Println(%s)", strings.Join(args, ", "))
+	}
 	return fmt.Sprintf("%s(%s)", e.emitExprStr(ex.Callee), strings.Join(args, ", "))
 }
 
@@ -119,4 +123,31 @@ func (e *Emitter) emitClosureExpr(ex *ast.ClosureExpr) string {
 	}
 	body := e.emitExprStr(ex.Body)
 	return fmt.Sprintf("func(%s) any { return %s }", strings.Join(params, ", "), body)
+}
+
+// zeroValueFor returns the Go zero-value literal for a Splash type expression.
+// Used to generate early-exit return values when approval is denied.
+func (e *Emitter) zeroValueFor(t ast.TypeExpr) string {
+	if t == nil {
+		return ""
+	}
+	switch typ := t.(type) {
+	case *ast.NamedTypeExpr:
+		switch typ.Name {
+		case "String":
+			return `""`
+		case "Int":
+			return "0"
+		case "Float":
+			return "0.0"
+		case "Bool":
+			return "false"
+		default:
+			return typ.Name + "{}"
+		}
+	case *ast.OptionalTypeExpr:
+		return "nil"
+	default:
+		return "nil"
+	}
 }

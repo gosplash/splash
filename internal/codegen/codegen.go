@@ -16,17 +16,52 @@ type Emitter struct {
 	indent        int
 	needsCoalesce bool
 	needsApproval bool
+
+	// Phase 4b: approval cascade
+	approveFns     map[string]bool              // @approve-annotated function names (built in EmitFile pre-pass)
+	approveCallers map[string]bool              // transitive callers of approveFns (set externally via SetApprovalCallers)
+	fnDecls        map[string]*ast.FunctionDecl // all function declarations (for return-type lookups at call sites)
+
+	// Per-function emission state (set in emitFunctionDecl, cleared after)
+	inApprovalFn        bool
+	currentFnReturnType ast.TypeExpr
+	currentFnIsMain     bool
 }
 
 // New creates a ready-to-use Emitter.
 func New() *Emitter {
 	return &Emitter{
-		imports: make(map[string]bool),
+		imports:        make(map[string]bool),
+		approveFns:     make(map[string]bool),
+		approveCallers: make(map[string]bool),
+		fnDecls:        make(map[string]*ast.FunctionDecl),
 	}
+}
+
+// SetApprovalCallers provides the set of functions that transitively call any
+// @approve function. Used by the CLI driver after callgraph analysis.
+// The emitter always builds approveFns itself from AST annotations in EmitFile.
+func (e *Emitter) SetApprovalCallers(approveCallers map[string]bool) {
+	e.approveCallers = approveCallers
 }
 
 // EmitFile generates a complete Go source file from a Splash AST.
 func (e *Emitter) EmitFile(f *ast.File) string {
+	// Pre-pass: index all function declarations and collect @approve names.
+	// approveFns is always built from AST annotations regardless of external input.
+	for _, decl := range f.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		e.fnDecls[fn.Name] = fn
+		for _, ann := range fn.Annotations {
+			if ann.Kind == ast.AnnotApprove {
+				e.approveFns[fn.Name] = true
+			}
+		}
+	}
+
 	// Emit declarations into body buffer
 	for _, decl := range f.Declarations {
 		e.emitDecl(decl)
@@ -140,8 +175,8 @@ const splashApprovalHelper = `// ApprovalAdapter is the interface for @approve g
 // Request blocks until the named function is approved.
 // Return nil to approve; return an error to deny.
 // StdinApproval (the default) loops until the operator types y — it never returns an error.
-// Production adapters (SlackApproval, WebhookApproval) can return ApprovalError on denial;
-// full denial handling via Result<T, ApprovalError> is Phase 4b.
+// Production adapters (SlackApproval, WebhookApproval) return a non-nil error on denial,
+// which propagates up the call stack without killing the process.
 type ApprovalAdapter interface {
 	Request(name string) error
 }
@@ -166,12 +201,8 @@ func (*splashStdinApproval) Request(name string) error {
 	}
 }
 
-func splashApprove(name string) {
-	if err := _splashApproval.Request(name); err != nil {
-		// StdinApproval never reaches here.
-		// Phase 4b production adapters return denial errors — handled via Result<T, ApprovalError>.
-		panic(fmt.Sprintf("approval denied for %s: %v", name, err))
-	}
+func splashApprove(name string) error {
+	return _splashApproval.Request(name)
 }
 `
 

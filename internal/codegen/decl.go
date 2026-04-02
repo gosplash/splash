@@ -46,19 +46,52 @@ func (e *Emitter) emitEnumDecl(decl *ast.EnumDecl) {
 }
 
 func (e *Emitter) emitFunctionDecl(decl *ast.FunctionDecl) {
+	isApprove := e.approveFns[decl.Name]
+	isCaller := e.approveCallers[decl.Name]
+	isMain := decl.Name == "main"
+
+	// Set per-function emission state for stmt emitters
+	e.inApprovalFn = (isApprove || isCaller) && !isMain
+	e.currentFnReturnType = decl.ReturnType
+	e.currentFnIsMain = isMain
+
 	sig := e.funcSignature(decl)
 	e.writef("%s {\n", sig)
 	e.indent++
-	for _, ann := range decl.Annotations {
-		if ann.Kind == ast.AnnotApprove {
-			e.needsApproval = true
-			e.writeLine("splashApprove(%q)", decl.Name)
-			break
+
+	if isApprove {
+		// Inject approval gate: if denied, return before body runs.
+		e.needsApproval = true
+		if decl.ReturnType != nil {
+			e.writeLine("if err := splashApprove(%q); err != nil {", decl.Name)
+			e.indent++
+			e.writeLine("return %s, err", e.zeroValueFor(decl.ReturnType))
+			e.indent--
+			e.writeLine("}")
+		} else {
+			e.writeLine("if err := splashApprove(%q); err != nil {", decl.Name)
+			e.indent++
+			e.writeLine("return err")
+			e.indent--
+			e.writeLine("}")
 		}
 	}
+
 	e.emitBlock(decl.Body)
+
+	// Void approval functions need an explicit return nil — Go requires it.
+	// Non-void functions have explicit Splash returns rewritten to "return x, nil" by emitReturnStmt.
+	if e.inApprovalFn && decl.ReturnType == nil {
+		e.writeLine("return nil")
+	}
+
 	e.indent--
 	e.writeLine("}\n")
+
+	// Clear per-function state
+	e.inApprovalFn = false
+	e.currentFnReturnType = nil
+	e.currentFnIsMain = false
 }
 
 func (e *Emitter) funcSignature(decl *ast.FunctionDecl) string {
@@ -66,9 +99,19 @@ func (e *Emitter) funcSignature(decl *ast.FunctionDecl) string {
 	for _, p := range decl.Params {
 		params = append(params, fmt.Sprintf("%s %s", p.Name, e.emitTypeName(p.Type)))
 	}
+
+	isApprovalFn := e.approveFns[decl.Name] || e.approveCallers[decl.Name]
+	isMain := decl.Name == "main"
+
 	ret := e.emitTypeName(decl.ReturnType)
 	sig := fmt.Sprintf("func %s(%s)", decl.Name, strings.Join(params, ", "))
-	if ret != "" {
+
+	switch {
+	case isApprovalFn && !isMain && ret != "":
+		sig += fmt.Sprintf(" (%s, error)", ret)
+	case isApprovalFn && !isMain && ret == "":
+		sig += " error"
+	case ret != "":
 		sig += " " + ret
 	}
 	return sig

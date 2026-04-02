@@ -45,11 +45,21 @@ func (e *Emitter) emitLetStmt(s *ast.LetStmt) {
 }
 
 func (e *Emitter) emitReturnStmt(s *ast.ReturnStmt) {
-	if s.Value == nil {
-		e.writeLine("return")
+	if !e.inApprovalFn {
+		if s.Value == nil {
+			e.writeLine("return")
+			return
+		}
+		e.writeLine("return %s", e.emitExprStr(s.Value))
 		return
 	}
-	e.writeLine("return %s", e.emitExprStr(s.Value))
+	// Inside an @approve or approval-propagating function (not main):
+	// append ", nil" to carry the error channel alongside the normal return value.
+	if s.Value == nil {
+		e.writeLine("return nil")
+		return
+	}
+	e.writeLine("return %s, nil", e.emitExprStr(s.Value))
 }
 
 func (e *Emitter) emitExprStmt(s *ast.ExprStmt) {
