@@ -142,6 +142,8 @@ func (e *Emitter) zeroValueFor(t ast.TypeExpr) string {
 			return "0.0"
 		case "Bool":
 			return "false"
+		case "List":
+			return "nil"
 		default:
 			return typ.Name + "{}"
 		}

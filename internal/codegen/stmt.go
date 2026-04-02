@@ -40,7 +40,7 @@ func (e *Emitter) emitLetStmt(s *ast.LetStmt) {
 	// Check if the RHS is a direct call to an @approve function.
 	// If so, unwrap the (T, error) return and handle denial.
 	if call, ok := s.Value.(*ast.CallExpr); ok {
-		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && e.approveFns[ident.Name] && (e.inApprovalFn || e.currentFnIsMain) {
+		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) && (e.inApprovalFn || e.currentFnIsMain) {
 			if e.currentFnIsMain {
 				// main() cannot return error — use graceful exit.
 				e.imports["fmt"] = true
@@ -98,7 +98,7 @@ func (e *Emitter) emitExprStmt(s *ast.ExprStmt) {
 	// Check if this is a direct call to an @approve function used as a statement
 	// (return value discarded). Handle the (T, error) or (error) return.
 	if call, ok := s.Expr.(*ast.CallExpr); ok {
-		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && e.approveFns[ident.Name] && (e.inApprovalFn || e.currentFnIsMain) {
+		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) && (e.inApprovalFn || e.currentFnIsMain) {
 			calleeDecl := e.fnDecls[ident.Name]
 			hasReturnVal := calleeDecl != nil && calleeDecl.ReturnType != nil
 

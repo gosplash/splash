@@ -412,6 +412,45 @@ fn run() -> Int {
 	}
 }
 
+func TestApproveCascadeTransitive(t *testing.T) {
+	// Three-level chain: top → middle → @approve charge
+	// Both middle and top must get (T, error) signatures and call-site error handling.
+	src := `
+module payments
+@approve
+fn charge(amount: Int) -> Int {
+    return amount
+}
+fn middle(amount: Int) -> Int {
+    let result = charge(amount)
+    return result
+}
+fn top(amount: Int) -> Int {
+    let result = middle(amount)
+    return result
+}
+`
+	out := emitSrcWithApproval(t, src)
+	mustGoSyntax(t, out)
+
+	// middle gets (int, error) via cascade
+	if !strings.Contains(out, "func middle(amount int) (int, error)") {
+		t.Errorf("expected middle() to get (int, error) return, got:\n%s", out)
+	}
+	// top gets (int, error) via transitive cascade
+	if !strings.Contains(out, "func top(amount int) (int, error)") {
+		t.Errorf("expected top() to get (int, error) return, got:\n%s", out)
+	}
+	// middle call site in top: multi-return + error check
+	if !strings.Contains(out, "result, err := middle(amount)") {
+		t.Errorf("expected multi-return call to middle() in top(), got:\n%s", out)
+	}
+	// Error propagated upward in top
+	if !strings.Contains(out, "return 0, err") {
+		t.Errorf("expected 'return 0, err' in top() cascade, got:\n%s", out)
+	}
+}
+
 func TestApproveMainExit(t *testing.T) {
 	src := `
 module main
