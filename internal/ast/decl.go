@@ -53,6 +53,7 @@ type TypeParam struct {
 
 // Param is a function parameter.
 type Param struct {
+	Doc      string
 	Name     string
 	Type     TypeExpr
 	Default  Expr
@@ -90,6 +91,7 @@ func (u *UseDecl) declNode()           {}
 
 // FunctionDecl declares a named function.
 type FunctionDecl struct {
+	Doc         string
 	Name        string
 	TypeParams  []TypeParam
 	Params      []Param

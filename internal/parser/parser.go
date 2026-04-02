@@ -239,6 +239,13 @@ func (p *Parser) parseUseDecl() *ast.UseDecl {
 
 // parseTopLevelDecl parses annotations then dispatches to the right declaration parser.
 func (p *Parser) parseTopLevelDecl() ast.Decl {
+	// collect leading doc comment (/// lines)
+	var docLines []string
+	for p.check(token.DOC_COMMENT) {
+		docLines = append(docLines, p.advance().Literal)
+	}
+	doc := strings.Join(docLines, "\n")
+
 	// collect leading annotations
 	var annots []ast.Annotation
 	for p.check(token.AT) {
@@ -248,10 +255,10 @@ func (p *Parser) parseTopLevelDecl() ast.Decl {
 
 	switch p.current().Kind {
 	case token.FN:
-		return p.parseFunctionDecl(annots, false)
+		return p.parseFunctionDecl(annots, false, doc)
 	case token.ASYNC:
 		p.advance() // consume async
-		return p.parseFunctionDecl(annots, true)
+		return p.parseFunctionDecl(annots, true, doc)
 	case token.TYPE:
 		return p.parseTypeDecl(annots)
 	case token.ENUM:
@@ -307,7 +314,7 @@ func (p *Parser) parseAnnotation() ast.Annotation {
 }
 
 // parseFunctionDecl parses: fn name[<TypeParams>](params) [needs Effects] [-> ReturnType] Block
-func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool) *ast.FunctionDecl {
+func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool, doc string) *ast.FunctionDecl {
 	pos := p.current().Pos
 	p.eat(token.FN)
 
@@ -338,6 +345,7 @@ func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool) *ast.F
 	body := p.parseBlockStmt()
 
 	return &ast.FunctionDecl{
+		Doc:         doc,
 		Name:        name.Literal,
 		TypeParams:  typeParams,
 		Params:      params,
@@ -400,6 +408,13 @@ func (p *Parser) parseParams() []ast.Param {
 
 // parseParam parses a single parameter: [...]name: Type [= default]
 func (p *Parser) parseParam() ast.Param {
+	// collect leading doc comment
+	var docLines []string
+	for p.check(token.DOC_COMMENT) {
+		docLines = append(docLines, p.advance().Literal)
+	}
+	doc := strings.Join(docLines, "\n")
+
 	pos := p.current().Pos
 	variadic := false
 	if p.check(token.DOT) && p.peek().Kind == token.DOT {
@@ -423,6 +438,7 @@ func (p *Parser) parseParam() ast.Param {
 	}
 
 	return ast.Param{
+		Doc:      doc,
 		Name:     name.Literal,
 		Type:     typ,
 		Default:  def,

@@ -132,3 +132,68 @@ expose greet, Greeting`
 		t.Fatalf("expected 2 exposes, got %d", len(file.Exposes))
 	}
 }
+
+func TestFunctionDecl_DocComment(t *testing.T) {
+	src := `
+module foo
+/// Greets the named person.
+fn greet(name: String) -> String {
+  return "hi"
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	if fn.Doc != "Greets the named person." {
+		t.Errorf("expected doc %q, got %q", "Greets the named person.", fn.Doc)
+	}
+}
+
+func TestFunctionDecl_MultiLineDocComment(t *testing.T) {
+	src := `
+module foo
+/// First line.
+/// Second line.
+fn greet(name: String) -> String {
+  return "hi"
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	want := "First line.\nSecond line."
+	if fn.Doc != want {
+		t.Errorf("expected doc %q, got %q", want, fn.Doc)
+	}
+}
+
+func TestFunctionDecl_NoDocComment(t *testing.T) {
+	src := `
+module foo
+fn greet(name: String) -> String {
+  return "hi"
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	if fn.Doc != "" {
+		t.Errorf("expected empty doc, got %q", fn.Doc)
+	}
+}
+
+func TestParam_DocComment(t *testing.T) {
+	src := `
+module foo
+@tool
+fn search(
+  /// The search query
+  query: String,
+  /// Max results to return
+  limit: Int,
+) -> String {
+  return query
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	if fn.Params[0].Doc != "The search query" {
+		t.Errorf("expected param[0].Doc %q, got %q", "The search query", fn.Params[0].Doc)
+	}
+	if fn.Params[1].Doc != "Max results to return" {
+		t.Errorf("expected param[1].Doc %q, got %q", "Max results to return", fn.Params[1].Doc)
+	}
+}
