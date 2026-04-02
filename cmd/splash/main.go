@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,12 +14,13 @@ import (
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/safety"
+	"gosplash.dev/splash/internal/toolschema"
 	"gosplash.dev/splash/internal/typechecker"
 )
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: splash <check|build> <file.splash> [-o output]")
+		fmt.Fprintln(os.Stderr, "usage: splash <check|build|tools> <file.splash> [-o output]")
 		os.Exit(1)
 	}
 	cmd, file := os.Args[1], os.Args[2]
@@ -37,6 +39,11 @@ func main() {
 			}
 		}
 		if err := runBuild(file, out); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "tools":
+		if err := runTools(file); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -146,4 +153,31 @@ func runBuild(path, out string) error {
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	return buildCmd.Run()
+}
+
+func runTools(path string) error {
+	f, err := parseFile(path)
+	if err != nil {
+		return err
+	}
+
+	tc := typechecker.New()
+	_, typeErrs := tc.Check(f)
+	for _, d := range typeErrs {
+		fmt.Fprintln(os.Stderr, d)
+	}
+	if len(typeErrs) > 0 {
+		return fmt.Errorf("type errors")
+	}
+
+	schemas := toolschema.Extract(f)
+	if schemas == nil {
+		schemas = []toolschema.ToolSchema{}
+	}
+	out, err := json.MarshalIndent(schemas, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(out))
+	return nil
 }
