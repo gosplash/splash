@@ -46,13 +46,24 @@ func newGlobals() *Env {
 	return globals
 }
 
+// builtinConstraints are constraint names the compiler recognizes without
+// a user declaration. Loggable is classification-gated: any type whose
+// classification exceeds LoggableMaxClassification cannot satisfy it.
+var builtinConstraints = map[string]*ast.ConstraintDecl{
+	"Loggable": {Name: "Loggable"},
+}
+
 func New() *TypeChecker {
-	return &TypeChecker{
+	tc := &TypeChecker{
 		globals:         newGlobals(),
 		typeDecls:       make(map[string]*ast.TypeDecl),
 		constraintDecls: make(map[string]*ast.ConstraintDecl),
 		fnDecls:         make(map[string]*ast.FunctionDecl),
 	}
+	for name, decl := range builtinConstraints {
+		tc.constraintDecls[name] = decl
+	}
+	return tc
 }
 
 // SetFileLoader configures user-defined module loading.
@@ -82,6 +93,9 @@ func (tc *TypeChecker) Check(file *ast.File) (*TypedFile, []diagnostic.Diagnosti
 	tc.globals = newGlobals()
 	tc.typeDecls = make(map[string]*ast.TypeDecl)
 	tc.constraintDecls = make(map[string]*ast.ConstraintDecl)
+	for name, decl := range builtinConstraints {
+		tc.constraintDecls[name] = decl
+	}
 	tc.fnDecls = make(map[string]*ast.FunctionDecl)
 	typed := &TypedFile{File: file, Types: make(map[ast.Node]types.Type)}
 	tc.pass1(file)
@@ -298,6 +312,11 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	env := NewEnv(tc.globals)
 	typeParamEnv := make(map[string]*types.TypeParamType)
 	for _, tp := range d.TypeParams {
+		for _, constraintName := range tp.Constraints {
+			if _, ok := tc.constraintDecls[constraintName]; !ok {
+				tc.errorf(d.Position, "unknown constraint %q in type parameter %s", constraintName, tp.Name)
+			}
+		}
 		tpt := &types.TypeParamType{Name: tp.Name, Constraints: tp.Constraints}
 		typeParamEnv[tp.Name] = tpt
 		env.Set(tp.Name, tpt)

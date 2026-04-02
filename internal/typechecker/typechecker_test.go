@@ -67,22 +67,19 @@ fn greet(name: String?) -> String {
 }
 
 func TestConstraintSatisfaction_Loggable_Sensitive(t *testing.T) {
-	// @sensitive field prevents Loggable satisfaction
+	// @sensitive field prevents Loggable satisfaction — no declaration needed
 	src := `
 module foo
-constraint Loggable {
-  fn to_log_string(self) -> String
-}
 type User {
-  id: String
-  @sensitive
-  email: String
+    id: String
+    @sensitive
+    email: String
 }
 fn log_user<T: Loggable>(val: T) -> String {
-  return val.to_log_string()
+    return "ok"
 }
 fn bad(u: User) -> String {
-  return log_user(u)
+    return log_user(u)
 }`
 	diags := check(src)
 	if !hasError(diags) {
@@ -91,20 +88,18 @@ fn bad(u: User) -> String {
 }
 
 func TestConstraintSatisfaction_PublicType_Loggable(t *testing.T) {
+	// Public types satisfy Loggable — no declaration needed
 	src := `
 module foo
-constraint Loggable {
-  fn to_log_string(self) -> String
-}
 type Point {
-  x: Int
-  y: Int
+    x: Int
+    y: Int
 }
 fn log_point<T: Loggable>(val: T) -> String {
-  return val.to_log_string()
+    return "ok"
 }
 fn ok_usage(p: Point) -> String {
-  return log_point(p)
+    return log_point(p)
 }`
 	diags := check(src)
 	if hasError(diags) {
@@ -487,5 +482,71 @@ fn charge() -> Int { return 0 }
 	})
 	if !hasError(diags) {
 		t.Errorf("expected error for circular import, got no errors")
+	}
+}
+
+// Loggable is a built-in constraint — programs must not need to declare it.
+
+func TestLoggable_BuiltIn_NoDeclarationNeeded(t *testing.T) {
+	// Loggable should be usable without declaring constraint Loggable { ... }
+	src := `
+module foo
+type Point {
+    x: Int
+    y: Int
+}
+fn log_it<T: Loggable>(val: T) -> String {
+    return "ok"
+}
+fn use_it(p: Point) -> String {
+    return log_it(p)
+}
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("Loggable should be built-in — no declaration required, got: %v", diags)
+	}
+}
+
+func TestLoggable_BuiltIn_SensitiveTypeRejected(t *testing.T) {
+	// @sensitive type must be rejected even without a constraint declaration
+	src := `
+module foo
+type User {
+    id: Int
+    @sensitive
+    email: String
+}
+fn log_it<T: Loggable>(val: T) -> String {
+    return "ok"
+}
+fn bad(u: User) -> String {
+    return log_it(u)
+}
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: User has @sensitive field and cannot satisfy built-in Loggable")
+	}
+}
+
+func TestLoggable_UnknownConstraint_Error(t *testing.T) {
+	// An undeclared, non-built-in constraint name should produce an error
+	src := `
+module foo
+type Point {
+    x: Int
+    y: Int
+}
+fn do_it<T: NonExistentConstraint>(val: T) -> String {
+    return "ok"
+}
+fn use_it(p: Point) -> String {
+    return do_it(p)
+}
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: NonExistentConstraint is not declared and not built-in")
 	}
 }
