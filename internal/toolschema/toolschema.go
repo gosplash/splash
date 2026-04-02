@@ -10,6 +10,7 @@ type ToolSchema struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description,omitempty"`
 	InputSchema InputSchema `json:"input_schema"`
+	Effects     []string    `json:"effects,omitempty"`
 }
 
 // InputSchema is the parameter schema for a tool. Always type "object".
@@ -45,6 +46,29 @@ func Extract(file *ast.File) []ToolSchema {
 	return tools
 }
 
+// ExtractReachable returns a ToolSchema for every @tool-annotated function
+// that appears in the agent-reachable set. Functions excluded by @redline or
+// @containment will not be in agentReachable and are silently omitted — their
+// absence from the output is the guarantee.
+func ExtractReachable(file *ast.File, agentReachable map[string]bool) []ToolSchema {
+	enumDecls := buildEnumIndex(file)
+	var tools []ToolSchema
+	for _, decl := range file.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		if !hasAnnotation(fn.Annotations, ast.AnnotTool) {
+			continue
+		}
+		if !agentReachable[fn.Name] {
+			continue
+		}
+		tools = append(tools, buildToolSchema(fn, enumDecls))
+	}
+	return tools
+}
+
 func hasAnnotation(anns []ast.Annotation, kind ast.AnnotationKind) bool {
 	for _, a := range anns {
 		if a.Kind == kind {
@@ -64,10 +88,15 @@ func buildToolSchema(fn *ast.FunctionDecl, enumDecls map[string]*ast.EnumDecl) T
 			prop.Description = p.Doc
 		}
 		props[p.Name] = prop
-		// Optional params (T?) are not in required[]
-		if _, isOptional := p.Type.(*ast.OptionalTypeExpr); !isOptional {
+		// Optional params (T?) and params with defaults are not in required[]
+		if _, isOptional := p.Type.(*ast.OptionalTypeExpr); !isOptional && p.Default == nil {
 			required = append(required, p.Name)
 		}
+	}
+
+	var effects []string
+	for _, e := range fn.Effects {
+		effects = append(effects, e.Name)
 	}
 
 	return ToolSchema{
@@ -78,5 +107,6 @@ func buildToolSchema(fn *ast.FunctionDecl, enumDecls map[string]*ast.EnumDecl) T
 			Properties: props,
 			Required:   required,
 		},
+		Effects: effects,
 	}
 }

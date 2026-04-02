@@ -220,3 +220,50 @@ fn internal() -> String { return "hidden" }
 		t.Fatalf("expected 2 schemas, got %d", len(schemas))
 	}
 }
+
+func TestToolSchema_EffectsField(t *testing.T) {
+	src := `
+module demo
+/// Find records by query.
+@tool
+fn search(query: String) needs DB.read, Net -> String { return query }
+`
+	toks := lexer.New("test.splash", src).Tokenize()
+	p := parser.New("test.splash", toks)
+	file, _ := p.ParseFile()
+
+	tools := toolschema.Extract(file)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	tool := tools[0]
+	if len(tool.Effects) != 2 {
+		t.Fatalf("expected 2 effects, got %v", tool.Effects)
+	}
+	if tool.Effects[0] != "DB.read" {
+		t.Errorf("expected effects[0] = DB.read, got %q", tool.Effects[0])
+	}
+	if tool.Effects[1] != "Net" {
+		t.Errorf("expected effects[1] = Net, got %q", tool.Effects[1])
+	}
+}
+
+func TestToolSchema_NoEffectsOmitted(t *testing.T) {
+	src := `
+module demo
+/// Simple tool with no effects.
+@tool
+fn ping() -> String { return "pong" }
+`
+	toks := lexer.New("test.splash", src).Tokenize()
+	p := parser.New("test.splash", toks)
+	file, _ := p.ParseFile()
+
+	tools := toolschema.Extract(file)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	if len(tools[0].Effects) != 0 {
+		t.Errorf("expected no effects, got %v", tools[0].Effects)
+	}
+}
