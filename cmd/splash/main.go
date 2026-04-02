@@ -136,10 +136,10 @@ func runEmit(path string) error {
 	}
 
 	g := callgraph.Build(f)
-	e := codegen.New()
-	e.SetApprovalCallers(g.Callers(collectApproveFns(f)))
 	merged := mergeFiles(tc.LoadedFiles(), f)
-	fmt.Print(e.EmitFile(merged))
+	fmt.Print(codegen.NewGoBackend().Emit(merged, codegen.Options{
+		ApprovalCallers: g.Callers(collectApproveFns(f)),
+	}))
 	return nil
 }
 
@@ -196,10 +196,10 @@ func runBuild(path, out string) error {
 		return fmt.Errorf("safety errors")
 	}
 
-	e := codegen.New()
-	e.SetApprovalCallers(g.Callers(collectApproveFns(f)))
 	merged := mergeFiles(tc.LoadedFiles(), f)
-	goSrc := e.EmitFile(merged)
+	goSrc := codegen.NewGoBackend().Emit(merged, codegen.Options{
+		ApprovalCallers: g.Callers(collectApproveFns(f)),
+	})
 
 	// splash build always produces an executable — package must be main
 	if f.Module != nil && f.Module.Name != "main" {

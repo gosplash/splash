@@ -1,4 +1,7 @@
 // Package codegen emits Go source from a Splash AST.
+// The Backend interface is the stable surface for driver code; the GoBackend
+// implementation wraps the Emitter. Future backends (LLVM, C) satisfy the
+// same interface without touching the CLI.
 package codegen
 
 import (
@@ -8,6 +11,33 @@ import (
 
 	"gosplash.dev/splash/internal/ast"
 )
+
+// Options carries per-compilation settings to a Backend.
+// Adding a new option here is the only change required when the compiler
+// gains a new capability that affects code generation.
+type Options struct {
+	// ApprovalCallers is the set of functions that transitively call any
+	// @approve function. The backend widens their return signatures to (T, error).
+	ApprovalCallers map[string]bool
+}
+
+// Backend is the interface a code generation backend must satisfy.
+// The CLI and driver code depend only on this interface — swapping the Go
+// backend for an LLVM or C backend requires no changes outside this package.
+type Backend interface {
+	Emit(f *ast.File, opts Options) string
+}
+
+// NewGoBackend returns the default Go source backend.
+func NewGoBackend() Backend { return &goBackend{} }
+
+type goBackend struct{}
+
+func (b *goBackend) Emit(f *ast.File, opts Options) string {
+	e := New()
+	e.SetApprovalCallers(opts.ApprovalCallers)
+	return e.EmitFile(f)
+}
 
 // Emitter accumulates Go source for a single Splash file.
 type Emitter struct {
