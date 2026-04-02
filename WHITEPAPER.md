@@ -75,7 +75,7 @@ Four design decisions carry most of the weight:
 ### Starting a Project
 
 ```splash
-$ splash new thatsermon-api
+$ splash new acme-api
 $ splash dev --adapters memory
   listening on :8080
   hot reload enabled
@@ -89,20 +89,20 @@ No Postgres. No Redis. No Docker. The `--adapters memory` flag wires every stdli
 // A function that reads from the database and calls an AI model.
 // Its capabilities are declared in the signature, not hidden in the body.
 
-async fn analyze(sermon_id: SermonId) needs DB, AI -> Result<SermonInsight, AppError>
+async fn analyze(doc_id: DocumentId) needs DB, AI -> Result<DocumentInsight, AppError>
 {
-  let sermon = try db.find(Sermon, sermon_id)
-  return ai.prompt<SermonInsight>({
+  let doc = try db.find(Document, doc_id)
+  return ai.prompt<DocumentInsight>({
     model:   "claude-opus-4-6",
-    system:  "You are a biblical scholar.",
-    input:   sermon.transcript,
+    system:  "You are a document analyst.",
+    input:   doc.content,
     budget:  Cost.usd(0.05),
     timeout: 30.seconds,
   })
 }
 ```
 
-`ai.prompt<SermonInsight>` uses the `SermonInsight` type as the structured output schema and as the validation contract. The type is the JSON Schema. When the model returns, Splash validates the response against the type before returning to the caller. No hand-written schema. No separate validation step. One source of truth for humans, agents, and the compiler.
+`ai.prompt<DocumentInsight>` uses the `DocumentInsight` type as the structured output schema and as the validation contract. The type is the JSON Schema. When the model returns, Splash validates the response against the type before returning to the caller. No hand-written schema. No separate validation step. One source of truth for humans, agents, and the compiler.
 
 ### Data That Can't Leak
 
@@ -129,15 +129,15 @@ The `@sensitive` annotation isn't a warning. The `Email` type no longer satisfie
 ### Making a Function AI-Callable
 
 ```splash
-/// Search sermons by theme, speaker, or scripture reference.
+/// Search documents by topic, author, or keyword.
 @tool
-fn search_sermons(
-  /// The search query — theme, topic, or verse reference
+fn search_documents(
+  /// The search query — topic, keyword, or author name
   query:   String,
   limit:   Int     = 10,
-  speaker: String?,
-  book:    String?,
-) needs DB -> List<SermonResult> { ... }
+  author:  String?,
+  tag:     String?,
+) needs DB -> List<DocumentResult> { ... }
 ```
 
 `@tool` turns any function into an AI-callable tool. The doc comment becomes the tool description. The type signature becomes the JSON Schema. The same source is the implementation, the schema, and the documentation.
@@ -148,7 +148,7 @@ fn search_sermons(
 @sandbox(allow: [DB.read, AI], deny: [Net, FS, DB.write])
 @budget(max_cost: Cost.usd(0.50), max_calls: 20)
 async fn answer_question(q: String) needs Agent -> Result<Answer, AgentError> {
-  return agent.execute(q, tools: [search_sermons, lookup_verse])
+  return agent.execute(q, tools: [search_documents, lookup_reference])
 }
 ```
 
@@ -469,9 +469,9 @@ These aren't controls you configure. They're properties of the language. There i
 ```splash
 // splash.policy — enforced at build time
 
-policy "owyhee-holdings" {
+policy "acme" {
   deny_effects:           [FS]
-  net_proxy:              "https://egress.internal.owyhee.dev"
+  net_proxy:              "https://egress.corp.internal"
   require_publisher:      verified
   max_dep_effects:        2
   block_vulnerabilities:  critical, high
@@ -600,9 +600,9 @@ This is not incidental. It means Splash's safety infrastructure is available to 
 Every function annotated `@tool` becomes callable by any AI agent running in a Splash runtime:
 
 ```splash
-/// Search sermons by theme, speaker, or scripture reference.
+/// Search documents by topic, author, or keyword.
 @tool
-fn search_sermons(query: String, limit: Int = 10) -> List<SermonResult>
+fn search_documents(query: String, limit: Int = 10) -> List<DocumentResult>
   needs DB { ... }
 ```
 
