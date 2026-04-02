@@ -3,6 +3,8 @@ package typechecker
 import (
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/diagnostic"
+	"gosplash.dev/splash/internal/lexer"
+	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/token"
 	"gosplash.dev/splash/internal/types"
 )
@@ -13,12 +15,23 @@ type TypedFile struct {
 	Types map[ast.Node]types.Type
 }
 
+// moduleState is shared across the entire import chain (main file + all transitive imports).
+// It prevents loading the same module twice and detects circular dependencies.
+type moduleState struct {
+	fileLoader  func(path string) ([]byte, error) // nil = no filesystem loading
+	baseDir     string                             // directory of the main file
+	loadedFiles []*ast.File                        // files in load order (imports before importers)
+	cache       map[string]*ast.File               // path → file (dedup)
+	loading     map[string]bool                    // currently-loading paths (cycle detection)
+}
+
 type TypeChecker struct {
 	globals         *Env
 	typeDecls       map[string]*ast.TypeDecl
 	constraintDecls map[string]*ast.ConstraintDecl
 	fnDecls         map[string]*ast.FunctionDecl
 	diags           []diagnostic.Diagnostic
+	modules         *moduleState // nil if no loader configured
 }
 
 func newGlobals() *Env {
@@ -38,6 +51,28 @@ func New() *TypeChecker {
 		constraintDecls: make(map[string]*ast.ConstraintDecl),
 		fnDecls:         make(map[string]*ast.FunctionDecl),
 	}
+}
+
+// SetFileLoader configures user-defined module loading.
+// baseDir is the directory to resolve relative import paths from.
+// loader reads a file by path; in tests, an in-memory map works.
+func (tc *TypeChecker) SetFileLoader(baseDir string, loader func(path string) ([]byte, error)) {
+	tc.modules = &moduleState{
+		fileLoader:  loader,
+		baseDir:     baseDir,
+		cache:       make(map[string]*ast.File),
+		loading:     make(map[string]bool),
+	}
+}
+
+// LoadedFiles returns all files loaded transitively during Check(), in load
+// order (imports before importers). The main file is NOT included.
+// Used by the CLI to merge imported declarations into codegen.
+func (tc *TypeChecker) LoadedFiles() []*ast.File {
+	if tc.modules == nil {
+		return nil
+	}
+	return tc.modules.loadedFiles
 }
 
 func (tc *TypeChecker) Check(file *ast.File) (*TypedFile, []diagnostic.Diagnostic) {
@@ -80,6 +115,93 @@ func (tc *TypeChecker) processUseDecl(u *ast.UseDecl) {
 		// Inject 'ai' as an AIAdapter instance and 'AIError' as a named type.
 		tc.globals.Set("ai", types.Named("AIAdapter"))
 		tc.globals.Set("AIError", types.Named("AIError"))
+	default:
+		tc.loadUserModule(u)
+	}
+}
+
+func (tc *TypeChecker) loadUserModule(u *ast.UseDecl) {
+	if tc.modules == nil || tc.modules.fileLoader == nil {
+		tc.errorf(u.Position, "cannot import module %q: no file loader configured", u.Path)
+		return
+	}
+
+	// Resolve: "billing" → "billing.splash", "app/users" → "app/users.splash"
+	filePath := u.Path + ".splash"
+
+	// Cycle detection
+	if tc.modules.loading[filePath] {
+		tc.errorf(u.Position, "circular import: %q is already being loaded", u.Path)
+		return
+	}
+
+	// Cache hit
+	if cached, ok := tc.modules.cache[filePath]; ok {
+		tc.injectModule(cached)
+		return
+	}
+
+	// Load and parse
+	src, err := tc.modules.fileLoader(filePath)
+	if err != nil {
+		tc.errorf(u.Position, "cannot load module %q: %v", u.Path, err)
+		return
+	}
+
+	toks := lexer.New(filePath, string(src)).Tokenize()
+	p := parser.New(filePath, toks)
+	imported, diags := p.ParseFile()
+	for _, d := range diags {
+		tc.diags = append(tc.diags, d)
+	}
+	if imported == nil {
+		return
+	}
+
+	// Mark loading, type-check, unmark
+	tc.modules.loading[filePath] = true
+	sub := New()
+	sub.modules = tc.modules // share state for transitive imports
+	_, subDiags := sub.Check(imported)
+	tc.diags = append(tc.diags, subDiags...)
+	delete(tc.modules.loading, filePath)
+
+	// Cache and record
+	tc.modules.cache[filePath] = imported
+	tc.modules.loadedFiles = append(tc.modules.loadedFiles, imported)
+
+	// Inject symbols
+	tc.injectModule(imported)
+}
+
+// injectModule copies exported types, functions, and constraints from an
+// imported file into this checker's namespace.
+// If the file has an expose list, only listed names are injected.
+// Otherwise all declarations are injected.
+func (tc *TypeChecker) injectModule(f *ast.File) {
+	exposed := make(map[string]bool)
+	for _, name := range f.Exposes {
+		exposed[name] = true
+	}
+	exportAll := len(f.Exposes) == 0
+
+	for _, decl := range f.Declarations {
+		switch d := decl.(type) {
+		case *ast.TypeDecl:
+			if exportAll || exposed[d.Name] {
+				tc.typeDecls[d.Name] = d
+				tc.globals.Set(d.Name, tc.buildNamedType(d))
+			}
+		case *ast.FunctionDecl:
+			if exportAll || exposed[d.Name] {
+				tc.fnDecls[d.Name] = d
+				tc.globals.Set(d.Name, tc.buildFunctionType(d))
+			}
+		case *ast.ConstraintDecl:
+			if exportAll || exposed[d.Name] {
+				tc.constraintDecls[d.Name] = d
+			}
+		}
 	}
 }
 
