@@ -72,6 +72,87 @@ func (g *Graph) Reachable(roots []string) map[string]bool {
 	return visited
 }
 
+// Callers returns the set of all functions that transitively call any function
+// in targets. The targets themselves are included in the result.
+// This is reverse reachability: BFS backwards through the call graph.
+func (g *Graph) Callers(targets map[string]bool) map[string]bool {
+	// Build reverse adjacency: callee → []callers
+	reverse := make(map[string][]string)
+	for name, node := range g.nodes {
+		for callee := range node.callees {
+			reverse[callee] = append(reverse[callee], name)
+		}
+	}
+	// BFS backwards from every target
+	visited := make(map[string]bool)
+	queue := make([]string, 0, len(targets))
+	for name := range targets {
+		queue = append(queue, name)
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if visited[cur] {
+			continue
+		}
+		visited[cur] = true
+		for _, caller := range reverse[cur] {
+			if !visited[caller] {
+				queue = append(queue, caller)
+			}
+		}
+	}
+	return visited
+}
+
+// Parents performs a BFS from the given root function names and returns a
+// spanning-tree parent map: each reachable function name maps to the name of
+// the function that first reached it. Roots map to the empty string.
+func (g *Graph) Parents(roots []string) map[string]string {
+	parents := make(map[string]string)
+	queue := append([]string(nil), roots...)
+	for _, r := range roots {
+		parents[r] = ""
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		node := g.nodes[cur]
+		if node == nil {
+			continue
+		}
+		for callee := range node.callees {
+			if _, seen := parents[callee]; !seen {
+				parents[callee] = cur
+				queue = append(queue, callee)
+			}
+		}
+	}
+	return parents
+}
+
+// PathTo reconstructs the call path from an agent root to target using the
+// parent map returned by Parents. Returns nil if target is not reachable.
+func PathTo(parents map[string]string, target string) []string {
+	if _, ok := parents[target]; !ok {
+		return nil
+	}
+	var path []string
+	for cur := target; ; {
+		path = append(path, cur)
+		p := parents[cur]
+		if p == "" {
+			break
+		}
+		cur = p
+	}
+	// reverse: path was built from target back to root
+	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
+		path[i], path[j] = path[j], path[i]
+	}
+	return path
+}
+
 // Build constructs a call graph by walking all function declarations in file.
 func Build(file *ast.File) *Graph {
 	g := &Graph{nodes: make(map[string]*Node)}
