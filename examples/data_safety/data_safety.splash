@@ -16,8 +16,10 @@ module users
 type User {
     id:           Int
     display_name: String
+
     @sensitive
     email:        String
+
     @restricted
     ssn:          String?
 }
