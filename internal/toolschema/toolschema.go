@@ -29,7 +29,54 @@ type SchemaProperty struct {
 }
 
 // Extract returns a ToolSchema for every @tool-annotated function in file.
-// (Stub — implemented in Task 4.)
 func Extract(file *ast.File) []ToolSchema {
-	return nil
+	enumDecls := buildEnumIndex(file)
+	var tools []ToolSchema
+	for _, decl := range file.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		if !hasAnnotation(fn.Annotations, ast.AnnotTool) {
+			continue
+		}
+		tools = append(tools, buildToolSchema(fn, enumDecls))
+	}
+	return tools
+}
+
+func hasAnnotation(anns []ast.Annotation, kind ast.AnnotationKind) bool {
+	for _, a := range anns {
+		if a.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func buildToolSchema(fn *ast.FunctionDecl, enumDecls map[string]*ast.EnumDecl) ToolSchema {
+	props := make(map[string]*SchemaProperty)
+	var required []string
+
+	for _, p := range fn.Params {
+		prop := typeExprToSchema(p.Type, enumDecls)
+		if p.Doc != "" {
+			prop.Description = p.Doc
+		}
+		props[p.Name] = prop
+		// Optional params (T?) are not in required[]
+		if _, isOptional := p.Type.(*ast.OptionalTypeExpr); !isOptional {
+			required = append(required, p.Name)
+		}
+	}
+
+	return ToolSchema{
+		Name:        fn.Name,
+		Description: fn.Doc,
+		InputSchema: InputSchema{
+			Type:       "object",
+			Properties: props,
+			Required:   required,
+		},
+	}
 }
