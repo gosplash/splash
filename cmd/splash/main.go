@@ -82,6 +82,7 @@ func runCheck(path string) error {
 	}
 
 	tc := typechecker.New()
+	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
 	_, typeErrs := tc.Check(f)
 	for _, d := range typeErrs {
 		fmt.Fprintln(os.Stderr, d)
@@ -123,11 +124,45 @@ func runEmit(path string) error {
 	if err != nil {
 		return err
 	}
+
+	tc := typechecker.New()
+	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
+	_, typeErrs := tc.Check(f)
+	for _, d := range typeErrs {
+		fmt.Fprintln(os.Stderr, d)
+	}
+	if len(typeErrs) > 0 {
+		return fmt.Errorf("type errors")
+	}
+
 	g := callgraph.Build(f)
 	e := codegen.New()
 	e.SetApprovalCallers(g.Callers(collectApproveFns(f)))
-	fmt.Print(e.EmitFile(f))
+	merged := mergeFiles(tc.LoadedFiles(), f)
+	fmt.Print(e.EmitFile(merged))
 	return nil
+}
+
+// mergeFiles builds a combined ast.File where all imported files' declarations
+// come first (in load order), followed by the main file's declarations.
+// The main file's module declaration and package name are preserved.
+// This ensures imported types are defined before the main file references them
+// in the generated Go output.
+func mergeFiles(imported []*ast.File, main *ast.File) *ast.File {
+	if len(imported) == 0 {
+		return main
+	}
+	merged := &ast.File{
+		Module:   main.Module,
+		Exposes:  main.Exposes,
+		Uses:     main.Uses,
+		Position: main.Position,
+	}
+	for _, f := range imported {
+		merged.Declarations = append(merged.Declarations, f.Declarations...)
+	}
+	merged.Declarations = append(merged.Declarations, main.Declarations...)
+	return merged
 }
 
 func runBuild(path, out string) error {
@@ -142,6 +177,7 @@ func runBuild(path, out string) error {
 	}
 
 	tc := typechecker.New()
+	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
 	_, typeErrs := tc.Check(f)
 	for _, d := range typeErrs {
 		fmt.Fprintln(os.Stderr, d)
@@ -162,7 +198,8 @@ func runBuild(path, out string) error {
 
 	e := codegen.New()
 	e.SetApprovalCallers(g.Callers(collectApproveFns(f)))
-	goSrc := e.EmitFile(f)
+	merged := mergeFiles(tc.LoadedFiles(), f)
+	goSrc := e.EmitFile(merged)
 
 	// splash build always produces an executable — package must be main
 	if f.Module != nil && f.Module.Name != "main" {
@@ -197,6 +234,7 @@ func runTools(path string) error {
 	}
 
 	tc := typechecker.New()
+	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
 	_, typeErrs := tc.Check(f)
 	for _, d := range typeErrs {
 		fmt.Fprintln(os.Stderr, d)
