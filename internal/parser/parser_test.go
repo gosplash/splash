@@ -229,3 +229,81 @@ fn search(query: String) -> String {
 		t.Errorf("expected empty doc when no /// precedes the fn, got %q", fn.Doc)
 	}
 }
+
+func TestParseSandboxAnnotation(t *testing.T) {
+	src := `
+module demo
+@sandbox(allow: [DB.read, AI], deny: [Net, FS, DB.write])
+@budget(max_cost: 0.50, max_calls: 20)
+async fn answer_question(q: String) needs Agent -> String { return q }
+`
+	file := parse(t, src)
+	if len(file.Declarations) != 1 {
+		t.Fatalf("expected 1 declaration, got %d", len(file.Declarations))
+	}
+	fn, ok := file.Declarations[0].(*ast.FunctionDecl)
+	if !ok {
+		t.Fatal("expected FunctionDecl")
+	}
+	if len(fn.Annotations) != 2 {
+		t.Fatalf("expected 2 annotations (@sandbox, @budget), got %d", len(fn.Annotations))
+	}
+	if fn.Annotations[0].Kind != ast.AnnotSandbox {
+		t.Errorf("expected first annotation to be @sandbox, got %v", fn.Annotations[0].Kind)
+	}
+	if fn.Annotations[1].Kind != ast.AnnotBudget {
+		t.Errorf("expected second annotation to be @budget, got %v", fn.Annotations[1].Kind)
+	}
+	allowVal, ok := fn.Annotations[0].Args["allow"]
+	if !ok {
+		t.Fatal("expected @sandbox to have 'allow' arg")
+	}
+	allowList, ok := allowVal.(*ast.ListLiteral)
+	if !ok {
+		t.Fatalf("expected 'allow' to be *ast.ListLiteral, got %T", allowVal)
+	}
+	if len(allowList.Elements) != 2 {
+		t.Errorf("expected 'allow' list to have 2 elements, got %d", len(allowList.Elements))
+	}
+	denyVal, ok := fn.Annotations[0].Args["deny"]
+	if !ok {
+		t.Fatal("expected @sandbox to have 'deny' arg")
+	}
+	denyList, ok := denyVal.(*ast.ListLiteral)
+	if !ok {
+		t.Fatalf("expected 'deny' to be *ast.ListLiteral, got %T", denyVal)
+	}
+	if len(denyList.Elements) != 3 {
+		t.Errorf("expected 'deny' list to have 3 elements, got %d", len(denyList.Elements))
+	}
+}
+
+func TestParseBudgetAnnotationArgs(t *testing.T) {
+	src := `
+module demo
+@budget(max_cost: 0.50, max_calls: 20)
+async fn run_agent(goal: String) needs Agent -> String { return goal }
+`
+	file := parse(t, src)
+	fn, ok := file.Declarations[0].(*ast.FunctionDecl)
+	if !ok {
+		t.Fatal("expected FunctionDecl")
+	}
+	if fn.Annotations[0].Kind != ast.AnnotBudget {
+		t.Errorf("expected @budget annotation")
+	}
+	maxCostVal, ok := fn.Annotations[0].Args["max_cost"]
+	if !ok {
+		t.Fatal("expected @budget to have 'max_cost' arg")
+	}
+	if _, ok := maxCostVal.(*ast.FloatLiteral); !ok {
+		t.Errorf("expected 'max_cost' to be *ast.FloatLiteral, got %T", maxCostVal)
+	}
+	maxCallsVal, ok := fn.Annotations[0].Args["max_calls"]
+	if !ok {
+		t.Fatal("expected @budget to have 'max_calls' arg")
+	}
+	if _, ok := maxCallsVal.(*ast.IntLiteral); !ok {
+		t.Errorf("expected 'max_calls' to be *ast.IntLiteral, got %T", maxCallsVal)
+	}
+}
