@@ -15,43 +15,29 @@ type Emitter struct {
 	imports       map[string]bool
 	indent        int
 	needsCoalesce bool
-	needsAudit    bool
-	approvedFns   map[string]bool
+	needsApproval bool
 }
 
 // New creates a ready-to-use Emitter.
 func New() *Emitter {
 	return &Emitter{
-		imports:     make(map[string]bool),
-		approvedFns: make(map[string]bool),
+		imports: make(map[string]bool),
 	}
 }
 
 // EmitFile generates a complete Go source file from a Splash AST.
 func (e *Emitter) EmitFile(f *ast.File) string {
-	// Pass 1: collect @approve function names
-	for _, decl := range f.Declarations {
-		fn, ok := decl.(*ast.FunctionDecl)
-		if !ok {
-			continue
-		}
-		for _, ann := range fn.Annotations {
-			if ann.Kind == ast.AnnotApprove {
-				e.approvedFns[fn.Name] = true
-			}
-		}
-	}
-
-	// Pass 2: emit declarations into body buffer
+	// Emit declarations into body buffer
 	for _, decl := range f.Declarations {
 		e.emitDecl(decl)
 	}
 
-	// Helpers need imports — add them after body emission
-	if e.needsAudit {
-		e.imports["encoding/json"] = true
+	// Helpers need imports — add after body emission
+	if e.needsApproval {
+		e.imports["bufio"] = true
+		e.imports["fmt"] = true
 		e.imports["os"] = true
-		e.imports["time"] = true
+		e.imports["strings"] = true
 	}
 
 	// Assemble: package + imports + helpers + body
@@ -64,7 +50,6 @@ func (e *Emitter) EmitFile(f *ast.File) string {
 
 	if len(e.imports) > 0 {
 		out.WriteString("import (\n")
-		// Collect and sort imports for deterministic output
 		importList := make([]string, 0, len(e.imports))
 		for imp := range e.imports {
 			importList = append(importList, imp)
@@ -80,8 +65,8 @@ func (e *Emitter) EmitFile(f *ast.File) string {
 		out.WriteString(splashCoalesceHelper)
 		out.WriteString("\n")
 	}
-	if e.needsAudit {
-		out.WriteString(splashAuditHelper)
+	if e.needsApproval {
+		out.WriteString(splashApprovalHelper)
 		out.WriteString("\n")
 	}
 
@@ -151,9 +136,42 @@ const splashCoalesceHelper = `func splashCoalesce[T any](val *T, fallback T) T {
 }
 `
 
-const splashAuditHelper = `func splashAudit(fn string, ts time.Time) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.Encode(map[string]any{"fn": fn, "ts": ts.Format(time.RFC3339)})
+const splashApprovalHelper = `// ApprovalAdapter is the interface for @approve gate implementations.
+// Request blocks until the named function is approved.
+// Return nil to approve; return an error to deny.
+// StdinApproval (the default) loops until the operator types y — it never returns an error.
+// Production adapters (SlackApproval, WebhookApproval) can return ApprovalError on denial;
+// full denial handling via Result<T, ApprovalError> is Phase 4b.
+type ApprovalAdapter interface {
+	Request(name string) error
+}
+
+var _splashApproval ApprovalAdapter = &splashStdinApproval{}
+
+// SetApprovalAdapter replaces the package-level approval adapter.
+// Call this in tests or in production main() before any @approve function runs.
+func SetApprovalAdapter(a ApprovalAdapter) { _splashApproval = a }
+
+type splashStdinApproval struct{}
+
+func (*splashStdinApproval) Request(name string) error {
+	for {
+		fmt.Fprintf(os.Stderr, "[approve] %s — approve? (y/N): ", name)
+		reader := bufio.NewReader(os.Stdin)
+		line, _ := reader.ReadString('\n')
+		if strings.TrimSpace(strings.ToLower(line)) == "y" {
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "Not approved. Try again or Ctrl+C to abort.\n")
+	}
+}
+
+func splashApprove(name string) {
+	if err := _splashApproval.Request(name); err != nil {
+		// StdinApproval never reaches here.
+		// Phase 4b production adapters return denial errors — handled via Result<T, ApprovalError>.
+		panic(fmt.Sprintf("approval denied for %s: %v", name, err))
+	}
 }
 `
 

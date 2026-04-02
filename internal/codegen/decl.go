@@ -49,6 +49,13 @@ func (e *Emitter) emitFunctionDecl(decl *ast.FunctionDecl) {
 	sig := e.funcSignature(decl)
 	e.writef("%s {\n", sig)
 	e.indent++
+	for _, ann := range decl.Annotations {
+		if ann.Kind == ast.AnnotApprove {
+			e.needsApproval = true
+			e.writeLine("splashApprove(%q)", decl.Name)
+			break
+		}
+	}
 	e.emitBlock(decl.Body)
 	e.indent--
 	e.writeLine("}\n")

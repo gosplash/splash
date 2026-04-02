@@ -49,24 +49,10 @@ func (e *Emitter) emitReturnStmt(s *ast.ReturnStmt) {
 		e.writeLine("return")
 		return
 	}
-	// @approve call inside return: emit audit first
-	if call, ok := s.Value.(*ast.CallExpr); ok {
-		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && e.approvedFns[ident.Name] {
-			e.needsAudit = true
-			e.writeLine("splashAudit(%q, time.Now())", ident.Name)
-		}
-	}
 	e.writeLine("return %s", e.emitExprStr(s.Value))
 }
 
 func (e *Emitter) emitExprStmt(s *ast.ExprStmt) {
-	// @approve call as a statement: emit audit first
-	if call, ok := s.Expr.(*ast.CallExpr); ok {
-		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && e.approvedFns[ident.Name] {
-			e.needsAudit = true
-			e.writeLine("splashAudit(%q, time.Now())", ident.Name)
-		}
-	}
 	e.writeLine("%s", e.emitExprStr(s.Expr))
 }
 
