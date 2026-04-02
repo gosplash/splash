@@ -364,6 +364,17 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 	if ident, ok2 := e.Callee.(*ast.Ident); ok2 {
 		calleeName = ident.Name
 	}
+
+	// Classification check for println: @sensitive types must not be logged.
+	if calleeName == "println" {
+		for i, argType := range argTypes {
+			if argType.Classification() > types.LoggableMaxClassification {
+				tc.errorf(e.Args[i].Pos(), "cannot pass @sensitive type %s to println — use a public accessor or a type that satisfies Loggable",
+					argType.TypeName())
+			}
+		}
+	}
+
 	if calleeName != "" {
 		if fnDecl, found := tc.fnDecls[calleeName]; found && len(fnDecl.TypeParams) > 0 {
 			// Build a map from type param name -> inferred concrete type from args.

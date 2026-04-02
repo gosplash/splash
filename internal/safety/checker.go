@@ -27,7 +27,77 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnos
 	diags = append(diags, c.checkRedline(file, g, agentParents)...)
 	diags = append(diags, c.checkApprove(file, g, agentReachable)...)
 	diags = append(diags, c.checkContainment(file, g, agentReachable)...)
+	diags = append(diags, c.checkToolDataClassification(file)...)
 
+	return diags
+}
+
+// sensitiveFields returns the names of @sensitive or @restricted fields in a type declaration.
+func sensitiveFields(decl *ast.TypeDecl) []string {
+	var names []string
+	for _, field := range decl.Fields {
+		for _, ann := range field.Annotations {
+			if ann.Kind == ast.AnnotSensitive || ann.Kind == ast.AnnotRestricted {
+				names = append(names, field.Name)
+				break
+			}
+		}
+	}
+	return names
+}
+
+// checkToolDataClassification emits an error for every @tool function whose
+// return type contains @sensitive or @restricted fields.
+// PII in a tool's return value flows directly into the AI agent's context window.
+func (c *Checker) checkToolDataClassification(file *ast.File) []diagnostic.Diagnostic {
+	// Build a map of type name → sensitive field names for fast lookup.
+	typeFields := make(map[string][]string)
+	for _, decl := range file.Declarations {
+		td, ok := decl.(*ast.TypeDecl)
+		if !ok {
+			continue
+		}
+		if sf := sensitiveFields(td); len(sf) > 0 {
+			typeFields[td.Name] = sf
+		}
+	}
+
+	var diags []diagnostic.Diagnostic
+	for _, decl := range file.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		// Only check @tool functions.
+		hasTool := false
+		for _, ann := range fn.Annotations {
+			if ann.Kind == ast.AnnotTool {
+				hasTool = true
+				break
+			}
+		}
+		if !hasTool {
+			continue
+		}
+		// Unwrap optional return type: User? → User
+		retType := fn.ReturnType
+		if opt, ok := retType.(*ast.OptionalTypeExpr); ok {
+			retType = opt.Inner
+		}
+		named, ok := retType.(*ast.NamedTypeExpr)
+		if !ok {
+			continue
+		}
+		if sf, bad := typeFields[named.Name]; bad {
+			diags = append(diags, diagnostic.Errorf(
+				fn.Position,
+				"@tool function %q returns type %s which contains @sensitive fields (%s) — PII would flow into the AI agent's context",
+				fn.Name,
+				named.Name,
+				strings.Join(sf, ", "),
+			))
+		}
+	}
 	return diags
 }
 
