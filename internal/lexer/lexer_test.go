@@ -98,3 +98,42 @@ func TestLexerCommentStripped(t *testing.T) {
 		t.Errorf("expected IDENT 'foo', got %v", toks[1])
 	}
 }
+
+func TestDocComment_EmitsToken(t *testing.T) {
+	toks := tokens("/// hello world")
+	if len(toks) < 2 {
+		t.Fatalf("expected at least 2 tokens, got %d", len(toks))
+	}
+	if toks[0].Kind != token.DOC_COMMENT {
+		t.Errorf("expected DOC_COMMENT, got kind %d literal %q", toks[0].Kind, toks[0].Literal)
+	}
+	if toks[0].Literal != "hello world" {
+		t.Errorf("expected literal %q, got %q", "hello world", toks[0].Literal)
+	}
+}
+
+func TestDocComment_RegularCommentSkipped(t *testing.T) {
+	toks := tokens("// not a doc\nfoo")
+	if toks[0].Kind == token.DOC_COMMENT {
+		t.Error("regular // comment should be skipped, not emitted as DOC_COMMENT")
+	}
+	if toks[0].Kind != token.IDENT || toks[0].Literal != "foo" {
+		t.Errorf("expected IDENT(foo), got kind %d literal %q", toks[0].Kind, toks[0].Literal)
+	}
+}
+
+func TestDocComment_MultiLine(t *testing.T) {
+	toks := tokens("/// line one\n/// line two\nfn")
+	if len(toks) < 3 {
+		t.Fatalf("expected at least 3 tokens, got %d", len(toks))
+	}
+	if toks[0].Kind != token.DOC_COMMENT || toks[0].Literal != "line one" {
+		t.Errorf("first doc comment: got kind %d literal %q", toks[0].Kind, toks[0].Literal)
+	}
+	if toks[1].Kind != token.DOC_COMMENT || toks[1].Literal != "line two" {
+		t.Errorf("second doc comment: got kind %d literal %q", toks[1].Kind, toks[1].Literal)
+	}
+	if toks[2].Kind != token.FN {
+		t.Errorf("expected FN after doc comments, got kind %d", toks[2].Kind)
+	}
+}

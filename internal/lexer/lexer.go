@@ -90,7 +90,10 @@ func (l *Lexer) skipWhitespace() {
 		case ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n':
 			l.advance()
 		case ch == '/' && l.peek() == '/':
-			// Line comment: skip to end of line
+			if l.peekAt(2) == '/' {
+				return // doc comment — let nextToken handle it
+			}
+			// Regular line comment: skip to end of line
 			for l.current() != '\n' && l.current() != 0 {
 				l.advance()
 			}
@@ -292,6 +295,25 @@ func (l *Lexer) nextToken() token.Token {
 		return token.Token{Kind: token.STAR, Literal: "*", Pos: pos}
 
 	case '/':
+		if l.peek() == '/' && l.peekAt(2) == '/' {
+			// Doc comment: consume "///" plus optional leading space
+			l.advance() // first /
+			l.advance() // second /
+			l.advance() // third /
+			if l.current() == ' ' {
+				l.advance() // strip one leading space
+			}
+			start := l.pos
+			for l.current() != '\n' && l.current() != 0 {
+				l.advance()
+			}
+			// trim trailing whitespace
+			src := l.src[start:l.pos]
+			for len(src) > 0 && (src[len(src)-1] == ' ' || src[len(src)-1] == '\t' || src[len(src)-1] == '\r') {
+				src = src[:len(src)-1]
+			}
+			return token.Token{Kind: token.DOC_COMMENT, Literal: string(src), Pos: pos}
+		}
 		l.advance()
 		return token.Token{Kind: token.SLASH, Literal: "/", Pos: pos}
 

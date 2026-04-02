@@ -76,7 +76,8 @@ const (
 	RBRACE
 	LBRACKET
 	RBRACKET
-	AT // @ annotation prefix
+	AT          // @ annotation prefix
+	DOC_COMMENT // /// doc comment (literal is text after "/// ", trimmed)
 )
 
 var keywords = map[string]Kind{
