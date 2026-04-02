@@ -231,7 +231,7 @@ go build ./cmd/splash/...
 | `use std/ai` + `ai.prompt<T>` type checking | ✅ Complete |
 | Effects field in tool schema output | ✅ Complete |
 | Member access type resolution | ✅ Complete |
-| `@approve` denial / `Result<T, ApprovalError>` | Planned — Phase 4b |
+| `@approve` denial / error cascade (`(T, error)` Go signatures) | ✅ Complete (Phase 4b) |
 | `@sandbox` / `@budget` enforcement | Planned — Phase 4 |
 | `std/db` stdlib | Planned — Phase 4 |
 | `@sensitive` / `Loggable` constraint enforcement | Planned — Phase 4 |

@@ -264,9 +264,14 @@ async fn charge_card(amount: Money, method: PaymentMethod) needs Net -> Result<C
 { ... }
 ```
 
-At every agent-reachable call site for an `@approve` function, the return type is `Result<T, ApprovalError>`. The caller is forced to handle `Denied` and `Timeout` as real failure modes — not optional edge cases.
+`@approve` is a precondition, not a return type modifier. The function's declared type is unchanged — `charge_card` returns a `Charge`. The annotation means "this function does not execute until the adapter approves." If the adapter denies, the function body never runs. The Splash programmer writes normal code; the compiler and runtime handle the gate.
+
+Phase 4b ships denial propagation: when a production adapter returns an error, the error cascades through the entire call stack without killing the process. An `@approve` function's Go return signature becomes `(T, error)` — the Splash programmer still writes `-> Charge`, but the generated Go propagates denial cleanly up to the request handler. One denied approval, one failed request, zero pod restarts.
+
+The future target exposes typed denial at the Splash level — callers handle `Denied` and `Timeout` as structured cases:
 
 ```splash
+// Future target
 enum ApprovalError { Denied | Timeout | AdapterUnavailable }
 
 constraint ApprovalAdapter {
@@ -291,7 +296,7 @@ fn main() {
 
 `StdinApproval` blocks on a terminal prompt — suitable for development. `WebhookApproval` fires a webhook and awaits a callback with a deadline. `PolicyApproval` applies organizational rules automatically (charges under $10 from verified users are auto-approved with an audit log entry). Same application code, different resolution strategy per environment.
 
-The runtime does not use goroutine suspension. The adapter call is async: a request is enqueued, a response channel is awaited with the deadline, and the outcome is returned as `Ok(result)` or `Err(reason)`. A pending approval request does not block the agent's event loop.
+`StdinApproval` blocks the calling goroutine on a terminal prompt — honest behavior for a development tool where a human is present. Production adapters (`WebhookApproval`, `SlackApproval`) are designed to be non-blocking: the approval request is enqueued, a response channel is awaited with a deadline, and the outcome flows back as a typed result. A pending approval in production does not block the agent's event loop. Phase 4a shipped the adapter pattern with `StdinApproval`. Phase 4b shipped denial propagation: the error cascades from adapter through every transitive caller, so production adapters that return denial errors work correctly without process-killing behavior. Non-blocking production adapters (`SlackApproval`, `WebhookApproval`) are the next milestone.
 
 The compiler enforces `@approve` requirements when `@containment` policy demands it:
 
@@ -309,7 +314,7 @@ Any function in the `billing` module that is reachable from an agent context but
 | `@redline` | Stable v0.1 | Compiler — call graph analysis |
 | `@containment` | Stable v0.1 | Compiler — module boundary |
 | `@approve` annotation | Stable v0.1 | Compiler — presence enforcement |
-| `@approve` runtime dispatch | Phase 4 | Runtime — `ApprovalAdapter` |
+| `@approve` runtime dispatch | Stable v0.1 | Runtime — `ApprovalAdapter` + denial cascade |
 | `@agent_allowed` | Stable v0.1 | Compiler — requires stated reason |
 | Capability decay | **Unstable** | Runtime (`std/safety`) |
 | Provenance chains | **Unstable** | Runtime (`std/safety`) |
@@ -383,7 +388,7 @@ Splash compiles to Go. The frontend handles parsing, type inference, effect chec
 
 Splash inherits Go's runtime: goroutines, garbage collection, fast compilation, a mature toolchain. The safety properties live in the Splash frontend. Go sees generated code that has already been verified; it does not need to understand Splash's effect system.
 
-**Runtime overhead.** Splash's safety properties are enforced entirely at compile time. The emitted Go binary carries no effect-checking overhead — effects are a frontend constraint, not a runtime mechanism. The only runtime cost is explicit and opt-in: `@approve` audit logging records function calls as structured JSON, and `std/safety` provenance chains record agent decision paths. For everything else, Splash programs have Go-equivalent performance.
+**Runtime overhead.** Splash's safety properties are enforced entirely at compile time. The emitted Go binary carries no effect-checking overhead — effects are a frontend constraint, not a runtime mechanism. The only runtime cost is explicit and opt-in: `@approve` gates invoke an `ApprovalAdapter` before the function body executes, and `std/safety` provenance chains record agent decision paths. For everything else, Splash programs have Go-equivalent performance.
 
 Structured concurrency maps to Go's goroutine model. `group { async f(); async g() }` compiles to a goroutine group with cancellation semantics using Go's `context` package and `errgroup`. The structured guarantee — all children cancelled and awaited before the parent continues — is upheld by the generated code.
 
@@ -539,13 +544,15 @@ Deliverable: a developer can build a production-grade API with `splash new`, `sp
 
 ### Phase 4: Runtime Safety
 
-- `@approve` runtime dispatch via `ApprovalAdapter` — `StdinApproval`, `WebhookApproval`, `PolicyApproval`, `SlackApproval`
+- ✅ `@approve` adapter pattern, body injection, `StdinApproval` (Phase 4a)
+- ✅ Denial propagation — `@approve` functions get `(T, error)` Go signatures; error cascades through every transitive caller; `main()` exits gracefully (Phase 4b)
+- Non-blocking production adapters: `SlackApproval`, `WebhookApproval`, `PolicyApproval` (Phase 4c)
 - `@sandbox` and `@budget` enforcement at runtime (currently parsed, not enforced)
 - `Loggable` constraint enforcement — compile-time block on logging `@sensitive` fields
 - Multi-file module loading (`use other/module` resolves actual files)
 - `splash deploy` with capability manifest diffing (lockfile-level capability tracking)
 
-Deliverable: `@approve` works in production without goroutine suspension. An organization can swap authorization strategies per environment without changing application code.
+Deliverable: `@approve` works in production without killing the process. One denied approval propagates as an error to one request; other requests in flight are unaffected. An organization can swap authorization strategies per environment without changing application code.
 
 ### Contributing
 
@@ -632,6 +639,24 @@ As AI agents make financial transactions, access medical records, and modify inf
 Splash's provenance chains (in `std/safety`) record every agent action with full context: the function called, the arguments, the model's stated reasoning, the parent action, the effects used, the cost, and the duration. The chain traces from goal to leaf action. Every mutation is attributable to either a human (authenticated, with role) or an agent (session ID, model, reasoning).
 
 An organization running a Splash runtime can show, for any production incident, exactly what the agent did, in what order, for what stated reason, and under what approved capabilities. That record doesn't eliminate liability. It transforms "the AI did something and we don't know why" into a structured audit trail — a distinction that matters in regulatory inquiries, customer contracts, and legal proceedings.
+
+### Beyond AI Agents
+
+The safety primitives in Splash were designed for LLM agents calling tool functions. None of them are specific to LLMs.
+
+`@redline` doesn't know what an agent is. It knows what a call graph is. `needs Vehicle.braking` and `needs DB.write` are the same type system mechanism — a declared capability that the compiler verifies at every call site. `@containment(agent: .none)` works identically whether the agent is a language model or a PID controller. The underlying primitive is not "safety for AI." It is **compiler-verified autonomy boundaries**: the proof that an autonomous component cannot reach capabilities it was not granted, regardless of what that component is.
+
+The pattern applies wherever an autonomous component makes decisions that trigger real-world consequences.
+
+**Vehicle autonomy.** A neural network planner that needs `Vehicle.steering` and `Vehicle.throttle` cannot call a function that needs `Vehicle.safety_override` — the compiler proves it. Emergency brake functions in a `@containment(agent: .none)` module are structurally invisible to the planner. A software update to the navigation subsystem that suddenly requests `Vehicle.braking` fails the build. These are compile-time proofs, not runtime checks that might fail under the conditions that matter most.
+
+**Medical devices.** A dosing algorithm's effect declarations enumerate exactly which hardware registers it can write. `@redline` on the manual override function means no code path from the autonomous dosing agent can reach it — provable from the binary, not inferred from test coverage. FDA increasingly asks for evidence that autonomous components cannot reach safety-critical functions through any code path; a compiler proof is stronger evidence than a test suite.
+
+**Industrial control.** The autonomous optimizer for a chemical plant declares `needs Process.read, Process.throttle`. The emergency shutdown controls live in a `@containment(agent: .none)` module. The compiler guarantees the optimizer's call graph does not connect to them — not a process boundary that could be bridged, not a permission check that could be bypassed at 3am during an incident.
+
+**Drone operations.** A navigation agent that needs `Drone.motors, Drone.navigation` cannot call `Drone.payload_release`. `@approve` on high-consequence maneuvers routes through a deterministic safety validator with a hard timeout — the same language primitive that routes human approval for financial transactions, applied to a 200ms pre-release check.
+
+The v0.1 compiler produces Go binaries for backend services. The domains above are the roadmap, not the current deliverable. But the primitives are already general — the same type system, the same call graph analysis, the same compiler. The agent doesn't have to be an LLM. It just has to be something that acts autonomously in a system where acting wrong is expensive.
 
 ---
 
