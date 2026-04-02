@@ -210,6 +210,27 @@ Run `splash emit examples/multi_file/agent.splash` to see both modules merged in
 
 ---
 
+## 09 · sandbox
+
+**`sandbox/sandbox.splash`** — `@sandbox` effect constraints and `@budget` resource limits.
+
+`@sandbox` pins the effect surface of an agent entry point at compile time. The compiler walks every transitively reachable function and verifies that each one's declared effects satisfy the allow/deny lists. Violations fail `splash check` — not a runtime audit.
+
+`@budget` declares advisory resource limits. Argument types are validated at compile time (`max_cost` must be numeric, `max_calls` must be an integer).
+
+```splash
+@sandbox(allow: [DB.read, AI])
+@budget(max_cost: 0.10, max_calls: 5)
+fn safe_search_agent(term: String) needs Agent, DB.read, AI -> String {
+    let result = query_catalog(term)   // needs DB.read — allowed
+    return summarize(result)           // needs AI — allowed
+}
+```
+
+**Try breaking it.** Add a function with `needs Net` to the reachable call graph of `safe_search_agent`. `splash check` will fail: `reachable function "..." uses effect Net not in allow list`.
+
+---
+
 ## Running the Examples
 
 With the `splash` binary built from the repo root:
@@ -224,6 +245,7 @@ go build ./cmd/splash/...
 ./splash check examples/containment/containment.splash
 ./splash check examples/approval/approval.splash
 ./splash check examples/ai_prompt/ai_prompt.splash
+./splash check examples/sandbox/sandbox.splash
 
 # Build to a binary (main function required)
 ./splash build examples/hello/hello.splash -o hello
@@ -257,7 +279,8 @@ go build ./cmd/splash/...
 | Effects field in tool schema output | ✅ Complete |
 | Member access type resolution | ✅ Complete |
 | `@approve` denial / error cascade (`(T, error)` Go signatures) | ✅ Complete (Phase 4b) |
-| `@sandbox` / `@budget` enforcement | Planned — Phase 4 |
+| `@sandbox` effect allow/deny enforcement (compile-time) | ✅ Complete |
+| `@budget` argument type validation (compile-time) | ✅ Complete |
 | `std/db` stdlib | Planned — Phase 4 |
 | `@sensitive` / `Loggable` enforcement (`@tool` return type + `println`) | ✅ Complete |
 | Multi-file modules (`use path` loads sibling `.splash` files) | ✅ Complete |

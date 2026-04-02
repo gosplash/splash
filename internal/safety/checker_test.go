@@ -359,3 +359,91 @@ fn run_agent() needs Agent -> User? {
 		t.Errorf("expected diagnostic for find_user, got: %v", diags)
 	}
 }
+
+func TestSandbox_DenyEffect_Blocked(t *testing.T) {
+	src := `
+module foo
+@sandbox(deny: [Net])
+fn run_agent() needs Agent -> String { return fetch() }
+fn fetch() needs Net -> String { return "data" }
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: @sandbox deny:Net blocks agent using Net")
+	}
+}
+
+func TestSandbox_DenyEffect_Transitive(t *testing.T) {
+	src := `
+module foo
+@sandbox(deny: [Net])
+fn run_agent() needs Agent -> String { return helper() }
+fn helper() -> String { return fetch() }
+fn fetch() needs Net -> String { return "data" }
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: @sandbox deny blocks transitively reachable Net effect")
+	}
+}
+
+func TestSandbox_AllowList_PermitsListed(t *testing.T) {
+	src := `
+module foo
+@sandbox(allow: [DB.read])
+fn run_agent() needs Agent, DB.read -> String { return query() }
+fn query() needs DB.read -> String { return "data" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected error: @sandbox allow:DB.read permits DB.read: %v", diags)
+	}
+}
+
+func TestSandbox_AllowList_BlocksUnlisted(t *testing.T) {
+	src := `
+module foo
+@sandbox(allow: [DB.read])
+fn run_agent() needs Agent, DB.read -> String { return both() }
+fn both() needs DB.read, Net -> String { return "data" }
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: @sandbox allow:DB.read blocks Net usage")
+	}
+}
+
+func TestSandbox_NoAnnotation_NoError(t *testing.T) {
+	src := `
+module foo
+fn run_agent() needs Agent, Net, DB.read -> String { return "ok" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected error: no @sandbox means no constraints: %v", diags)
+	}
+}
+
+func TestBudget_ValidArgs_NoError(t *testing.T) {
+	src := `
+module foo
+@budget(max_cost: 1.0, max_calls: 10)
+fn run_agent() needs Agent -> String { return "ok" }
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("unexpected error for valid @budget args: %v", diags)
+	}
+}
+
+func TestBudget_MaxCalls_MustBeInt(t *testing.T) {
+	src := `
+module foo
+@budget(max_calls: 1.5)
+fn run_agent() needs Agent -> String { return "ok" }
+`
+	diags := check(src)
+	if !hasError(diags) {
+		t.Error("expected error: @budget max_calls must be an integer literal")
+	}
+}

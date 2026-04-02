@@ -1,0 +1,66 @@
+// Sandbox and budget example.
+// Demonstrates: @sandbox effect constraints and @budget resource limits on agent entry points.
+//
+// @sandbox pins the effect surface of an agent function at compile time.
+// The compiler verifies every transitively reachable function satisfies
+// the allow/deny lists — violations fail the build, not a runtime audit.
+//
+// @budget declares advisory resource limits (max_cost in USD, max_calls as
+// an invocation cap). Argument types are validated at compile time.
+
+module catalog
+
+// SearchResult holds one search hit from the catalog.
+type SearchResult {
+    id:    Int
+    title: String
+    score: Int
+}
+
+// query_catalog is a read-only database lookup. Safe for the read-only agent.
+fn query_catalog(term: String) needs DB.read -> SearchResult {
+    return SearchResult { id: 1, title: term, score: 100 }
+}
+
+// summarize asks the AI model to summarize a result. Also safe for the AI agent.
+fn summarize(result: SearchResult) needs AI -> String {
+    return result.title
+}
+
+// write_catalog mutates the database. NOT reachable from the safe agent below.
+fn write_catalog(title: String) needs DB.write -> Int {
+    return 0
+}
+
+// safe_search_agent is constrained by @sandbox to DB.read and AI only.
+// The compiler verifies no reachable function uses Net, DB.write, or Agent.
+// @budget declares a cost cap: fail the build if the literal types are wrong.
+@sandbox(allow: [DB.read, AI])
+@budget(max_cost: 0.10, max_calls: 5)
+fn safe_search_agent(term: String) needs Agent, DB.read, AI -> String {
+    let result = query_catalog(term)
+    return summarize(result)
+}
+
+// What the sandbox system enforces at compile time
+//
+// splash check catches this today:
+//
+//   @sandbox(allow: [DB.read])
+//   fn strict_agent(term: String) needs Agent, DB.read, AI -> String {
+//       let result = query_catalog(term)
+//       return summarize(result)   // Error: summarize uses AI, not in allow list
+//   }
+//   // Error: @sandbox on "strict_agent": reachable function "summarize"
+//   //        uses effect AI not in allow list
+//
+//   @sandbox(deny: [Net])
+//   fn net_agent(term: String) needs Agent, Net -> String {
+//       return fetch_external(term)
+//   }
+//   fn fetch_external(term: String) needs Net -> String { return "" }
+//   // Error: @sandbox on "net_agent": reachable function "fetch_external"
+//   //        uses denied effect Net
+//
+//   @budget(max_calls: 1.5)   // Error: must be integer
+//   fn bad_budget() needs Agent -> String { return "ok" }

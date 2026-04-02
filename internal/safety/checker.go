@@ -28,6 +28,8 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnos
 	diags = append(diags, c.checkApprove(file, g, agentReachable)...)
 	diags = append(diags, c.checkContainment(file, g, agentReachable)...)
 	diags = append(diags, c.checkToolDataClassification(file)...)
+	diags = append(diags, c.checkSandbox(file, g)...)
+	diags = append(diags, c.checkBudget(file)...)
 
 	return diags
 }
@@ -219,6 +221,146 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 					"function %q is agent-reachable but module has @containment(agent: \"approved_only\") — add @approve or @agent_allowed",
 					fn.Name,
 				))
+			}
+		}
+	}
+
+	return diags
+}
+
+// exprToEffectName converts an AST expression used in a @sandbox allow/deny list
+// to an effect name string (e.g. "DB.read", "Net", "AI").
+func exprToEffectName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.MemberExpr:
+		if id, ok := e.Object.(*ast.Ident); ok {
+			return id.Name + "." + e.Member
+		}
+	}
+	return ""
+}
+
+// parseEffectListArg converts a @sandbox allow/deny list argument to an EffectSet.
+func parseEffectListArg(expr ast.Expr) effects.EffectSet {
+	list, ok := expr.(*ast.ListLiteral)
+	if !ok {
+		return effects.None
+	}
+	var effectExprs []ast.EffectExpr
+	for _, elem := range list.Elements {
+		if name := exprToEffectName(elem); name != "" {
+			effectExprs = append(effectExprs, ast.EffectExpr{Name: name})
+		}
+	}
+	return effects.Parse(effectExprs)
+}
+
+// checkSandbox enforces @sandbox allow/deny constraints on annotated functions.
+// For each @sandbox function, it checks that every transitively reachable function's
+// effects satisfy the allow/deny lists. Agent is excluded from constraint checking
+// since it is a structural meta-effect, not a runtime capability.
+func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+
+	for _, decl := range file.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		var sandboxAnn *ast.Annotation
+		for i := range fn.Annotations {
+			if fn.Annotations[i].Kind == ast.AnnotSandbox {
+				sandboxAnn = &fn.Annotations[i]
+				break
+			}
+		}
+		if sandboxAnn == nil {
+			continue
+		}
+
+		var allowSet effects.EffectSet
+		hasAllow := false
+		if allowExpr, ok := sandboxAnn.Args["allow"]; ok {
+			allowSet = parseEffectListArg(allowExpr)
+			hasAllow = true
+		}
+		var denySet effects.EffectSet
+		if denyExpr, ok := sandboxAnn.Args["deny"]; ok {
+			denySet = parseEffectListArg(denyExpr)
+		}
+
+		reachable := g.Reachable([]string{fn.Name})
+		for name := range reachable {
+			node := g.Node(name)
+			if node == nil {
+				continue
+			}
+			// Exclude the Agent meta-effect; it is structural, not a capability.
+			nodeEffects := node.Effects &^ effects.Agent
+			if nodeEffects == effects.None {
+				continue
+			}
+
+			if denySet != effects.None {
+				if violated := nodeEffects & denySet; violated != effects.None {
+					diags = append(diags, diagnostic.Errorf(
+						fn.Position,
+						"@sandbox on %q: reachable function %q uses denied effect %s",
+						fn.Name, name, violated.String(),
+					))
+				}
+			}
+			if hasAllow {
+				if disallowed := nodeEffects &^ allowSet; disallowed != effects.None {
+					diags = append(diags, diagnostic.Errorf(
+						fn.Position,
+						"@sandbox on %q: reachable function %q uses effect %s not in allow list",
+						fn.Name, name, disallowed.String(),
+					))
+				}
+			}
+		}
+	}
+
+	return diags
+}
+
+// checkBudget validates @budget annotation arguments.
+// max_cost must be a Float or Int literal; max_calls must be an Int literal.
+func (c *Checker) checkBudget(file *ast.File) []diagnostic.Diagnostic {
+	var diags []diagnostic.Diagnostic
+
+	for _, decl := range file.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		for _, ann := range fn.Annotations {
+			if ann.Kind != ast.AnnotBudget {
+				continue
+			}
+			if maxCost, ok := ann.Args["max_cost"]; ok {
+				switch maxCost.(type) {
+				case *ast.FloatLiteral, *ast.IntLiteral:
+					// valid
+				default:
+					diags = append(diags, diagnostic.Errorf(
+						fn.Position,
+						"@budget max_cost on %q must be a numeric literal (e.g. 1.0)",
+						fn.Name,
+					))
+				}
+			}
+			if maxCalls, ok := ann.Args["max_calls"]; ok {
+				if _, ok := maxCalls.(*ast.IntLiteral); !ok {
+					diags = append(diags, diagnostic.Errorf(
+						fn.Position,
+						"@budget max_calls on %q must be an integer literal (e.g. 20)",
+						fn.Name,
+					))
+				}
 			}
 		}
 	}
