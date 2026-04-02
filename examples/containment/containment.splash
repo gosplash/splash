@@ -1,0 +1,37 @@
+// @containment example.
+// Demonstrates: module-level agent lockout policies.
+//
+// @containment on a module removes its functions from an agent's reachable
+// call graph. The compiler enforces this at the module boundary — not as
+// a configuration value, but as a structural property of the module.
+//
+// Three policies:
+//   @containment(agent: "none")           — agents can't touch this module
+//   @containment(agent: "read_only")      — agents can call read functions only
+//   @containment(agent: "approved_only")  — every agent call requires @approve
+
+@containment(agent: "approved_only")
+module billing
+
+// @approve is required for all functions under "approved_only" containment.
+// The compiler emits a splashAudit call before every invocation from
+// an agent context, recording the function name and timestamp as JSON.
+@approve
+fn charge_customer(customer_id: Int, amount_cents: Int) needs DB.write, Net {
+    let charged = amount_cents
+}
+
+// Read operations also require @approve under "approved_only" containment.
+// Under "read_only" containment, this would be callable without @approve.
+@approve
+fn get_balance(customer_id: Int) needs DB.read -> Int {
+    return 0
+}
+
+// Internal helper — not an agent entry point.
+fn is_valid_amount(amount_cents: Int) -> Bool {
+    if amount_cents > 0 {
+        return true
+    }
+    return false
+}

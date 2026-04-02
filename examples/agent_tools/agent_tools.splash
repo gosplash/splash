@@ -1,0 +1,45 @@
+// Agent tools example.
+// Demonstrates: @tool annotation, agent entry points, @redline on dangerous ops.
+//
+// @tool turns a function into an AI-callable tool. The doc comment becomes
+// the tool description. The type signature becomes the JSON schema. The
+// function is the implementation — one source of truth for all three.
+
+module search
+
+type SearchResult {
+    id:    Int
+    title: String
+}
+
+// @tool: callable by any AI agent in a Splash runtime.
+// limit has a default value of 10.
+@tool
+fn search_catalog(query: String, limit: Int) needs DB.read -> SearchResult {
+    return SearchResult { id: limit, title: query }
+}
+
+// @tool with an optional parameter. The schema reflects the optionality.
+// Agents can call this with or without a category filter.
+@tool
+fn get_item(item_id: Int, category: String?) needs DB.read -> SearchResult {
+    return SearchResult { id: item_id, title: "result" }
+}
+
+// @redline: the compiler traces every path from every agent entry point.
+// If any path reaches this function, the build fails.
+// Index rebuilds require a human operator, not an automated agent.
+@redline(reason: "Index rebuilds require human operator sign-off")
+fn rebuild_search_index() needs DB.write {
+    let op = "rebuild"
+}
+
+// Agent entry point. Declares needs Agent, DB.read.
+// The compiler verifies:
+//   - search_catalog and get_item are reachable and safe (DB.read only)
+//   - rebuild_search_index is NOT reachable (@redline blocks the path)
+//   - no reachable function requires more than the declared effects
+fn run_search_agent(goal: String) needs Agent, DB.read -> String {
+    let results = search_catalog(goal, 5)
+    return goal
+}

@@ -1,0 +1,34 @@
+// AI structured output example.
+// Demonstrates: use std/ai, ai.prompt<T> generic call syntax, @tool with AI effects.
+//
+// ai.prompt<T> uses a Splash type as the structured output contract.
+// The type is the JSON Schema. The compiler validates the return type at
+// every call site. One source of truth for humans, the agent, and the compiler.
+//
+// Run: splash check examples/ai_prompt/ai_prompt.splash
+//      splash tools examples/ai_prompt/ai_prompt.splash
+
+module sermon_analyzer
+use std/ai
+
+// The structured output contract.
+// This type is also the JSON Schema for the model response —
+// no hand-written schema, no separate validation step.
+type SermonInsight {
+  title:   String
+  summary: String
+}
+
+/// Analyze a sermon transcript and extract structured insights.
+@tool
+async fn analyze_sermon(transcript: String) needs AI -> Result<SermonInsight, AIError> {
+  return ai.prompt<SermonInsight>(transcript)
+}
+
+// Agent entry point. Declares needs Agent, AI.
+// The compiler verifies that all reachable paths are consistent with these effects,
+// and that no @redline function is reachable from this context.
+fn run_sermon_agent(transcript: String) needs Agent, AI -> String {
+  let insight = analyze_sermon(transcript)
+  return transcript
+}

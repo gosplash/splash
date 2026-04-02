@@ -1,0 +1,51 @@
+// Data classification example.
+// Demonstrates: @sensitive and @restricted field annotations, optional types,
+// and how classification constrains what operations are valid on a type.
+//
+// Classification is a property of types, not values. The four levels are:
+//   public < @internal < @sensitive < @restricted
+//
+// @sensitive: the containing type cannot satisfy Loggable — log calls fail at
+//   compile time, not in a runtime scan.
+// @restricted: process-local — no storage adapter accepts these values.
+
+module users
+
+// User.email is @sensitive: PII that must not flow into logs or unencrypted stores.
+// User.ssn is @restricted: never leaves the process — no storage adapter accepts it.
+type User {
+    id:           Int
+    display_name: String
+    @sensitive
+    email:        String
+    @restricted
+    ssn:          String?
+}
+
+// Safe: display_name is public. No classification issue.
+fn get_display_name(user: User) -> String {
+    return user.display_name
+}
+
+// Safe: inspects presence without exposing the restricted value.
+fn has_ssn(user: User) -> Bool {
+    if user.ssn != none {
+        return true
+    }
+    return false
+}
+
+// Safe: produces a summary using only public fields.
+fn public_id(user: User) -> Int {
+    return user.id
+}
+
+// The functions below demonstrate what the classification system prevents.
+// These would fail to compile once the Loggable constraint is implemented
+// in Phase 3. Shown here as documentation of the design intent.
+//
+//   fn bad_log(user: User) { log.info(user.email) }
+//   // Error: Email is @sensitive — type does not satisfy Loggable
+//
+//   fn bad_store(user: User) needs DB.write { db.save(user.ssn) }
+//   // Error: @restricted type cannot be passed to a storage adapter

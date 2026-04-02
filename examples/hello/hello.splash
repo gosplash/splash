@@ -1,0 +1,22 @@
+// The simplest Splash program.
+// Demonstrates: module declaration, type definitions, functions,
+// optional types, null coalescing, and struct literals.
+
+module hello
+
+// A named record type. Fields are typed. Optionals use T?.
+type Person {
+    name: String
+    nickname: String?
+}
+
+// Function with declared return type.
+fn greet(p: Person) -> String {
+    let display_name = p.nickname ?? p.name
+    return "Hello, " + display_name
+}
+
+fn main() {
+    let p = Person { name: "world", nickname: none }
+    println(greet(p))
+}
