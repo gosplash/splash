@@ -289,3 +289,53 @@ fn restricted(id: Int) -> String { return "hidden" }
 		t.Errorf("expected tool name %q, got %q", "reachable", tools[0].Name)
 	}
 }
+
+func TestToolSchema_DefaultParamNotRequired(t *testing.T) {
+	src := `
+module demo
+/// Search with optional limit.
+@tool
+fn search(query: String, limit: Int = 10) -> String { return query }
+`
+	file := parseFile(src)
+	tools := toolschema.Extract(file)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	tool := tools[0]
+
+	// query is required, limit has a default so it is not
+	if len(tool.InputSchema.Required) != 1 {
+		t.Fatalf("expected 1 required param, got %v", tool.InputSchema.Required)
+	}
+	if tool.InputSchema.Required[0] != "query" {
+		t.Errorf("expected required[0] = query, got %q", tool.InputSchema.Required[0])
+	}
+
+	// limit still appears in properties
+	if _, ok := tool.InputSchema.Properties["limit"]; !ok {
+		t.Error("expected limit to appear in properties")
+	}
+}
+
+func TestToolSchema_OptionalAndDefaultBothNotRequired(t *testing.T) {
+	src := `
+module demo
+@tool
+fn search(
+  /// Required query string.
+  query:   String,
+  limit:   Int      = 10,
+  speaker: String?,
+) -> String { return query }
+`
+	file := parseFile(src)
+	tools := toolschema.Extract(file)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	required := tools[0].InputSchema.Required
+	if len(required) != 1 || required[0] != "query" {
+		t.Errorf("expected only query in required, got %v", required)
+	}
+}
