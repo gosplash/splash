@@ -3,7 +3,7 @@
 Splash is a compiled, statically-typed backend language with a built-in effect system, call graph analysis, and AI agent safety enforcement. It transpiles to Go. Safety properties — effect constraints, data classification, agent reachability — are enforced before codegen. The Go backend sees a verified, effect-annotated AST with no security-relevant decisions remaining.
 
 ```splash
-@sandbox(allow: [DB.read, AI])
+@sandbox(allow: [DB.read])
 @tool
 /// Search the catalog for items matching a query.
 fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> {
