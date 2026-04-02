@@ -268,6 +268,22 @@ The `check` helper parses, builds the call graph, and runs all safety passes. Wr
 
 ---
 
+## Performance
+
+`splash check` is the tight feedback loop — parse + type check + call graph + all safety passes. Measured on Apple M2:
+
+| Program size | `splash check` |
+|---|---|
+| 100 functions | 218 µs |
+| 500 functions | 1.06 ms |
+| 2,000 functions | 6.24 ms |
+
+Whole-program call graph analysis is O(V+E). All safety passes (`@redline`, `@approve`, `@containment`, `@sandbox`, data classification) run as additional predicates over the same graph — no separate traversals. Runtime overhead is zero for all compile-time enforcement; the only runtime cost is the `@approve` adapter dispatch.
+
+Run benchmarks: `go test -bench=. ./internal/callgraph/... ./internal/typechecker/... ./cmd/splash/...`
+
+---
+
 ## What's Not Done
 
 - `std/db`, `std/cache`, `std/http` standard library adapters

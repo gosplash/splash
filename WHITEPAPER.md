@@ -553,8 +553,8 @@ Deliverable: a developer can build a production-grade API with `splash new`, `sp
 - ✅ `@sandbox` compile-time effect allow/deny enforcement against agent-reachable call graph
 - ✅ `@budget` compile-time argument type validation
 - `@budget` runtime enforcement — instrumented counter in `ai.prompt` calls, `BudgetExceeded` propagation (requires `std/ai` runtime)
-- `Loggable` constraint enforcement — compile-time block on logging `@sensitive` fields
-- Multi-file module loading (`use other/module` resolves actual files)
+- ✅ `Loggable` built-in constraint; `@sensitive` blocks `Loggable` satisfaction; unknown constraint names are compile errors
+- ✅ Multi-file module loading (`use path` resolves sibling `.splash` files; cycle detection; `expose` list)
 - `splash deploy` with capability manifest diffing (lockfile-level capability tracking)
 
 Deliverable: `@approve` works in production without killing the process. One denied approval propagates as an error to one request; other requests in flight are unaffected. An organization can swap authorization strategies per environment without changing application code.
