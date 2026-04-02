@@ -46,6 +46,9 @@ func (tc *TypeChecker) Check(file *ast.File) (*TypedFile, []diagnostic.Diagnosti
 
 // pass1: register all top-level declarations (handles forward references).
 func (tc *TypeChecker) pass1(file *ast.File) {
+	for _, u := range file.Uses {
+		tc.processUseDecl(u)
+	}
 	for _, decl := range file.Declarations {
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
@@ -59,6 +62,16 @@ func (tc *TypeChecker) pass1(file *ast.File) {
 		case *ast.EnumDecl:
 			tc.globals.Set(d.Name, types.Named(d.Name))
 		}
+	}
+}
+
+// processUseDecl injects stdlib module bindings into globals.
+func (tc *TypeChecker) processUseDecl(u *ast.UseDecl) {
+	switch u.Path {
+	case "std/ai":
+		// Inject 'ai' as an AIAdapter instance and 'AIError' as a named type.
+		tc.globals.Set("ai", types.Named("AIAdapter"))
+		tc.globals.Set("AIError", types.Named("AIError"))
 	}
 }
 
@@ -306,6 +319,26 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 
 // checkCallExpr handles function calls, including constraint satisfaction for generic calls.
 func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile, typeParamEnv map[string]*types.TypeParamType) types.Type {
+	// Special case: ai.prompt<T>(...) on AIAdapter → Result<T, AIError>
+	// Look up 'ai' directly in env to avoid double-checking (which would double-report errors).
+	if mem, ok := e.Callee.(*ast.MemberExpr); ok && mem.Member == "prompt" {
+		if ident, ok2 := mem.Object.(*ast.Ident); ok2 {
+			if t, ok3 := env.Get(ident.Name); ok3 {
+				if nt, ok4 := t.(*types.NamedType); ok4 && nt.Name == "AIAdapter" {
+					typed.Types[mem.Object] = t
+					for _, arg := range e.Args {
+						tc.checkExpr(arg, env, typed, typeParamEnv)
+					}
+					if len(e.TypeArgs) == 1 {
+						resolved := tc.resolveTypeExprWithParams(e.TypeArgs[0], typeParamEnv)
+						return &types.ResultType{Ok: resolved, Err: types.Named("AIError")}
+					}
+					return types.Unknown
+				}
+			}
+		}
+	}
+
 	calleeType := tc.checkExpr(e.Callee, env, typed, typeParamEnv)
 	argTypes := make([]types.Type, len(e.Args))
 	for i, arg := range e.Args {

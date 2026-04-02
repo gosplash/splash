@@ -273,3 +273,57 @@ fn bad(p: Person) -> String { return p.age }
 		t.Error("expected type error: returning Int field as String")
 	}
 }
+
+func TestAIPrompt_BasicReturn(t *testing.T) {
+	// ai.prompt<SermonInsight>(text) should return Result<SermonInsight, AIError>
+	// and be valid as the return value of a function returning that type.
+	src := `
+module demo
+use std/ai
+
+type SermonInsight {
+  title: String
+}
+
+async fn analyze(text: String) needs AI -> Result<SermonInsight, AIError> {
+  return ai.prompt<SermonInsight>(text)
+}
+`
+	if hasError(check(src)) {
+		t.Error("unexpected type errors for ai.prompt<T> call")
+	}
+}
+
+func TestAIPrompt_WrongReturnType(t *testing.T) {
+	// ai.prompt<Foo> returns Result<Foo, AIError>, not Result<Bar, AIError>
+	src := `
+module demo
+use std/ai
+
+type Foo { x: Int }
+type Bar { y: String }
+
+async fn bad(text: String) needs AI -> Result<Bar, AIError> {
+  return ai.prompt<Foo>(text)
+}
+`
+	if !hasError(check(src)) {
+		t.Error("expected type error: ai.prompt<Foo> returned as Result<Bar, AIError>")
+	}
+}
+
+func TestAIPrompt_NoStdAi_AiIsUndefined(t *testing.T) {
+	// Without use std/ai, 'ai' is not in scope
+	src := `
+module demo
+
+type Foo { x: Int }
+
+fn bad(text: String) -> Foo {
+  return ai.prompt<Foo>(text)
+}
+`
+	if !hasError(check(src)) {
+		t.Error("expected error: ai is undefined without use std/ai")
+	}
+}
