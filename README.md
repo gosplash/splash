@@ -1,4 +1,4 @@
-# Splash
+# 🏄‍♂️ Splash
 
 Splash is a compiled, statically-typed backend language with a built-in effect system, call graph analysis, and AI agent safety enforcement. It transpiles to Go. Safety properties — effect constraints, data classification, agent reachability — are enforced before codegen. The Go backend sees a verified, effect-annotated AST with no security-relevant decisions remaining.
 

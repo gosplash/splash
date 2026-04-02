@@ -155,5 +155,3 @@ Do not implement any of the above without a plan in `docs/superpowers/plans/`.
 - `test:` test-only changes
 - `docs:` whitepaper, README, CLAUDE.md, examples
 - `refactor:` internal restructuring with no behavior change
-
-Always `--no-gpg-sign`. Never `git init`.
