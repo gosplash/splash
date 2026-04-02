@@ -160,3 +160,50 @@ fn greet() -> String {
 		t.Errorf("unexpected errors: %v", diags)
 	}
 }
+
+func TestMemberAccess_BasicField(t *testing.T) {
+	src := `
+module demo
+type Person {
+  name: String
+  age: Int
+}
+fn get_name(p: Person) -> String {
+  return p.name
+}
+`
+	if hasError(check(src)) {
+		t.Error("unexpected type errors for basic field access")
+	}
+}
+
+func TestMemberAccess_OptionalField(t *testing.T) {
+	src := `
+module demo
+type Person {
+  name: String
+  nickname: String?
+}
+fn get_nick(p: Person) -> String? {
+  return p.nickname
+}
+`
+	if hasError(check(src)) {
+		t.Error("unexpected type errors for optional field access")
+	}
+}
+
+func TestMemberAccess_UnknownField(t *testing.T) {
+	src := `
+module demo
+type Person {
+  name: String
+}
+fn bad(p: Person) -> String {
+  return p.nonexistent
+}
+`
+	if !hasError(check(src)) {
+		t.Error("expected type error for unknown field access")
+	}
+}

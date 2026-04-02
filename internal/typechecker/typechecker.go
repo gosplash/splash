@@ -22,8 +22,14 @@ type TypeChecker struct {
 }
 
 func New() *TypeChecker {
+	globals := NewEnv(nil)
+	// Built-in functions available in all Splash programs.
+	globals.Set("println", &types.FunctionType{
+		Params: []types.Type{types.Unknown},
+		Return: types.Void,
+	})
 	return &TypeChecker{
-		globals:         NewEnv(nil),
+		globals:         globals,
 		typeDecls:       make(map[string]*ast.TypeDecl),
 		constraintDecls: make(map[string]*ast.ConstraintDecl),
 		fnDecls:         make(map[string]*ast.FunctionDecl),
@@ -75,6 +81,42 @@ func (tc *TypeChecker) buildFunctionType(d *ast.FunctionDecl) *types.FunctionTyp
 		ft.Return = types.Void
 	}
 	return ft
+}
+
+// resolveMemberType resolves the type of a field access on a named type.
+// objType is the type of the object being accessed; member is the field name;
+// optional indicates the ?. operator was used (result is wrapped in OptionalType).
+func (tc *TypeChecker) resolveMemberType(objType types.Type, member string, optional bool, pos token.Position) types.Type {
+	// Unwrap optional: Person? → Person for field lookup
+	inner := objType
+	if opt, ok := objType.(*types.OptionalType); ok {
+		inner = opt.Inner
+	}
+
+	nt, ok := inner.(*types.NamedType)
+	if !ok {
+		return types.Unknown
+	}
+
+	decl, ok := tc.typeDecls[nt.Name]
+	if !ok {
+		return types.Unknown
+	}
+
+	for _, field := range decl.Fields {
+		if field.Name == member {
+			fieldType := tc.resolveTypeExpr(field.Type)
+			if optional {
+				if _, isOpt := fieldType.(*types.OptionalType); !isOpt {
+					return &types.OptionalType{Inner: fieldType}
+				}
+			}
+			return fieldType
+		}
+	}
+
+	tc.errorf(pos, "type %s has no field %q", nt.Name, member)
+	return types.Unknown
 }
 
 // pass2: type-check all function bodies.
@@ -202,8 +244,8 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 	case *ast.CallExpr:
 		result = tc.checkCallExpr(e, env, typed, typeParamEnv)
 	case *ast.MemberExpr:
-		tc.checkExpr(e.Object, env, typed, typeParamEnv)
-		result = types.Unknown // field type resolution is future work
+		objType := tc.checkExpr(e.Object, env, typed, typeParamEnv)
+		result = tc.resolveMemberType(objType, e.Member, e.Optional, e.Pos())
 	case *ast.BinaryExpr:
 		left := tc.checkExpr(e.Left, env, typed, typeParamEnv)
 		tc.checkExpr(e.Right, env, typed, typeParamEnv)
