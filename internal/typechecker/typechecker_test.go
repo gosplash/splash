@@ -1,6 +1,7 @@
 package typechecker_test
 
 import (
+	"fmt"
 	"testing"
 
 	"gosplash.dev/splash/internal/diagnostic"
@@ -386,5 +387,105 @@ fn debug(p: Profile) {
 	}
 	if !hasError(diags) {
 		t.Errorf("expected an error diagnostic, got: %v", diags)
+	}
+}
+
+// checkWithImports type-checks src with an in-memory filesystem for imports.
+// files maps module paths (e.g. "billing") to their Splash source content.
+func checkWithImports(mainSrc string, files map[string]string) []diagnostic.Diagnostic {
+	toks := lexer.New("test.splash", mainSrc).Tokenize()
+	p := parser.New("test.splash", toks)
+	file, _ := p.ParseFile()
+	tc := typechecker.New()
+	tc.SetFileLoader(".", func(path string) ([]byte, error) {
+		content, ok := files[path]
+		if !ok {
+			return nil, fmt.Errorf("module not found: %s", path)
+		}
+		return []byte(content), nil
+	})
+	_, diags := tc.Check(file)
+	return diags
+}
+
+func TestUseDecl_ImportedTypeAvailable(t *testing.T) {
+	// A type defined in an imported module should be usable in the importing file.
+	mainSrc := `
+module app
+use billing
+fn run() -> Charge {
+    return Charge { customer_id: 1, amount_cents: 100 }
+}
+`
+	billingContent := `
+module billing
+type Charge {
+    customer_id: Int
+    amount_cents: Int
+}
+`
+	diags := checkWithImports(mainSrc, map[string]string{
+		"billing.splash": billingContent,
+	})
+	if hasError(diags) {
+		t.Errorf("expected no errors after importing billing module, got: %v", diags)
+	}
+}
+
+func TestUseDecl_ImportedFunctionAvailable(t *testing.T) {
+	// A function defined in an imported module should be callable in the importing file.
+	mainSrc := `
+module app
+use billing
+fn run() -> Int {
+    return get_amount()
+}
+`
+	billingContent := `
+module billing
+fn get_amount() -> Int {
+    return 100
+}
+`
+	diags := checkWithImports(mainSrc, map[string]string{
+		"billing.splash": billingContent,
+	})
+	if hasError(diags) {
+		t.Errorf("expected no errors after importing billing module, got: %v", diags)
+	}
+}
+
+func TestUseDecl_MissingModule_Error(t *testing.T) {
+	// Importing a module that doesn't exist should produce an error.
+	mainSrc := `
+module app
+use missing_module
+fn run() -> Int { return 0 }
+`
+	diags := checkWithImports(mainSrc, map[string]string{})
+	if !hasError(diags) {
+		t.Errorf("expected error for missing module, got no errors")
+	}
+}
+
+func TestUseDecl_CircularImport_Error(t *testing.T) {
+	// Circular imports should produce an error.
+	// app uses billing; billing uses app — cycle.
+	mainSrc := `
+module app
+use billing
+fn run() -> Int { return 0 }
+`
+	billingContent := `
+module billing
+use app
+fn charge() -> Int { return 0 }
+`
+	diags := checkWithImports(mainSrc, map[string]string{
+		"billing.splash": billingContent,
+		"app.splash":     mainSrc,
+	})
+	if !hasError(diags) {
+		t.Errorf("expected error for circular import, got no errors")
 	}
 }
