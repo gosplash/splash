@@ -101,12 +101,31 @@ func runCheck(path string) error {
 	return nil
 }
 
+// collectApproveFns returns the set of @approve-annotated function names in f.
+func collectApproveFns(f *ast.File) map[string]bool {
+	fns := make(map[string]bool)
+	for _, decl := range f.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		for _, ann := range fn.Annotations {
+			if ann.Kind == ast.AnnotApprove {
+				fns[fn.Name] = true
+			}
+		}
+	}
+	return fns
+}
+
 func runEmit(path string) error {
 	f, err := parseFile(path)
 	if err != nil {
 		return err
 	}
+	g := callgraph.Build(f)
 	e := codegen.New()
+	e.SetApprovalCallers(g.Callers(collectApproveFns(f)))
 	fmt.Print(e.EmitFile(f))
 	return nil
 }
@@ -142,6 +161,7 @@ func runBuild(path, out string) error {
 	}
 
 	e := codegen.New()
+	e.SetApprovalCallers(g.Callers(collectApproveFns(f)))
 	goSrc := e.EmitFile(f)
 
 	// splash build always produces an executable — package must be main
