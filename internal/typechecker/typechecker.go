@@ -21,15 +21,19 @@ type TypeChecker struct {
 	diags           []diagnostic.Diagnostic
 }
 
-func New() *TypeChecker {
+func newGlobals() *Env {
 	globals := NewEnv(nil)
 	// Built-in functions available in all Splash programs.
 	globals.Set("println", &types.FunctionType{
 		Params: []types.Type{types.Unknown},
 		Return: types.Void,
 	})
+	return globals
+}
+
+func New() *TypeChecker {
 	return &TypeChecker{
-		globals:         globals,
+		globals:         newGlobals(),
 		typeDecls:       make(map[string]*ast.TypeDecl),
 		constraintDecls: make(map[string]*ast.ConstraintDecl),
 		fnDecls:         make(map[string]*ast.FunctionDecl),
@@ -38,6 +42,10 @@ func New() *TypeChecker {
 
 func (tc *TypeChecker) Check(file *ast.File) (*TypedFile, []diagnostic.Diagnostic) {
 	tc.diags = nil
+	tc.globals = newGlobals()
+	tc.typeDecls = make(map[string]*ast.TypeDecl)
+	tc.constraintDecls = make(map[string]*ast.ConstraintDecl)
+	tc.fnDecls = make(map[string]*ast.FunctionDecl)
 	typed := &TypedFile{File: file, Types: make(map[ast.Node]types.Type)}
 	tc.pass1(file)
 	tc.pass2(file, typed)
