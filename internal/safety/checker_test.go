@@ -245,3 +245,55 @@ fn process() needs DB.write -> String { return "ok" }
 		t.Errorf("unexpected error: @approve satisfies approved_only: %v", diags)
 	}
 }
+
+func TestTool_SensitiveReturnType(t *testing.T) {
+	src := `
+module users
+type User {
+    id: Int
+    @sensitive
+    email: String
+}
+@tool
+fn get_user(id: Int) -> User {
+    return User { id: id, email: "a@b.com" }
+}
+fn run_agent() needs Agent -> User {
+    return get_user(1)
+}
+`
+	diags := check(src)
+	if len(diags) == 0 {
+		t.Fatal("expected error: @tool returning @sensitive type, but got no diagnostics")
+	}
+	found := false
+	for _, d := range diags {
+		if contains(d.Message, "sensitive") && contains(d.Message, "get_user") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected @sensitive diagnostic for get_user, got: %v", diags)
+	}
+}
+
+func TestTool_PublicReturnType_NoError(t *testing.T) {
+	src := `
+module users
+type Point {
+    x: Int
+    y: Int
+}
+@tool
+fn get_point() -> Point {
+    return Point { x: 1, y: 2 }
+}
+fn run_agent() needs Agent -> Point {
+    return get_point()
+}
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("expected no error for @tool returning public type, got: %v", diags)
+	}
+}

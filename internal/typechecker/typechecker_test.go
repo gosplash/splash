@@ -327,3 +327,43 @@ fn bad(text: String) -> Foo {
 		t.Error("expected error: ai is undefined without use std/ai")
 	}
 }
+
+func TestPrintln_SensitiveArgument_Error(t *testing.T) {
+	src := `
+module users
+type User {
+    id: Int
+    @sensitive
+    email: String
+}
+fn debug(u: User) {
+    println(u)
+}
+`
+	diags := check(src)
+	if len(diags) == 0 {
+		t.Fatal("expected error: println with @sensitive type User")
+	}
+	found := false
+	for _, d := range diags {
+		if hasError([]diagnostic.Diagnostic{d}) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an error diagnostic, got: %v", diags)
+	}
+}
+
+func TestPrintln_PublicArgument_NoError(t *testing.T) {
+	src := `
+module foo
+fn greet(name: String) {
+    println(name)
+}
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("expected no error for println with public String, got: %v", diags)
+	}
+}
