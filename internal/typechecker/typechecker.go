@@ -166,6 +166,14 @@ func (tc *TypeChecker) loadUserModule(u *ast.UseDecl) {
 	tc.diags = append(tc.diags, subDiags...)
 	delete(tc.modules.loading, filePath)
 
+	// If the imported module has type errors, don't inject its symbols.
+	// The importer should not receive partial type information from a broken dependency.
+	for _, d := range subDiags {
+		if d.Severity == diagnostic.Error {
+			return
+		}
+	}
+
 	// Cache and record
 	tc.modules.cache[filePath] = imported
 	tc.modules.loadedFiles = append(tc.modules.loadedFiles, imported)
