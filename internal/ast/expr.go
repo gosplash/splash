@@ -92,6 +92,7 @@ func (n *UnaryExpr) exprNode()           {}
 type CallExpr struct {
 	Callee   Expr
 	Args     []Expr
+	TypeArgs []TypeExpr
 	Position token.Position
 }
 
