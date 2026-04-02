@@ -315,7 +315,10 @@ fn run() {
 	}
 	// Call site in run() must NOT have injection
 	runIdx := strings.Index(out, "func run()")
-	if runIdx >= 0 && strings.Contains(out[runIdx:], "splashApprove(") {
+	if runIdx < 0 {
+		t.Fatal("func run() not found in output — cannot verify call site is clean")
+	}
+	if strings.Contains(out[runIdx:], "splashApprove(") {
 		t.Errorf("splashApprove must not appear at call site in run(), got:\n%s", out)
 	}
 	// Helper in preamble

@@ -14,8 +14,8 @@
 module billing
 
 // @approve is required for all functions under "approved_only" containment.
-// The compiler emits a splashAudit call before every invocation from
-// an agent context, recording the function name and timestamp as JSON.
+// The compiler injects a splashApprove gate at the top of the function body —
+// the function does not execute until the ApprovalAdapter approves the call.
 @approve
 fn charge_customer(customer_id: Int, amount_cents: Int) needs DB.write, Net {
     let charged = amount_cents
