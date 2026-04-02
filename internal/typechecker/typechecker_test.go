@@ -367,3 +367,24 @@ fn greet(name: String) {
 		t.Errorf("expected no error for println with public String, got: %v", diags)
 	}
 }
+
+func TestPrintln_RestrictedArgument_Error(t *testing.T) {
+	src := `
+module users
+type Profile {
+    id: Int
+    @restricted
+    ssn: String
+}
+fn debug(p: Profile) {
+    println(p)
+}
+`
+	diags := check(src)
+	if len(diags) == 0 {
+		t.Fatal("expected error: println with @restricted type Profile")
+	}
+	if !hasError(diags) {
+		t.Errorf("expected an error diagnostic, got: %v", diags)
+	}
+}

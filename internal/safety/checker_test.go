@@ -297,3 +297,65 @@ fn run_agent() needs Agent -> Point {
 		t.Errorf("expected no error for @tool returning public type, got: %v", diags)
 	}
 }
+
+func TestTool_RestrictedReturnType(t *testing.T) {
+	src := `
+module users
+type Profile {
+    id: Int
+    @restricted
+    ssn: String
+}
+@tool
+fn get_profile(id: Int) -> Profile {
+    return Profile { id: id, ssn: "123-45-6789" }
+}
+fn run_agent() needs Agent -> Profile {
+    return get_profile(1)
+}
+`
+	diags := check(src)
+	if len(diags) == 0 {
+		t.Fatal("expected error: @tool returning @restricted type, but got no diagnostics")
+	}
+	found := false
+	for _, d := range diags {
+		if contains(d.Message, "get_profile") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected diagnostic for get_profile, got: %v", diags)
+	}
+}
+
+func TestTool_OptionalSensitiveReturnType(t *testing.T) {
+	src := `
+module users
+type User {
+    id: Int
+    @sensitive
+    email: String
+}
+@tool
+fn find_user(id: Int) -> User? {
+    return User { id: id, email: "a@b.com" }
+}
+fn run_agent() needs Agent -> User? {
+    return find_user(1)
+}
+`
+	diags := check(src)
+	if len(diags) == 0 {
+		t.Fatal("expected error: @tool returning User? which has @sensitive fields")
+	}
+	found := false
+	for _, d := range diags {
+		if contains(d.Message, "find_user") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected diagnostic for find_user, got: %v", diags)
+	}
+}

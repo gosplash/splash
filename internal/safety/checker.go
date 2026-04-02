@@ -91,7 +91,7 @@ func (c *Checker) checkToolDataClassification(file *ast.File) []diagnostic.Diagn
 		if sf, bad := typeFields[named.Name]; bad {
 			diags = append(diags, diagnostic.Errorf(
 				fn.Position,
-				"@tool function %q returns type %s which contains @sensitive fields (%s) — PII would flow into the AI agent's context",
+				"@tool function %q returns type %s which contains sensitive or restricted fields (%s) — PII would flow into the AI agent's context",
 				fn.Name,
 				named.Name,
 				strings.Join(sf, ", "),

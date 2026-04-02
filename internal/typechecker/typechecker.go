@@ -369,8 +369,8 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 	if calleeName == "println" {
 		for i, argType := range argTypes {
 			if argType.Classification() > types.LoggableMaxClassification {
-				tc.errorf(e.Args[i].Pos(), "cannot pass @sensitive type %s to println — use a public accessor or a type that satisfies Loggable",
-					argType.TypeName())
+				tc.errorf(e.Args[i].Pos(), "cannot pass %s type %s to println — use a public accessor or a type that satisfies Loggable",
+					argType.Classification(), argType.TypeName())
 			}
 		}
 	}
