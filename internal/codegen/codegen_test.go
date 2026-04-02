@@ -8,6 +8,7 @@ import (
 	gotoken "go/token"
 
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/codegen"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
@@ -30,6 +31,32 @@ func emitSrc(t *testing.T, src string) string {
 	t.Helper()
 	f := parse(t, src)
 	e := codegen.New()
+	return e.EmitFile(f)
+}
+
+func emitSrcWithApproval(t *testing.T, src string) string {
+	t.Helper()
+	f := parse(t, src)
+
+	// Collect @approve function names from AST
+	approveFns := make(map[string]bool)
+	for _, decl := range f.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		for _, ann := range fn.Annotations {
+			if ann.Kind == ast.AnnotApprove {
+				approveFns[fn.Name] = true
+			}
+		}
+	}
+
+	g := callgraph.Build(f)
+	approveCallers := g.Callers(approveFns)
+
+	e := codegen.New()
+	e.SetApprovalCallers(approveCallers)
 	return e.EmitFile(f)
 }
 
@@ -302,28 +329,109 @@ fn run() {
     processPayment(100)
 }
 `
+	// Use plain emitSrc (no graph) — cascade does not fire, but @approve function
+	// itself still gets the approval gate and error return.
 	out := emitSrc(t, src)
 	mustGoSyntax(t, out)
 
-	// Gate injected at top of @approve function body
-	if !strings.Contains(out, `splashApprove("processPayment")`) {
-		t.Errorf("expected splashApprove at function body top, got:\n%s", out)
+	// Void @approve function gets error return
+	if !strings.Contains(out, "func processPayment(amount int) error") {
+		t.Errorf("expected error return on @approve function, got:\n%s", out)
 	}
-	// Old call-site audit must be gone
-	if strings.Contains(out, "splashAudit(") {
-		t.Errorf("splashAudit should be removed, got:\n%s", out)
+	// Body injection is now an error-returning guard
+	if !strings.Contains(out, `if err := splashApprove("processPayment"); err != nil`) {
+		t.Errorf("expected error-returning gate, got:\n%s", out)
 	}
-	// Call site in run() must NOT have injection
-	runIdx := strings.Index(out, "func run()")
-	if runIdx < 0 {
-		t.Fatal("func run() not found in output — cannot verify call site is clean")
-	}
-	if strings.Contains(out[runIdx:], "splashApprove(") {
-		t.Errorf("splashApprove must not appear at call site in run(), got:\n%s", out)
+	// Implicit return nil after void @approve function body
+	if !strings.Contains(out, "return nil") {
+		t.Errorf("expected 'return nil' at end of void @approve body, got:\n%s", out)
 	}
 	// Helper in preamble
 	if !strings.Contains(out, "func splashApprove") {
 		t.Errorf("expected splashApprove helper in preamble, got:\n%s", out)
+	}
+	// splashApprove must now return error (not be void)
+	if !strings.Contains(out, "func splashApprove(name string) error") {
+		t.Errorf("expected splashApprove to return error, got:\n%s", out)
+	}
+	// No cascade without graph: run() call site must not have error injection
+	runIdx := strings.Index(out, "func run()")
+	if runIdx < 0 {
+		t.Fatal("func run() not found in output — cannot verify call site is clean")
+	}
+	if strings.Contains(out[runIdx:], "if err :=") {
+		t.Errorf("error injection must not appear at call site without graph, got:\n%s", out)
+	}
+}
+
+func TestApproveCascade(t *testing.T) {
+	src := `
+module payments
+@approve
+fn charge(amount: Int) -> Int {
+    return amount
+}
+fn run() -> Int {
+    let result = charge(100)
+    return result
+}
+`
+	out := emitSrcWithApproval(t, src)
+	mustGoSyntax(t, out)
+
+	// @approve function: (Int, error) return
+	if !strings.Contains(out, "func charge(amount int) (int, error)") {
+		t.Errorf("expected (int, error) return on @approve function, got:\n%s", out)
+	}
+	// @approve function body: error-returning gate
+	if !strings.Contains(out, `if err := splashApprove("charge"); err != nil`) {
+		t.Errorf("expected error-returning gate in charge body, got:\n%s", out)
+	}
+	// @approve function: explicit return becomes return x, nil
+	if !strings.Contains(out, "return amount, nil") {
+		t.Errorf("expected 'return amount, nil' inside charge, got:\n%s", out)
+	}
+	// Cascade: run() also gets (int, error) return
+	if !strings.Contains(out, "func run() (int, error)") {
+		t.Errorf("expected run() to gain (int, error) return via cascade, got:\n%s", out)
+	}
+	// Cascade: call site in run() handles error
+	if !strings.Contains(out, "result, err := charge(100)") {
+		t.Errorf("expected multi-return call site for charge(), got:\n%s", out)
+	}
+	if !strings.Contains(out, "if err != nil") {
+		t.Errorf("expected error check after charge() call, got:\n%s", out)
+	}
+	// Cascade: return in run() becomes return result, nil
+	if !strings.Contains(out, "return result, nil") {
+		t.Errorf("expected 'return result, nil' in run(), got:\n%s", out)
+	}
+}
+
+func TestApproveMainExit(t *testing.T) {
+	src := `
+module main
+@approve
+fn doWork() {
+    println("done")
+}
+fn main() {
+    doWork()
+}
+`
+	out := emitSrcWithApproval(t, src)
+	mustGoSyntax(t, out)
+
+	// main() must NOT get an error return (Go forbids it)
+	if strings.Contains(out, "func main() error") {
+		t.Errorf("main() must not have error return, got:\n%s", out)
+	}
+	// main() call site: graceful exit, not return err
+	if !strings.Contains(out, "os.Exit(1)") {
+		t.Errorf("expected os.Exit(1) in main() denial path, got:\n%s", out)
+	}
+	if !strings.Contains(out, `fmt.Fprintf(os.Stderr`) {
+		t.Errorf("expected fmt.Fprintf in main() denial path, got:\n%s", out)
 	}
 }
 
