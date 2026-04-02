@@ -291,7 +291,7 @@ fn greeting(name: String?) -> String {
 	}
 }
 
-func TestApproveAuditLog(t *testing.T) {
+func TestApproveGate(t *testing.T) {
 	src := `
 module payments
 @approve
@@ -304,14 +304,48 @@ fn run() {
 `
 	out := emitSrc(t, src)
 	mustGoSyntax(t, out)
-	if !strings.Contains(out, `splashAudit("processPayment", time.Now())`) {
-		t.Errorf("expected splashAudit call before processPayment, got:\n%s", out)
+
+	// Gate injected at top of @approve function body
+	if !strings.Contains(out, `splashApprove("processPayment")`) {
+		t.Errorf("expected splashApprove at function body top, got:\n%s", out)
 	}
-	if !strings.Contains(out, "func splashAudit") {
-		t.Errorf("expected splashAudit helper in preamble, got:\n%s", out)
+	// Old call-site audit must be gone
+	if strings.Contains(out, "splashAudit(") {
+		t.Errorf("splashAudit should be removed, got:\n%s", out)
 	}
-	if !strings.Contains(out, `"encoding/json"`) {
-		t.Errorf("expected encoding/json import, got:\n%s", out)
+	// Call site in run() must NOT have injection
+	runIdx := strings.Index(out, "func run()")
+	if runIdx >= 0 && strings.Contains(out[runIdx:], "splashApprove(") {
+		t.Errorf("splashApprove must not appear at call site in run(), got:\n%s", out)
+	}
+	// Helper in preamble
+	if !strings.Contains(out, "func splashApprove") {
+		t.Errorf("expected splashApprove helper in preamble, got:\n%s", out)
+	}
+}
+
+func TestApprovalAdapterSwap(t *testing.T) {
+	src := `
+module payments
+@approve
+fn processPayment(amount: Int) {
+    let x = amount
+}
+`
+	out := emitSrc(t, src)
+	mustGoSyntax(t, out)
+
+	if !strings.Contains(out, "type ApprovalAdapter interface") {
+		t.Errorf("expected ApprovalAdapter interface, got:\n%s", out)
+	}
+	if !strings.Contains(out, "func SetApprovalAdapter") {
+		t.Errorf("expected SetApprovalAdapter swap function, got:\n%s", out)
+	}
+	if !strings.Contains(out, "splashStdinApproval") {
+		t.Errorf("expected splashStdinApproval default impl, got:\n%s", out)
+	}
+	if !strings.Contains(out, `"bufio"`) {
+		t.Errorf("expected bufio import, got:\n%s", out)
 	}
 }
 
