@@ -40,12 +40,26 @@ fn public_id(user: User) -> Int {
     return user.id
 }
 
-// The functions below demonstrate what the classification system prevents.
-// These would fail to compile once the Loggable constraint is implemented
-// in Phase 3. Shown here as documentation of the design intent.
+// What the classification system enforces at compile time
 //
-//   fn bad_log(user: User) { log.info(user.email) }
-//   // Error: Email is @sensitive — type does not satisfy Loggable
+// splash check catches this today:
+//
+//   @tool
+//   fn expose_user(id: Int) -> User {
+//       return User { id: id, display_name: "Alice", email: "alice@example.com", ssn: none }
+//   }
+//   // Error: @tool function "expose_user" returns type User which contains
+//   // sensitive or restricted fields (email, ssn) — PII would flow into the
+//   // AI agent's context
+//
+//   fn debug_user(user: User) {
+//       println(user)
+//   }
+//   // Error: cannot pass sensitive type User to println — use a public
+//   // accessor or a type that satisfies Loggable
+//
+// What remains future work (Phase 4+):
 //
 //   fn bad_store(user: User) needs DB.write { db.save(user.ssn) }
 //   // Error: @restricted type cannot be passed to a storage adapter
+//   // (requires std/db adapter constraint — Phase 4)

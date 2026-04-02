@@ -81,7 +81,7 @@ type User {
 }
 ```
 
-The `Loggable` constraint enforcement is planned for the constraint system (Phase 3). The field annotations and classification propagation are tracked by the type checker today.
+Two enforcement checks are active: `@tool` functions cannot return types with `@sensitive` or `@restricted` fields (safety checker), and `println` rejects arguments of `@sensitive`-classified types (type checker). Run `splash check examples/data_safety/data_safety.splash` — the file checks clean because it only uses public fields in its functions. Add `@tool fn expose_user(id: Int) -> User { ... }` to see the first enforcement in action.
 
 ---
 
@@ -234,5 +234,5 @@ go build ./cmd/splash/...
 | `@approve` denial / error cascade (`(T, error)` Go signatures) | ✅ Complete (Phase 4b) |
 | `@sandbox` / `@budget` enforcement | Planned — Phase 4 |
 | `std/db` stdlib | Planned — Phase 4 |
-| `@sensitive` / `Loggable` constraint enforcement | Planned — Phase 4 |
+| `@sensitive` / `Loggable` enforcement (`@tool` return type + `println`) | ✅ Complete |
 | Multi-file modules | Planned — Phase 4 |
