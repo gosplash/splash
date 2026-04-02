@@ -4,6 +4,10 @@
 
 *White Paper — v0.1*
 
+**Authors**
+Zach Graves &lt;zach@zachgraves.com&gt;
+Claude Sonnet 4.6 (Anthropic)
+
 ---
 
 Splash is a capability-secure backend language with first-class agent semantics — the first integrated, production-oriented compiler-enforced safety layer for AI agent systems. It prevents PII leaks, constrains agent capabilities, and audits every automated decision — before the binary is produced. These are type-system properties, not runtime policies. It doesn't matter whether a human or an AI wrote the code. The compiler enforces the same constraints on both.
