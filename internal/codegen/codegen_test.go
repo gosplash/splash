@@ -402,6 +402,10 @@ fn run() -> Int {
 	if !strings.Contains(out, "if err != nil") {
 		t.Errorf("expected error check after charge() call, got:\n%s", out)
 	}
+	// Error must be returned upward, not silently dropped
+	if !strings.Contains(out, "return 0, err") {
+		t.Errorf("expected 'return 0, err' in cascade error propagation, got:\n%s", out)
+	}
 	// Cascade: return in run() becomes return result, nil
 	if !strings.Contains(out, "return result, nil") {
 		t.Errorf("expected 'return result, nil' in run(), got:\n%s", out)
@@ -421,6 +425,11 @@ fn main() {
 `
 	out := emitSrcWithApproval(t, src)
 	mustGoSyntax(t, out)
+
+	// doWork() call must still be present
+	if !strings.Contains(out, "doWork()") {
+		t.Errorf("expected doWork() call in main(), got:\n%s", out)
+	}
 
 	// main() must NOT get an error return (Go forbids it)
 	if strings.Contains(out, "func main() error") {

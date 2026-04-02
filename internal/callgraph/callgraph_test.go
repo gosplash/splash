@@ -195,7 +195,7 @@ fn unrelated() -> Int { return 0 }
 	if !callers["charge"] {
 		t.Error("expected Callers to include the target itself")
 	}
-	// run calls charge transitively
+	// run calls charge directly
 	if !callers["run"] {
 		t.Error("expected Callers to include 'run' (direct caller)")
 	}
