@@ -45,6 +45,12 @@ fn validate_amount(amount_cents: Int) -> Bool {
 /// Agent entry point. Can charge and refund, but both are gated.
 /// @redline would block this function from ever running —
 /// @approve lets it run, but only after the adapter says yes.
+///
+/// Note: the agent calls charge_card like any other function. It doesn't
+/// know about the approval gate. The gate fires inside charge_card's body —
+/// invisible to the caller, enforced by the compiler. This is the difference
+/// between body injection and call-site injection: the caller writes normal
+/// code; the precondition is the function's own responsibility.
 fn run_billing_agent(customer_id: Int, amount_cents: Int) needs Agent, Net -> Charge {
     let ok = validate_amount(amount_cents)
     let charge = charge_card(customer_id, amount_cents)
