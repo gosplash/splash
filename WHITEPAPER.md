@@ -383,6 +383,20 @@ Structured concurrency maps to Go's goroutine model. `group { async f(); async g
 
 Context propagation is implemented via goroutine-local storage. Context is implicitly available in every Splash function; explicit reads (`ctx.remaining`, `ctx.check()`, `ctx.get(AuthUser)`) compile to reads from a goroutine-local value. Developers don't thread context through signatures; the compiler inserts the plumbing.
 
+**Backend abstraction.** Code generation targets a `Backend` interface. The current implementation emits Go. An LLVM backend is straightforward to add: the safety model is fully enforced before codegen, so the backend receives a verified, effect-annotated AST with no security-relevant decisions remaining. This separation is intentional. All guarantees about effects, data flow, and agent reachability are established in the compiler front-end. Backends are responsible only for translating verified programs into executable form. The same source file, the same call graph analysis, the same `@redline` and `@approve` enforcement — regardless of whether the output is a Go binary, a native object via LLVM, or a WASM module.
+
+#### Trust Boundaries and Foreign Code
+
+Splash enforces effects, data classification, and agent reachability at compile time within Splash code. Foreign code — Go libraries called from generated Splash output — is outside this verification boundary.
+
+This is a deliberate design tradeoff. Calling foreign code introduces a trust boundary, similar to FFI in other systems languages. The guarantees Splash provides apply to verified code; interactions with external libraries rely on the correctness of those libraries.
+
+In practice, this preserves auditability. The boundary between verified and unverified code is explicit in the call graph and can be minimized, reviewed, or sandboxed. A codebase that calls one external HTTP library through a single adapter function has one trust boundary. A codebase that calls arbitrary Go packages throughout the application has many. Splash does not prevent the latter, but it makes the surface area legible.
+
+Future work may introduce mechanisms for constraining or annotating foreign calls — effect annotations on extern declarations, adapter verification, or module-boundary sandboxing. The core model treats them as trusted capabilities.
+
+> Splash guarantees what it can prove, and makes trust boundaries explicit where it cannot.
+
 ---
 
 ## Section 5: Supply Chain and Organizational Safety
@@ -490,9 +504,9 @@ Four SOC 2 control families map directly to Splash language properties:
 
 ## Section 6: Implementation Roadmap
 
-Splash compiles to Go. `splash build` is a frontend that parses, type-checks, and verifies Splash source, emits Go, and calls `go build`. The output is a single statically-linked binary. Splash inherits Go's runtime — goroutines, GC, fast compilation — while the frontend enforces Splash's safety properties before Go sees the code.
+The compilation model and backend abstraction are described in Section 4 (Compilation Model). The phases below track the buildout of the language and standard library against that architecture.
 
-The Go target is a deliberate choice. Building a production runtime from scratch is a multi-year project before a developer can ship their first API. Go's runtime is proven and well-understood. The Splash compiler team focuses on the frontend — type system, effect system, classification analysis, safety enforcement — and delegates runtime concerns to Go.
+The Go target is a deliberate first choice. Building a production runtime from scratch is a multi-year project before a developer can ship their first API. Go's runtime is proven and well-understood. The Splash compiler team focuses on the frontend — type system, effect system, classification analysis, safety enforcement — and delegates runtime concerns to Go. The `Backend` interface means additional targets (LLVM, WASM) can be added without touching the safety-relevant frontend.
 
 ### Phase 1: Parser and Type Checker
 
@@ -536,7 +550,9 @@ Deliverable: a developer can build a production-grade API with `splash new`, `sp
 - ✅ `@approve` adapter pattern, body injection, `StdinApproval` (Phase 4a)
 - ✅ Denial propagation — `@approve` functions get `(T, error)` Go signatures; error cascades through every transitive caller; `main()` exits gracefully (Phase 4b)
 - Non-blocking production adapters: `SlackApproval`, `WebhookApproval`, `PolicyApproval` (Phase 4c)
-- `@sandbox` and `@budget` enforcement at runtime (currently parsed, not enforced)
+- ✅ `@sandbox` compile-time effect allow/deny enforcement against agent-reachable call graph
+- ✅ `@budget` compile-time argument type validation
+- `@budget` runtime enforcement — instrumented counter in `ai.prompt` calls, `BudgetExceeded` propagation (requires `std/ai` runtime)
 - `Loggable` constraint enforcement — compile-time block on logging `@sensitive` fields
 - Multi-file module loading (`use other/module` resolves actual files)
 - `splash deploy` with capability manifest diffing (lockfile-level capability tracking)
