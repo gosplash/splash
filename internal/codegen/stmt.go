@@ -37,6 +37,38 @@ func (e *Emitter) emitStmt(s ast.Stmt) {
 }
 
 func (e *Emitter) emitLetStmt(s *ast.LetStmt) {
+	// Check if the RHS is a direct call to an @approve function.
+	// If so, unwrap the (T, error) return and handle denial.
+	if call, ok := s.Value.(*ast.CallExpr); ok {
+		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && e.approveFns[ident.Name] && (e.inApprovalFn || e.currentFnIsMain) {
+			if e.currentFnIsMain {
+				// main() cannot return error — use graceful exit.
+				e.imports["fmt"] = true
+				e.imports["os"] = true
+				e.writeLine("%s, err := %s", s.Name, e.emitExprStr(s.Value))
+				e.writeLine("if err != nil {")
+				e.indent++
+				e.writeLine(`fmt.Fprintf(os.Stderr, "approval denied: %%v\n", err)`)
+				e.writeLine("os.Exit(1)")
+				e.indent--
+				e.writeLine("}")
+			} else {
+				// Normal cascade: propagate the error up.
+				e.writeLine("%s, err := %s", s.Name, e.emitExprStr(s.Value))
+				e.writeLine("if err != nil {")
+				e.indent++
+				if e.currentFnReturnType != nil {
+					e.writeLine("return %s, err", e.zeroValueFor(e.currentFnReturnType))
+				} else {
+					e.writeLine("return err")
+				}
+				e.indent--
+				e.writeLine("}")
+			}
+			return
+		}
+	}
+	// Default: no @approve call, original behavior.
 	if s.Type != nil {
 		e.writeLine("var %s %s = %s", s.Name, e.emitTypeName(s.Type), e.emitExprStr(s.Value))
 	} else {
@@ -63,6 +95,44 @@ func (e *Emitter) emitReturnStmt(s *ast.ReturnStmt) {
 }
 
 func (e *Emitter) emitExprStmt(s *ast.ExprStmt) {
+	// Check if this is a direct call to an @approve function used as a statement
+	// (return value discarded). Handle the (T, error) or (error) return.
+	if call, ok := s.Expr.(*ast.CallExpr); ok {
+		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && e.approveFns[ident.Name] && (e.inApprovalFn || e.currentFnIsMain) {
+			calleeDecl := e.fnDecls[ident.Name]
+			hasReturnVal := calleeDecl != nil && calleeDecl.ReturnType != nil
+
+			if e.currentFnIsMain {
+				e.imports["fmt"] = true
+				e.imports["os"] = true
+				if hasReturnVal {
+					e.writeLine("if _, err := %s; err != nil {", e.emitExprStr(s.Expr))
+				} else {
+					e.writeLine("if err := %s; err != nil {", e.emitExprStr(s.Expr))
+				}
+				e.indent++
+				e.writeLine(`fmt.Fprintf(os.Stderr, "approval denied: %%v\n", err)`)
+				e.writeLine("os.Exit(1)")
+				e.indent--
+				e.writeLine("}")
+			} else {
+				if hasReturnVal {
+					e.writeLine("if _, err := %s; err != nil {", e.emitExprStr(s.Expr))
+				} else {
+					e.writeLine("if err := %s; err != nil {", e.emitExprStr(s.Expr))
+				}
+				e.indent++
+				if e.currentFnReturnType != nil {
+					e.writeLine("return %s, err", e.zeroValueFor(e.currentFnReturnType))
+				} else {
+					e.writeLine("return err")
+				}
+				e.indent--
+				e.writeLine("}")
+			}
+			return
+		}
+	}
 	e.writeLine("%s", e.emitExprStr(s.Expr))
 }
 
