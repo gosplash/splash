@@ -2,6 +2,8 @@
 package safety
 
 import (
+	"strings"
+
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/diagnostic"
@@ -20,8 +22,9 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnos
 
 	roots := g.AgentRoots()
 	agentReachable := g.Reachable(roots)
+	agentParents := g.Parents(roots)
 
-	diags = append(diags, c.checkRedline(file, g, agentReachable)...)
+	diags = append(diags, c.checkRedline(file, g, agentParents)...)
 	diags = append(diags, c.checkApprove(file, g, agentReachable)...)
 	diags = append(diags, c.checkContainment(file, g, agentReachable)...)
 
@@ -29,7 +32,8 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnos
 }
 
 // checkRedline emits an error for every @redline function that is agent-reachable.
-func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentReachable map[string]bool) []diagnostic.Diagnostic {
+// The error message includes the full call path from the agent entry point to the violation.
+func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentParents map[string]string) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 
 	for _, decl := range file.Declarations {
@@ -44,11 +48,13 @@ func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentReachabl
 		if !node.HasAnnotation(ast.AnnotRedline) {
 			continue
 		}
-		if agentReachable[fn.Name] {
+		if _, reachable := agentParents[fn.Name]; reachable {
+			path := callgraph.PathTo(agentParents, fn.Name)
 			diags = append(diags, diagnostic.Errorf(
 				fn.Position,
-				"@redline function %q is reachable from an agent context",
+				"@redline function %q is reachable from an agent context\n  call path: %s",
 				fn.Name,
+				strings.Join(path, " → "),
 			))
 		}
 	}
