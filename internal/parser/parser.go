@@ -958,6 +958,8 @@ func (p *Parser) parseCallExpr(callee ast.Expr) ast.Expr {
 // isGenericCallAhead returns true if the token sequence from the current position
 // matches a generic call's type-argument list: < TypeIdent[?] [, TypeIdent[?]]* > (
 // This scan is non-mutating — it reads p.tokens by index without changing p.pos.
+// Note: nested generic type args (e.g. Result<T, E>) are not recognized by this scan;
+// extend it if nested generics are needed.
 func (p *Parser) isGenericCallAhead() bool {
 	i := p.pos
 	if i >= len(p.tokens) || p.tokens[i].Kind != token.LT {
