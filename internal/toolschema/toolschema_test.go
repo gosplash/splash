@@ -1,6 +1,9 @@
 package toolschema_test
 
 import (
+	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 
 	"gosplash.dev/splash/internal/ast"
@@ -222,16 +225,12 @@ fn internal() -> String { return "hidden" }
 }
 
 func TestToolSchema_EffectsField(t *testing.T) {
-	src := `
+	file := parseFile(`
 module demo
 /// Find records by query.
 @tool
 fn search(query: String) needs DB.read, Net -> String { return query }
-`
-	toks := lexer.New("test.splash", src).Tokenize()
-	p := parser.New("test.splash", toks)
-	file, _ := p.ParseFile()
-
+`)
 	tools := toolschema.Extract(file)
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
@@ -240,30 +239,53 @@ fn search(query: String) needs DB.read, Net -> String { return query }
 	if len(tool.Effects) != 2 {
 		t.Fatalf("expected 2 effects, got %v", tool.Effects)
 	}
-	if tool.Effects[0] != "DB.read" {
-		t.Errorf("expected effects[0] = DB.read, got %q", tool.Effects[0])
+	if !slices.Contains(tool.Effects, "DB.read") {
+		t.Errorf("expected effects to contain %q, got %v", "DB.read", tool.Effects)
 	}
-	if tool.Effects[1] != "Net" {
-		t.Errorf("expected effects[1] = Net, got %q", tool.Effects[1])
+	if !slices.Contains(tool.Effects, "Net") {
+		t.Errorf("expected effects to contain %q, got %v", "Net", tool.Effects)
 	}
 }
 
 func TestToolSchema_NoEffectsOmitted(t *testing.T) {
-	src := `
+	file := parseFile(`
 module demo
 /// Simple tool with no effects.
 @tool
 fn ping() -> String { return "pong" }
-`
-	toks := lexer.New("test.splash", src).Tokenize()
-	p := parser.New("test.splash", toks)
-	file, _ := p.ParseFile()
-
+`)
 	tools := toolschema.Extract(file)
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
 	if len(tools[0].Effects) != 0 {
 		t.Errorf("expected no effects, got %v", tools[0].Effects)
+	}
+	out, err := json.Marshal(tools[0])
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	if strings.Contains(string(out), `"effects"`) {
+		t.Errorf("expected 'effects' key to be absent from JSON, got %s", string(out))
+	}
+}
+
+func TestExtractReachable_FiltersNonReachable(t *testing.T) {
+	file := parseFile(`
+module demo
+@tool
+fn reachable(query: String) -> String { return query }
+@tool
+fn restricted(id: Int) -> String { return "hidden" }
+`)
+	agentReachable := map[string]bool{
+		"reachable": true,
+	}
+	tools := toolschema.ExtractReachable(file, agentReachable)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	if tools[0].Name != "reachable" {
+		t.Errorf("expected tool name %q, got %q", "reachable", tools[0].Name)
 	}
 }
