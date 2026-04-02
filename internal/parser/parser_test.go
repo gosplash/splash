@@ -6,6 +6,7 @@ import (
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
+	"gosplash.dev/splash/internal/token"
 )
 
 func parse(t *testing.T, src string) *ast.File {
@@ -305,5 +306,66 @@ async fn run_agent(goal: String) needs Agent -> String { return goal }
 	}
 	if _, ok := maxCallsVal.(*ast.IntLiteral); !ok {
 		t.Errorf("expected 'max_calls' to be *ast.IntLiteral, got %T", maxCallsVal)
+	}
+}
+
+func TestParseGenericCall_SingleTypeArg(t *testing.T) {
+	src := `
+module demo
+fn test(ai: String) -> String {
+  return ai.prompt<SermonInsight>(ai)
+}
+`
+	file := parse(t, src)
+	fn, ok := file.Declarations[0].(*ast.FunctionDecl)
+	if !ok {
+		t.Fatal("expected FunctionDecl")
+	}
+	ret, ok := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatal("expected ReturnStmt")
+	}
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", ret.Value)
+	}
+	if len(call.TypeArgs) != 1 {
+		t.Fatalf("expected 1 type arg, got %d", len(call.TypeArgs))
+	}
+	typeArg, ok := call.TypeArgs[0].(*ast.NamedTypeExpr)
+	if !ok {
+		t.Fatalf("expected NamedTypeExpr, got %T", call.TypeArgs[0])
+	}
+	if typeArg.Name != "SermonInsight" {
+		t.Errorf("expected type arg SermonInsight, got %q", typeArg.Name)
+	}
+	if len(call.Args) != 1 {
+		t.Errorf("expected 1 call arg, got %d", len(call.Args))
+	}
+}
+
+func TestParseGenericCall_StillParseComparisonLT(t *testing.T) {
+	// a < b must still parse as a comparison, not as a generic call
+	src := `
+module demo
+fn test(a: Int, b: Int) -> Bool {
+  return a < b
+}
+`
+	file := parse(t, src)
+	fn, ok := file.Declarations[0].(*ast.FunctionDecl)
+	if !ok {
+		t.Fatal("expected FunctionDecl")
+	}
+	ret, ok := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatal("expected ReturnStmt")
+	}
+	bin, ok := ret.Value.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr for a < b, got %T", ret.Value)
+	}
+	if bin.Op != token.LT {
+		t.Errorf("expected LT op, got %v", bin.Op)
 	}
 }

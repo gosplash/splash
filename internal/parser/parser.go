@@ -819,6 +819,37 @@ func (p *Parser) parseExpr(minPrec precedence) ast.Expr {
 			p.advance()
 			right := p.parseExpr(prec - 1)
 			left = &ast.BinaryExpr{Left: left, Op: cur.Kind, Right: right, Position: cur.Pos}
+		case token.LT:
+			if p.isGenericCallAhead() {
+				// Generic call: callee<TypeArgs>(args)
+				p.advance() // past <
+				var typeArgs []ast.TypeExpr
+				for !p.check(token.GT) && !p.check(token.EOF) {
+					typeArgs = append(typeArgs, p.parseTypeExpr())
+					if !p.check(token.COMMA) {
+						break
+					}
+					p.advance()
+				}
+				p.eat(token.GT)
+				callPos := p.current().Pos
+				p.eat(token.LPAREN)
+				var args []ast.Expr
+				for !p.check(token.RPAREN) && !p.check(token.EOF) {
+					args = append(args, p.parseExpr(precLowest))
+					if !p.check(token.COMMA) {
+						break
+					}
+					p.advance()
+				}
+				p.eat(token.RPAREN)
+				left = &ast.CallExpr{Callee: left, Args: args, TypeArgs: typeArgs, Position: callPos}
+			} else {
+				// Comparison: left < right
+				p.advance()
+				right := p.parseExpr(prec + 1)
+				left = &ast.BinaryExpr{Left: left, Op: cur.Kind, Right: right, Position: cur.Pos}
+			}
 		default:
 			p.advance()
 			right := p.parseExpr(prec + 1)
@@ -922,6 +953,42 @@ func (p *Parser) parseCallExpr(callee ast.Expr) ast.Expr {
 	}
 	p.eat(token.RPAREN)
 	return &ast.CallExpr{Callee: callee, Args: args, Position: pos}
+}
+
+// isGenericCallAhead returns true if the token sequence from the current position
+// matches a generic call's type-argument list: < TypeIdent[?] [, TypeIdent[?]]* > (
+// This scan is non-mutating — it reads p.tokens by index without changing p.pos.
+func (p *Parser) isGenericCallAhead() bool {
+	i := p.pos
+	if i >= len(p.tokens) || p.tokens[i].Kind != token.LT {
+		return false
+	}
+	i++ // past <
+	if i >= len(p.tokens) || p.tokens[i].Kind != token.IDENT {
+		return false
+	}
+	i++ // past first type arg ident
+	// optional ? for optional type (e.g. <Foo?>)
+	if i < len(p.tokens) && p.tokens[i].Kind == token.QUESTION {
+		i++
+	}
+	// optional comma-separated additional type args
+	for i < len(p.tokens) && p.tokens[i].Kind == token.COMMA {
+		i++ // past comma
+		if i >= len(p.tokens) || p.tokens[i].Kind != token.IDENT {
+			return false
+		}
+		i++ // past type arg ident
+		if i < len(p.tokens) && p.tokens[i].Kind == token.QUESTION {
+			i++
+		}
+	}
+	// must be > then (
+	if i >= len(p.tokens) || p.tokens[i].Kind != token.GT {
+		return false
+	}
+	i++
+	return i < len(p.tokens) && p.tokens[i].Kind == token.LPAREN
 }
 
 func (p *Parser) parseIndexExpr(obj ast.Expr) ast.Expr {
