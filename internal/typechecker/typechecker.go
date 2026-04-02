@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"path/filepath"
+
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/lexer"
@@ -126,8 +128,9 @@ func (tc *TypeChecker) loadUserModule(u *ast.UseDecl) {
 		return
 	}
 
-	// Resolve: "billing" → "billing.splash", "app/users" → "app/users.splash"
-	filePath := u.Path + ".splash"
+	// Resolve: "billing" → "<baseDir>/billing.splash", "app/users" → "<baseDir>/app/users.splash"
+	relPath := u.Path + ".splash"
+	filePath := filepath.Join(tc.modules.baseDir, relPath)
 
 	// Cycle detection
 	if tc.modules.loading[filePath] {

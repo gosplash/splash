@@ -1,6 +1,6 @@
 # Splash Examples
 
-Seven examples demonstrating the core language features. All can be checked with `splash check` and built with `splash build`. `@tool` functions emit JSON Schema via `splash tools`. `splash emit` prints the generated Go source.
+Eight examples demonstrating the core language features. All can be checked with `splash check` and built with `splash build`. `@tool` functions emit JSON Schema via `splash tools`. `splash emit` prints the generated Go source.
 
 ```
 splash check <file.splash>         # parse + type check + safety enforcement
@@ -185,6 +185,31 @@ SetApprovalAdapter(&WebhookApproval{URL: secrets.ApprovalWebhook})
 
 ---
 
+## 08 · multi_file
+
+**`multi_file/types.splash`** and **`multi_file/agent.splash`** — multi-file modules.
+
+`use types` in `agent.splash` loads `types.splash` from the same directory. `SearchResult` and `SearchQuery` are defined in `types.splash`; `agent.splash` references them as if they were local. The compiler resolves the import, type-checks both files, and emits a single Go package.
+
+```splash
+// types.splash
+module types
+
+type SearchResult { title: String; url: String; score: Int }
+type SearchQuery  { text: String; limit: Int }
+
+// agent.splash
+module agent
+use types
+
+@tool
+fn search(query: SearchQuery) needs DB.read -> SearchResult { ... }
+```
+
+Run `splash emit examples/multi_file/agent.splash` to see both modules merged into one Go package.
+
+---
+
 ## Running the Examples
 
 With the `splash` binary built from the repo root:
@@ -235,4 +260,4 @@ go build ./cmd/splash/...
 | `@sandbox` / `@budget` enforcement | Planned — Phase 4 |
 | `std/db` stdlib | Planned — Phase 4 |
 | `@sensitive` / `Loggable` enforcement (`@tool` return type + `println`) | ✅ Complete |
-| Multi-file modules | Planned — Phase 4 |
+| Multi-file modules (`use path` loads sibling `.splash` files) | ✅ Complete |
