@@ -20,7 +20,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: splash <check|build|tools> <file.splash> [-o output]")
+		fmt.Fprintln(os.Stderr, "usage: splash <check|build|emit|tools> <file.splash> [-o output]")
 		os.Exit(1)
 	}
 	cmd, file := os.Args[1], os.Args[2]
@@ -28,6 +28,11 @@ func main() {
 	switch cmd {
 	case "check":
 		if err := runCheck(file); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "emit":
+		if err := runEmit(file); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -93,6 +98,16 @@ func runCheck(path string) error {
 		return fmt.Errorf("check failed")
 	}
 	fmt.Printf("%s: ok\n", path)
+	return nil
+}
+
+func runEmit(path string) error {
+	f, err := parseFile(path)
+	if err != nil {
+		return err
+	}
+	e := codegen.New()
+	fmt.Print(e.EmitFile(f))
 	return nil
 }
 
@@ -170,7 +185,21 @@ func runTools(path string) error {
 		return fmt.Errorf("type errors")
 	}
 
-	schemas := toolschema.Extract(f)
+	g := callgraph.Build(f)
+	safetyErrs := safety.New().Check(f, g)
+	for _, d := range safetyErrs {
+		fmt.Fprintln(os.Stderr, d)
+	}
+	if len(safetyErrs) > 0 {
+		return fmt.Errorf("safety errors: tool surface is unsafe")
+	}
+
+	// Only emit tools for agent-reachable functions. @tool functions are
+	// agent roots, so all are reachable — but this filters any that were
+	// excluded by @containment or flagged by @redline.
+	agentReachable := g.Reachable(g.AgentRoots())
+
+	schemas := toolschema.ExtractReachable(f, agentReachable)
 	if schemas == nil {
 		schemas = []toolschema.ToolSchema{}
 	}

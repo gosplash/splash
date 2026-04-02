@@ -1,10 +1,11 @@
 # Splash Examples
 
-Six examples demonstrating the core language features. All can be checked with `splash check` and built with `splash build`. `@tool` functions emit JSON Schema via `splash tools`.
+Seven examples demonstrating the core language features. All can be checked with `splash check` and built with `splash build`. `@tool` functions emit JSON Schema via `splash tools`. `splash emit` prints the generated Go source.
 
 ```
 splash check <file.splash>         # parse + type check + safety enforcement
 splash build <file.splash>         # codegen → go build → binary
+splash emit  <file.splash>         # print generated Go source
 splash tools <file.splash>         # emit JSON Schema for @tool functions
 ```
 
@@ -159,6 +160,31 @@ Run `splash tools ai_prompt/ai_prompt.splash` to see the generated JSON Schema w
 
 ---
 
+## 07 · approval
+
+**`approval/approval.splash`** — `@approve` as a function precondition.
+
+`@approve` means the function does not execute until the `ApprovalAdapter` approves the call. The function's return type is unchanged — `charge_card` returns a `Charge`. The compiler injects `splashApprove("charge_card")` as the first statement of the function body. Call sites are untouched.
+
+```splash
+@approve
+fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
+
+@approve
+fn issue_refund(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
+```
+
+Run `splash emit approval/approval.splash` to see the generated Go. `splashApprove` appears at the top of each `@approve` function body. `validate_amount` and `run_billing_agent` are untouched — no injection at call sites. The `ApprovalAdapter` interface and `SetApprovalAdapter` swap function are in the preamble.
+
+The default adapter (`StdinApproval`) loops on a terminal prompt until the operator types `y`. Swap it at initialization for production:
+
+```go
+// In production main() — Splash side uses SetApprovalAdapter via generated Go
+SetApprovalAdapter(&WebhookApproval{URL: secrets.ApprovalWebhook})
+```
+
+---
+
 ## Running the Examples
 
 With the `splash` binary built from the repo root:
@@ -171,11 +197,16 @@ go build ./cmd/splash/...
 ./splash check examples/hello/hello.splash
 ./splash check examples/effects/effects.splash
 ./splash check examples/containment/containment.splash
+./splash check examples/approval/approval.splash
 ./splash check examples/ai_prompt/ai_prompt.splash
 
 # Build to a binary (main function required)
 ./splash build examples/hello/hello.splash -o hello
 ./hello
+
+# See the generated Go source
+./splash emit examples/approval/approval.splash
+./splash emit examples/containment/containment.splash
 
 # Emit JSON Schema for @tool functions
 ./splash tools examples/agent_tools/agent_tools.splash
@@ -192,15 +223,15 @@ go build ./cmd/splash/...
 | Call graph analysis | ✅ Complete |
 | `@redline` enforcement | ✅ Complete |
 | `@containment` enforcement | ✅ Complete |
-| `@approve` audit log | ✅ Complete (v0.1: stdout JSON) |
+| `@approve` runtime (`ApprovalAdapter`, `StdinApproval`) | ✅ Complete (Phase 4a) |
 | Go codegen | ✅ Complete |
-| `splash check` / `splash build` | ✅ Complete |
+| `splash check` / `splash build` / `splash emit` | ✅ Complete |
 | `@tool` JSON Schema (`splash tools`) | ✅ Complete |
 | `@tool` safety filtering (agent-reachable only) | ✅ Complete |
 | `use std/ai` + `ai.prompt<T>` type checking | ✅ Complete |
 | Effects field in tool schema output | ✅ Complete |
 | Member access type resolution | ✅ Complete |
-| `@approve` runtime suspension | Planned — Phase 4 |
+| `@approve` denial / `Result<T, ApprovalError>` | Planned — Phase 4b |
 | `@sandbox` / `@budget` enforcement | Planned — Phase 4 |
 | `std/db` stdlib | Planned — Phase 4 |
 | `@sensitive` / `Loggable` constraint enforcement | Planned — Phase 4 |
