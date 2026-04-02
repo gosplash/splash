@@ -6,7 +6,7 @@
 
 **Authors**
 - Zach Graves &lt;zach@zachgraves.com&gt;
-- Claude Sonnet 4.6 (Anthropic)
+- Claude Opus 4.6, Sonnet 4.6 (Anthropic)
 
 ---
 
