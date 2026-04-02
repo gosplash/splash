@@ -326,6 +326,7 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 			if t, ok3 := env.Get(ident.Name); ok3 {
 				if nt, ok4 := t.(*types.NamedType); ok4 && nt.Name == "AIAdapter" {
 					typed.Types[mem.Object] = t
+					typed.Types[e.Callee] = types.Unknown
 					for _, arg := range e.Args {
 						tc.checkExpr(arg, env, typed, typeParamEnv)
 					}
