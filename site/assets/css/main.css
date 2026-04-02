@@ -136,9 +136,8 @@ body {
   border-top: 1px solid var(--border);
 }
 
-/* First h2 after the document header shouldn't have a border-top gap */
-.content h1 + p + hr + h2,
-.content h1 + p + p + hr + h2 {
+/* h2 following an hr doesn't need its own border-top — the hr is the divider */
+.content hr + h2 {
   border-top: none;
   padding-top: 0;
 }
