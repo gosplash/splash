@@ -5,9 +5,9 @@ Splash is a compiled, statically-typed backend language with a built-in effect s
 ```splash
 @sandbox(allow: [DB.read, AI])
 @tool
-fn search_catalog(query: String) needs DB.read, AI -> List<SearchResult> {
-    let rows = db.query(query)
-    return ai.rank<SearchResult>(rows)
+/// Search the catalog for items matching a query.
+fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> {
+    return db.query(query, limit)
 }
 ```
 
