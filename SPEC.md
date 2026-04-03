@@ -594,11 +594,12 @@ Provides:
 
 | Symbol           | Type                                         | Description                        |
 |------------------|----------------------------------------------|------------------------------------|
-| `ai.prompt<T>`   | `fn(prompt: String) needs AI -> Result<T, AIError>` | Call an AI model, parse response as `T` |
-| `Result<T, E>`   | `enum Result<T, E> { Ok(T) Error(E) }`       | Success or error                   |
-| `AIError`        | `type AIError { message: String }`           | AI call failure                    |
+| `ai.prompt<T>`   | `fn(input: String) needs AI -> T`            | Call an AI model, parse response as `T` |
+| `AIError`        | `type AIError { message: String }`           | AI call failure (propagates to Agent boundary) |
 
 `ai.prompt<T>` is a generic function call: `ai.prompt<Report>("Summarize this")`.
+
+`ai.prompt<T>` returns `T` directly in Splash — there is no `Result` wrapper in the language surface. Failures propagate as Go errors to the nearest `needs Agent` boundary, where they surface as the agent entry point's error return. See [Section 11.8](#118-fn-main-and-the-agent-error-boundary).
 
 The `AI` effect is required in `needs` to call `ai.prompt`.
 
@@ -667,9 +668,18 @@ Splash `type` declarations become Go `struct` types. Field names are emitted as-
 
 Splash `enum` declarations become Go type aliases with constants. Variants with payloads are represented as structs.
 
-### 11.4 `@approve` Signature Widening
+### 11.4 The Agent Error Boundary
 
-Any function annotated with `@approve` — and all transitive callers — have their return type widened from `T` to `(T, error)` in the generated Go. The call to `splashApprove("fn_name")` is injected as the first statement.
+`needs Agent` functions define the error surface of agent execution. Two kinds of runtime failures propagate to this boundary:
+
+1. **`@approve` denials** — when the `ApprovalAdapter` rejects a call, the error propagates through all transitive callers up to the `needs Agent` function.
+2. **AI call failures** — when `ai.prompt<T>` fails (network error, model error, timeout), the error propagates the same way.
+
+In Splash source, neither failure is visible. Functions declare their return types without error handling. The compiler injects the error propagation in generated Go.
+
+Any function annotated with `@approve` — and all transitive callers up to the `needs Agent` boundary — have their return type widened from `T` to `(T, error)` in the generated Go. The call to `splashApprove("fn_name")` is injected as the first statement.
+
+**The symmetry:** error propagation follows capability propagation. Effects flow up the call graph to the Agent boundary; errors flow up the same path to the same boundary.
 
 ### 11.5 `@tool` Functions
 
@@ -679,7 +689,33 @@ Any function annotated with `@approve` — and all transitive callers — have t
 
 When multiple `.splash` files are merged (`use` imports), all declarations are emitted into a single Go file (`output.go`). The `go build` step compiles this as a single package.
 
-### 11.7 Runtime Support
+### 11.8 `fn main()` and the Agent Error Boundary
+
+Splash's `fn main()` is emitted as a Go `run() error` function, with a generated `main()` wrapper:
+
+```go
+// Generated — developer never sees this
+func main() {
+    if err := run(); err != nil {
+        fmt.Fprintln(os.Stderr, err)
+        os.Exit(1)
+    }
+}
+
+// Generated from Splash fn main()
+func run() error {
+    insight, err := askHealthCoach(1, "Should I train hard today?")
+    if err != nil { return err }
+    fmt.Println(insight.Summary)
+    return nil
+}
+```
+
+The Splash developer writes `fn main()` with no error handling. The compiler treats `fn main()` as an error-propagating function at the Agent boundary — errors return up through `run()` and the wrapper handles process exit. The compiler never injects `os.Exit` inside generated function bodies.
+
+In production, agent entry points are typically called from HTTP handlers or queue consumers rather than `main()` — the `(T, error)` signature integrates naturally with those callers.
+
+### 11.9 Runtime Support
 
 The generated Go file includes a small runtime preamble:
 

@@ -132,7 +132,7 @@ fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
 
 The `@approve` gate is injected into the function body — the caller writes normal code. The approval fires inside `charge_card`, invisible to the call site. This is deliberate: the gate is the function's responsibility, not the caller's.
 
-**`@approve` widens the return type.** The generated Go signature becomes `(Charge, error)`. This error propagates through all transitive callers. The entry point handles it — if running in `main()`, Splash emits `os.Exit(1)` on denial.
+**`@approve` widens the return type.** The generated Go signature becomes `(Charge, error)`. This error propagates through all transitive callers up to the `needs Agent` boundary — the agent entry point is where errors surface. `fn main()` is emitted as `run() error` with a thin wrapper that handles process exit; the compiler never injects `os.Exit` inside generated function bodies. In production, agent entry points are called from HTTP handlers or queue workers, where the `(T, error)` return integrates naturally.
 
 **Choosing between them:**
 

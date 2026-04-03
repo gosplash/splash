@@ -265,7 +265,9 @@ async fn charge_card(amount: Money, method: PaymentMethod) needs Net -> Result<C
 
 `@approve` is a precondition, not a return type modifier. The function's declared type is unchanged — `charge_card` returns a `Charge`. The annotation means "this function does not execute until the adapter approves." If the adapter denies, the function body never runs. The Splash programmer writes normal code; the compiler and runtime handle the gate.
 
-Phase 4b ships denial propagation: when a production adapter returns an error, the error cascades through the entire call stack without killing the process. An `@approve` function's Go return signature becomes `(T, error)` — the Splash programmer still writes `-> Charge`, but the generated Go propagates denial cleanly up to the request handler. One denied approval, one failed request, zero pod restarts.
+The error model is uniform across all agent failures. `@approve` denials, AI call failures, and budget exceeded errors all propagate as Go errors up the same call path to the `needs Agent` boundary — the agent entry point is the single declared error surface. The Splash programmer writes `-> Charge` and `-> HealthInsight`; the compiler injects the error propagation in generated Go. The agent entry point returns `(T, error)` and its callers — HTTP handlers, queue workers — handle it as a normal Go error. The compiler never injects `os.Exit` inside generated function bodies; that decision belongs to the application boundary, not the compiler.
+
+This symmetry is intentional: **error propagation follows the same path as capability propagation.** Effects flow up the call graph to the Agent boundary. Errors flow up the same path to the same boundary. Both terminate where agent execution begins.
 
 The future target exposes typed denial at the Splash level — callers handle `Denied` and `Timeout` as structured cases:
 
