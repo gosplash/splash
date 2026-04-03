@@ -40,7 +40,7 @@ func (e *Emitter) emitLetStmt(s *ast.LetStmt) {
 	// Check if the RHS is a direct call to an @approve function.
 	// If so, unwrap the (T, error) return and handle denial.
 	if call, ok := s.Value.(*ast.CallExpr); ok {
-		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) && e.inApprovalFn {
+		if ident, isIdent := call.Callee.(*ast.Ident); isIdent && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) && e.inApprovalFn {
 			// Propagate error up — main() is now run() error, so this path is uniform.
 			e.writeLine("%s, err := %s", s.Name, e.emitExprStr(s.Value))
 			e.writeLine("if err != nil {")
