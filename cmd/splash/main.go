@@ -48,12 +48,21 @@ func main() {
 		}
 	case "tools":
 		format := toolschema.FormatOpenAI // default
-		for i := 3; i < len(os.Args)-1; i++ {
-			if os.Args[i] == "--format" {
-				format = toolschema.Format(os.Args[i+1])
+		toolFile := ""
+		args := os.Args[2:]
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--format" && i+1 < len(args) {
+				format = toolschema.Format(args[i+1])
+				i++
+			} else if !strings.HasPrefix(args[i], "-") {
+				toolFile = args[i]
 			}
 		}
-		if err := runTools(file, format); err != nil {
+		if toolFile == "" {
+			fmt.Fprintln(os.Stderr, "usage: splash tools <file.splash> [--format anthropic|openai]")
+			os.Exit(1)
+		}
+		if err := runTools(toolFile, format); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
