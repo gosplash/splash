@@ -89,10 +89,27 @@ body {
   color: var(--text);
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
 .site-domain {
   font-size: 0.8125rem;
   color: var(--text-muted);
   font-family: var(--font-mono);
+}
+
+.translate-link {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-family: var(--font-sans);
+}
+
+.translate-link:hover {
+  color: var(--text);
 }
 
 /* --- Main content area --- */
