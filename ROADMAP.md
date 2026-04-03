@@ -24,7 +24,7 @@ The launch surface is the compiler, the examples, and the whitepaper. The goal i
 - `Loggable` built-in; unknown constraint names are compile errors
 
 **Tooling**
-- `splash tools` — JSON Schema from `@tool` signatures, filtered to agent-reachable set
+- `splash tools` — JSON Schema from `@tool` signatures, filtered to agent-reachable set; `--format anthropic|openai` for API-compatible output
 - Multi-file modules (`use path` loads sibling `.splash` files; cycle detection; `expose` list)
 - `std/ai` — `@tool`, `ai.prompt<T>` (returns `T`; errors propagate to `needs Agent` boundary)
 - Nine documented examples covering every safety primitive

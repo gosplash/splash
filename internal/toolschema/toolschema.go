@@ -1,6 +1,6 @@
 // Package toolschema generates JSON Schema tool definitions from @tool-annotated
-// Splash function declarations. Output is compatible with the Anthropic and
-// OpenAI tool-calling APIs.
+// Splash function declarations. Use Serialize() with FormatAnthropic or FormatOpenAI
+// to target specific API wire formats.
 package toolschema
 
 import (
