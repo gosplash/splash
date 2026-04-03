@@ -292,3 +292,9 @@ Run benchmarks: `go test -bench=. ./internal/callgraph/... ./internal/typechecke
 - `@bypass(reason, approved_by)` auditable escape hatch
 - LLVM backend (the `Backend` interface is the extension point; Go is the only current implementation)
 - `splash deploy` with capability manifest diffing
+
+## License
+
+Splash is licensed under the [MIT License](LICENSE).
+
+The Go toolchain and standard library are licensed under the [BSD 3-Clause License](https://github.com/golang/go/blob/master/LICENSE).
