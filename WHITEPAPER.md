@@ -964,3 +964,152 @@ fn main() {
   println(insight.summary)
 }
 ```
+
+---
+
+## Appendix: Example — Finance
+
+A simplified payment processor demonstrating the failure modes that actually happen when AI agents touch financial systems — and how Splash catches each one at compile time. Passes `splash check` and `splash tools`.
+
+```splash
+module finance
+
+// ─── Types ────────────────────────────────────────────
+
+type Account {
+  id:             Int
+  owner_name:     String
+  balance_cents:  Int
+  currency:       String
+  @sensitive
+  email:          String
+  @restricted
+  account_number: String
+  @restricted
+  routing_number: String
+}
+
+// Safe to return from @tool — no classified fields.
+// The agent sees balances and names, never account identifiers.
+// Returning Account directly would fail: @restricted fields cannot reach @tool.
+type AccountSummary {
+  id:            Int
+  owner_name:    String
+  balance_cents: Int
+  currency:      String
+}
+
+type Transaction {
+  id:           Int
+  from_account: Int
+  to_account:   Int
+  amount_cents: Int
+  description:  String
+  status:       String
+}
+
+// ─── Data Layer ───────────────────────────────────────
+
+fn lookup_account(id: Int) needs DB.read -> Account {
+  return Account {
+    id:             id,
+    owner_name:     "Acme Corp",
+    balance_cents:  250000,
+    currency:       "USD",
+    email:          "treasury@acme.com",
+    account_number: "000123456789",
+    routing_number: "021000021"
+  }
+}
+
+// ─── Agent Tools ──────────────────────────────────────
+
+/// Get current balance and account summary.
+/// Never returns account numbers, routing numbers, or email.
+@tool
+fn check_balance(
+  /// The account ID to look up
+  account_id: Int,
+) needs DB.read -> AccountSummary {
+  let acct = lookup_account(account_id)
+  return AccountSummary {
+    id:            acct.id,
+    owner_name:    acct.owner_name,
+    balance_cents: acct.balance_cents,
+    currency:      acct.currency
+  }
+}
+
+// ─── Gated Operations ────────────────────────────────
+// The @approve gate fires inside the function body before any logic runs.
+// The ApprovalAdapter decides how to resolve it: Slack to the compliance
+// team, an automated policy engine, or a rule ("under $1,000 from a
+// verified account — auto-approve with audit log entry"). The call site
+// writes normal code. The gate is the function's responsibility.
+
+@approve
+fn transfer_funds(
+  from_id:      Int,
+  to_id:        Int,
+  amount_cents: Int,
+  memo:         String,
+) needs DB.write, Net -> Transaction {
+  return Transaction {
+    id:           0,
+    from_account: from_id,
+    to_account:   to_id,
+    amount_cents: amount_cents,
+    description:  memo,
+    status:       "pending"
+  }
+}
+
+// ─── Redlines ─────────────────────────────────────────
+// No agent context can reach these — ever.
+// The compiler traces every path from every needs Agent function.
+// A path that reaches a @redline fails the build with the full call chain.
+//
+// Try adding `wire_transfer(from_id, "021000021", 500000)` to
+// run_fraud_agent below. The build will fail:
+//
+//   error: @redline fn "wire_transfer" is reachable from agent context
+//     run_fraud_agent → wire_transfer
+//     reason: Wire transfers require dual authorization and SWIFT compliance review
+
+@redline(reason: "Wire transfers require dual authorization and SWIFT compliance review")
+fn wire_transfer(from_id: Int, to_routing: String, amount_cents: Int) needs DB.write, Net {
+  // ...
+}
+
+@redline(reason: "Account closure requires legal review and 30-day notice period")
+fn close_account(account_id: Int) needs DB.admin {
+  // ...
+}
+
+@redline(reason: "Transaction records are an immutable audit trail — deletion is prohibited by regulation")
+fn delete_transaction(transaction_id: Int) needs DB.admin {
+  // ...
+}
+
+// ─── Fraud Detection Agent ────────────────────────────
+// Read-only. $0.50 AI budget cap. No writes, no network, no admin ops.
+//
+// @sandbox makes the constraint a compile-time proof — not a policy
+// document, not a code review, a build failure. DB.write and Net are
+// denied. The compiler walks every reachable function and verifies none
+// of them use a denied effect.
+
+@sandbox(allow: [DB.read, AI], deny: [DB.write, Net, DB.admin, FS])
+@budget(max_cost: 0.50, max_calls: 10)
+fn run_fraud_agent(
+  account_id: Int,
+) needs Agent, DB.read, AI -> String {
+  let summary = check_balance(account_id)
+  return summary.owner_name
+}
+
+fn main() {
+  let result = run_fraud_agent(42)
+  println(result)
+}
+```
