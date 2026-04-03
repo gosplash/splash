@@ -35,6 +35,34 @@ This document has four audiences. Each reads a different path through it.
 
 ---
 
+## First Principles
+
+*It doesn't matter whether a human or an AI wrote the code. The compiler enforces the same constraints on both. These principles follow from that premise.*
+
+1. **Safety is a compiler property, not a developer discipline.** If the compiler cannot prove it, it isn't guaranteed. Prompts, code review, and runtime checks are not substitutes for a build failure.
+
+2. **Hiding side effects doesn't make them safe — it makes them invisible.** Every capability a function requires is declared in its signature. There are no hidden powers.
+
+3. **The call graph is the security model.** Agent authority is defined by reachability, not by configuration. What the agent cannot reach, it cannot do — provably, from the binary.
+
+4. **Classification lives on types, not values.** Sensitive data is classified at the field level and the constraint propagates everywhere that type flows. You don't guard every call site; you guard the type once.
+
+5. **Effects propagate up; they don't get buried.** A function's capability surface is visible in its signature. Large effect surfaces are design pressure — the compiler rewards decomposition.
+
+6. **The agent boundary is the error boundary.** Failures — approval denials, AI errors, budget exceeded — surface at the `needs Agent` boundary. Error propagation follows the same path as capability propagation. Both terminate where agent execution begins.
+
+7. **Redlines are absolute.** There is no flag, policy, or annotation that overrides `@redline`. All other escape valves are auditable, greppable, and visible in the call graph — they are concessions, not features.
+
+8. **Trust boundaries must be explicit.** Foreign code is trusted by declaration, not by accident. The surface area is legible and minimizable.
+
+9. **Dependencies declare their maximum capabilities.** The lockfile records what was granted. Silent privilege escalation is a build failure, not a diff.
+
+10. **Adapters, not implementations.** Application code depends on interfaces. Infrastructure is swapped at startup, not rewritten.
+
+11. **The tool surface is a compiler output, not a developer artifact.** What the agent is allowed to call is derived from the verified call graph. Its absences are as meaningful as its presences.
+
+---
+
 ## Section 1: The Problem
 
 Deployment is where AI safety breaks down.
