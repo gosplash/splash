@@ -298,3 +298,4 @@ Run benchmarks: `go test -bench=. ./internal/callgraph/... ./internal/typechecke
 Splash is licensed under the [MIT License](LICENSE).
 
 The Go toolchain and standard library are licensed under the [BSD 3-Clause License](https://github.com/golang/go/blob/master/LICENSE).
+
