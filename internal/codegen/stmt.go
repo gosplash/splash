@@ -79,7 +79,7 @@ func (e *Emitter) emitReturnStmt(s *ast.ReturnStmt) {
 		return
 	}
 	if call, ok := s.Value.(*ast.CallExpr); ok {
-		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) {
+		if ident, isIdent := call.Callee.(*ast.Ident); isIdent && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) {
 			e.writeLine("return %s", e.emitExprStr(s.Value))
 			return
 		}
