@@ -972,6 +972,8 @@ fn main() {
 
 ---
 
+---
+
 ## Appendix: Example — Finance
 
 A simplified payment processor demonstrating the failure modes that actually happen when AI agents touch financial systems — and how Splash catches each one at compile time. Passes `splash check` and `splash tools`.
@@ -1147,14 +1149,15 @@ fn run_fraud_agent(
 
 // ─── Billing Agent ────────────────────────────────────
 // A different agent with a different capability surface.
-// DB.write and Net are allowed — this agent can initiate transfers.
-// Every transfer still goes through the @approve gate on transfer_funds.
+// @approve on the entry point gates the entire workflow — the adapter
+// clears the billing run before any logic executes. transfer_funds also
+// carries its own @approve gate (defense in depth).
 // DB.admin is still denied: wire_transfer, close_account, and
 // delete_transaction remain unreachable from this agent too.
 
 @sandbox(allow: [DB.read, DB.write, Net], deny: [DB.admin, FS, AI])
 @budget(max_cost: 0.01, max_calls: 5)
-@agent_allowed
+@approve
 fn run_billing_agent(
   from_id:      Int,
   to_id:        Int,
