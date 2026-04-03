@@ -93,10 +93,10 @@ func parseFile(path string) (*ast.File, error) {
 	return f, nil
 }
 
-func runCheck(path string) error {
+func loadProgram(path string) (*ast.File, *ast.File, error) {
 	f, err := parseFile(path)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	tc := typechecker.New()
@@ -105,15 +105,27 @@ func runCheck(path string) error {
 	for _, d := range typeErrs {
 		fmt.Fprintln(os.Stderr, d)
 	}
+	if len(typeErrs) > 0 {
+		return nil, nil, fmt.Errorf("type errors")
+	}
 
-	g := callgraph.Build(f)
+	return f, mergeFiles(tc.LoadedFiles(), f), nil
+}
+
+func runCheck(path string) error {
+	_, merged, err := loadProgram(path)
+	if err != nil {
+		return err
+	}
+
+	g := callgraph.Build(merged)
 	sc := safety.New()
-	safetyErrs := sc.Check(f, g)
+	safetyErrs := sc.Check(merged, g)
 	for _, d := range safetyErrs {
 		fmt.Fprintln(os.Stderr, d)
 	}
 
-	if len(typeErrs)+len(safetyErrs) > 0 {
+	if len(safetyErrs) > 0 {
 		return fmt.Errorf("check failed")
 	}
 	fmt.Printf("%s: ok\n", path)
@@ -138,25 +150,14 @@ func collectApproveFns(f *ast.File) map[string]bool {
 }
 
 func runEmit(path string) error {
-	f, err := parseFile(path)
+	_, merged, err := loadProgram(path)
 	if err != nil {
 		return err
 	}
 
-	tc := typechecker.New()
-	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
-	_, typeErrs := tc.Check(f)
-	for _, d := range typeErrs {
-		fmt.Fprintln(os.Stderr, d)
-	}
-	if len(typeErrs) > 0 {
-		return fmt.Errorf("type errors")
-	}
-
-	g := callgraph.Build(f)
-	merged := mergeFiles(tc.LoadedFiles(), f)
+	g := callgraph.Build(merged)
 	fmt.Print(codegen.NewGoBackend().Emit(merged, codegen.Options{
-		ApprovalCallers: g.Callers(collectApproveFns(f)),
+		ApprovalCallers: g.Callers(collectApproveFns(merged)),
 	}))
 	return nil
 }
@@ -189,24 +190,14 @@ func runBuild(path, out string) error {
 		return err
 	}
 
-	f, err := parseFile(path)
+	f, merged, err := loadProgram(path)
 	if err != nil {
 		return err
 	}
 
-	tc := typechecker.New()
-	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
-	_, typeErrs := tc.Check(f)
-	for _, d := range typeErrs {
-		fmt.Fprintln(os.Stderr, d)
-	}
-	if len(typeErrs) > 0 {
-		return fmt.Errorf("type errors")
-	}
-
-	g := callgraph.Build(f)
+	g := callgraph.Build(merged)
 	sc := safety.New()
-	safetyErrs := sc.Check(f, g)
+	safetyErrs := sc.Check(merged, g)
 	for _, d := range safetyErrs {
 		fmt.Fprintln(os.Stderr, d)
 	}
@@ -214,9 +205,8 @@ func runBuild(path, out string) error {
 		return fmt.Errorf("safety errors")
 	}
 
-	merged := mergeFiles(tc.LoadedFiles(), f)
 	goSrc := codegen.NewGoBackend().Emit(merged, codegen.Options{
-		ApprovalCallers: g.Callers(collectApproveFns(f)),
+		ApprovalCallers: g.Callers(collectApproveFns(merged)),
 	})
 
 	// splash build always produces an executable — package must be main
@@ -246,23 +236,13 @@ func runBuild(path, out string) error {
 }
 
 func runTools(path string, format toolschema.Format) error {
-	f, err := parseFile(path)
+	_, merged, err := loadProgram(path)
 	if err != nil {
 		return err
 	}
 
-	tc := typechecker.New()
-	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
-	_, typeErrs := tc.Check(f)
-	for _, d := range typeErrs {
-		fmt.Fprintln(os.Stderr, d)
-	}
-	if len(typeErrs) > 0 {
-		return fmt.Errorf("type errors")
-	}
-
-	g := callgraph.Build(f)
-	safetyErrs := safety.New().Check(f, g)
+	g := callgraph.Build(merged)
+	safetyErrs := safety.New().Check(merged, g)
 	for _, d := range safetyErrs {
 		fmt.Fprintln(os.Stderr, d)
 	}
@@ -275,7 +255,7 @@ func runTools(path string, format toolschema.Format) error {
 	// excluded by @containment or flagged by @redline.
 	agentReachable := g.Reachable(g.AgentRoots())
 
-	schemas := toolschema.ExtractReachable(f, agentReachable)
+	schemas := toolschema.ExtractReachable(merged, agentReachable)
 	if schemas == nil {
 		schemas = []toolschema.ToolSchema{}
 	}

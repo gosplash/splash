@@ -78,6 +78,12 @@ func (e *Emitter) emitReturnStmt(s *ast.ReturnStmt) {
 		e.writeLine("return nil")
 		return
 	}
+	if call, ok := s.Value.(*ast.CallExpr); ok {
+		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) {
+			e.writeLine("return %s", e.emitExprStr(s.Value))
+			return
+		}
+	}
 	e.writeLine("return %s, nil", e.emitExprStr(s.Value))
 }
 
