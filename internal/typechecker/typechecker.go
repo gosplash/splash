@@ -492,7 +492,7 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 					}
 					if len(e.TypeArgs) == 1 {
 						resolved := tc.resolveTypeExprWithParams(e.TypeArgs[0], typeParamEnv)
-						return &types.ResultType{Ok: resolved, Err: types.Named("AIError")}
+						return resolved
 					}
 					return types.Unknown
 				}

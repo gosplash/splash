@@ -21,7 +21,7 @@ type SermonInsight {
 
 /// Analyze a sermon transcript and extract structured insights.
 @tool
-async fn analyze_sermon(transcript: String) needs AI -> Result<SermonInsight, AIError> {
+async fn analyze_sermon(transcript: String) needs AI -> SermonInsight {
   return ai.prompt<SermonInsight>(transcript)
 }
 

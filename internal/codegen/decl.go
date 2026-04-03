@@ -50,8 +50,10 @@ func (e *Emitter) emitFunctionDecl(decl *ast.FunctionDecl) {
 	isCaller := e.approveCallers[decl.Name]
 	isMain := decl.Name == "main"
 
-	// Set per-function emission state for stmt emitters
-	e.inApprovalFn = (isApprove || isCaller) && !isMain
+	// Set per-function emission state for stmt emitters.
+	// main() is treated as error-propagating: it becomes run() error in Go,
+	// so errors return up rather than calling os.Exit inside the function body.
+	e.inApprovalFn = isApprove || isCaller || isMain
 	e.currentFnReturnType = decl.ReturnType
 	e.currentFnIsMain = isMain
 
@@ -88,6 +90,22 @@ func (e *Emitter) emitFunctionDecl(decl *ast.FunctionDecl) {
 	e.indent--
 	e.writeLine("}\n")
 
+	// For main(), emit the Go main() wrapper that calls run() and handles errors.
+	if isMain {
+		e.imports["fmt"] = true
+		e.imports["os"] = true
+		e.writeLine("func main() {")
+		e.indent++
+		e.writeLine("if err := run(); err != nil {")
+		e.indent++
+		e.writeLine("fmt.Fprintln(os.Stderr, err)")
+		e.writeLine("os.Exit(1)")
+		e.indent--
+		e.writeLine("}")
+		e.indent--
+		e.writeLine("}\n")
+	}
+
 	// Clear per-function state
 	e.inApprovalFn = false
 	e.currentFnReturnType = nil
@@ -107,9 +125,13 @@ func (e *Emitter) funcSignature(decl *ast.FunctionDecl) string {
 	sig := fmt.Sprintf("func %s(%s)", decl.Name, strings.Join(params, ", "))
 
 	switch {
-	case isApprovalFn && !isMain && ret != "":
+	case isMain:
+		// fn main() becomes func run() error in Go — the actual main() wrapper
+		// is emitted separately after the body.
+		sig = fmt.Sprintf("func run(%s) error", strings.Join(params, ", "))
+	case isApprovalFn && ret != "":
 		sig += fmt.Sprintf(" (%s, error)", ret)
-	case isApprovalFn && !isMain && ret == "":
+	case isApprovalFn && ret == "":
 		sig += " error"
 	case ret != "":
 		sig += " " + ret

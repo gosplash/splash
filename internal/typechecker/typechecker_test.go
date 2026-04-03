@@ -281,7 +281,7 @@ type SermonInsight {
   title: String
 }
 
-async fn analyze(text: String) needs AI -> Result<SermonInsight, AIError> {
+async fn analyze(text: String) needs AI -> SermonInsight {
   return ai.prompt<SermonInsight>(text)
 }
 `
@@ -299,7 +299,7 @@ use std/ai
 type Foo { x: Int }
 type Bar { y: String }
 
-async fn bad(text: String) needs AI -> Result<Bar, AIError> {
+async fn bad(text: String) needs AI -> Bar {
   return ai.prompt<Foo>(text)
 }
 `

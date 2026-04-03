@@ -1,0 +1,170 @@
+// whoop_api.splash
+//
+// A Whoop-like health data backend that proxies LLM queries
+// with access to user biometrics. The AI can look up users
+// and their health data, but cannot modify records or access
+// restricted fields.
+//
+// Run:
+//   splash check examples/whoop/whoop_api.splash
+//   splash tools examples/whoop/whoop_api.splash
+//   splash build examples/whoop/whoop_api.splash -o whoop
+
+module main
+
+use std/ai
+
+// ─── Types ────────────────────────────────────────────
+
+type User {
+  id:           Int
+  display_name: String
+  @sensitive
+  email:        String
+  @restricted
+  ssn:          String
+}
+
+type BiometricSnapshot {
+  user_id:          Int
+  date:             String
+  hrv:              Float
+  resting_hr:       Int
+  respiratory_rate: Float
+  recovery_score:   Int
+  sleep_score:      Int
+  strain:           Float
+  skin_temp_delta:  Float
+}
+
+type HealthInsight {
+  summary:          String
+  status:           String
+  recommendations:  List<String>
+  train_today:      Bool
+}
+
+enum RecoveryStatus {
+  recovering
+  baseline
+  peaked
+  overtrained
+}
+
+// PromptOptions maps to the OpenAI-compatible chat completions surface.
+// Excluded: stream (Splash is sync), n (typed return = one completion),
+// tools/tool_choice (handled by @tool), response_format (the type arg covers it),
+// messages array (abstracted as system + input).
+// This will move to std/ai once PromptOptions is a first-class type there.
+type PromptOptions {
+  model:       String
+  input:       String
+  system:      String
+  temperature: Float
+  max_tokens:  Int
+  timeout:     Int    // seconds — not in OAI spec, Splash-specific
+  budget:      Float  // USD cost cap — not in OAI spec, Splash-specific
+}
+
+// ─── Data Layer (read-only) ───────────────────────────
+
+fn get_user_by_id(id: Int) needs DB.read -> User {
+  return User {
+    id: id,
+    display_name: "Jane",
+    email: "jane@example.com",
+    ssn: "000-00-0000"
+  }
+}
+
+fn get_latest_biometrics(user_id: Int) needs DB.read -> BiometricSnapshot {
+  return BiometricSnapshot {
+    user_id: user_id,
+    date: "2026-04-02",
+    hrv: 62.5,
+    resting_hr: 52,
+    respiratory_rate: 15.2,
+    recovery_score: 78,
+    sleep_score: 85,
+    strain: 12.4,
+    skin_temp_delta: 0.3
+  }
+}
+
+// ─── AI Tools ─────────────────────────────────────────
+// These are the functions the LLM can call. The compiler
+// generates JSON Schema from the signatures. @sensitive
+// fields on User are blocked from appearing in tool
+// return types — the safety checker catches it.
+
+/// Look up a user by their ID. Returns display name and biometrics.
+/// The LLM never sees email or SSN — those fields are classified.
+@tool
+fn get_user(
+  /// The user's numeric ID
+  user_id: Int,
+) needs DB.read -> BiometricSnapshot {
+  let user = get_user_by_id(user_id)
+
+  // We return biometrics, not the User itself.
+  // Returning User would fail: @sensitive email in @tool return.
+  return get_latest_biometrics(user.id)
+}
+
+/// Get a recovery recommendation based on today's biometrics.
+@tool
+fn get_recovery_status(
+  /// The user's numeric ID
+  user_id: Int,
+) needs DB.read -> String {
+  let bio = get_latest_biometrics(user_id)
+  if bio.recovery_score > 80 {
+    return "peaked"
+  }
+  if bio.recovery_score > 50 {
+    return "baseline"
+  }
+  return "recovering"
+}
+
+// ─── Agent ────────────────────────────────────────────
+// The agent can read from the DB and call AI models.
+// It cannot write, cannot access the network, cannot
+// touch the filesystem. The @sandbox enforces this at
+// compile time — not at runtime.
+
+@sandbox(allow: [DB.read, AI], deny: [DB.write, Net, FS])
+@budget(max_cost: 0.10, max_calls: 5)
+fn ask_health_coach(
+  user_id: Int,
+  question: String,
+) needs Agent, DB.read, AI -> HealthInsight {
+  return ai.prompt<HealthInsight>(PromptOptions {
+    model:       "grok-4-1-fast",
+    input:       question,
+    system:      "You are a health coach with access to the user's health wearable data. Give concise, actionable advice based on their biometrics. Never reference raw numbers without context.",
+    temperature: 0.3,
+    max_tokens:  512,
+    timeout:     30,
+    budget:      0.10
+  })
+}
+
+// ─── Dangerous Operations ─────────────────────────────
+// These exist in the codebase but are permanently
+// unreachable from the agent. The compiler proves it.
+
+@redline(reason: "User deletion requires manual admin action and legal review")
+fn delete_user(user_id: Int) needs DB.write {
+}
+
+@redline(reason: "Biometric data export requires HIPAA compliance review")
+fn export_all_biometrics(user_id: Int) needs DB.read, FS {
+}
+
+// ─── Entry Point ──────────────────────────────────────
+
+fn main() {
+  let insight = ask_health_coach(1, "Should I train hard today? I feel tired but my numbers look good.")
+  println(insight.summary)
+}
