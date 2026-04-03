@@ -19,7 +19,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: splash <check|build|emit|tools> <file.splash> [-o output] [--format anthropic|openai]")
+		fmt.Fprintln(os.Stderr, "usage: splash <check|build|emit|tools> <file.splash>")
 		os.Exit(1)
 	}
 	cmd, file := os.Args[1], os.Args[2]
@@ -51,7 +51,11 @@ func main() {
 		toolFile := ""
 		args := os.Args[2:]
 		for i := 0; i < len(args); i++ {
-			if args[i] == "--format" && i+1 < len(args) {
+			if args[i] == "--format" {
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "--format requires a value: anthropic or openai")
+					os.Exit(1)
+				}
 				format = toolschema.Format(args[i+1])
 				i++
 			} else if !strings.HasPrefix(args[i], "-") {
