@@ -72,7 +72,7 @@ fn search_orders(email: String, limit: Int) needs DB.read -> List<OrderSummary> 
 }
 ```
 
-`splash tools` derives the full JSON Schema from this. No hand-written schema. No drift between docs and implementation.
+`splash tools` derives the full JSON Schema from this. No hand-written schema. No drift between docs and implementation. By default the output uses the OpenAI wire format (`type/function` wrapper, `parameters` key). Pass `--format anthropic` for the Anthropic format (`input_schema` key, no wrapper).
 
 **Rules for `@tool` functions:**
 
