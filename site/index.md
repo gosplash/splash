@@ -773,10 +773,6 @@ The complete Splash language specification — syntax, type system, stdlib refer
 
 ---
 
-*Splash v0.1 — gosplash.dev*
-
----
-
 ## Appendix: Example — Hello World
 
 The simplest Splash program. Demonstrates module declaration, a named type, a function with a declared return type, and a struct literal. Passes `splash check` and `splash build`.
@@ -956,13 +952,6 @@ fn main() {
   println(insight.summary)
 }
 ```
-
----
-
----
-
-
----
 
 ---
 
@@ -1173,3 +1162,7 @@ fn main() {
   println(txn.status)
 }
 ```
+
+---
+
+*Splash v0.1 — gosplash.dev*

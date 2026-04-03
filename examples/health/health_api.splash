@@ -156,10 +156,12 @@ fn ask_health_coach(
 
 @redline(reason: "User deletion requires manual admin action and legal review")
 fn delete_user(user_id: Int) needs DB.write {
+  // ...
 }
 
 @redline(reason: "Biometric data export requires HIPAA compliance review")
 fn export_all_biometrics(user_id: Int) needs DB.read, FS {
+  // ...
 }
 
 // ─── Entry Point ──────────────────────────────────────
