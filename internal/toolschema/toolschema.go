@@ -3,7 +3,11 @@
 // OpenAI tool-calling APIs.
 package toolschema
 
-import "gosplash.dev/splash/internal/ast"
+import (
+	"encoding/json"
+	"fmt"
+	"gosplash.dev/splash/internal/ast"
+)
 
 // ToolSchema is the complete schema for a single @tool function.
 type ToolSchema struct {
@@ -27,6 +31,33 @@ type SchemaProperty struct {
 	Items       *SchemaProperty            `json:"items,omitempty"`
 	Properties  map[string]*SchemaProperty `json:"properties,omitempty"`
 	Enum        []string                   `json:"enum,omitempty"`
+}
+
+// Format controls the JSON wire format emitted by Serialize.
+type Format string
+
+const (
+	// FormatAnthropic emits the Anthropic tool-calling format:
+	// [{name, description, input_schema: {type, properties, required}}]
+	FormatAnthropic Format = "anthropic"
+
+	// FormatOpenAI emits the OpenAI tool-calling format:
+	// [{type: "function", function: {name, description, parameters: {type, properties, required}}}]
+	FormatOpenAI Format = "openai"
+)
+
+// openAITool is the top-level wrapper in the OpenAI tools array.
+type openAITool struct {
+	Type     string         `json:"type"`
+	Function openAIFunction `json:"function"`
+}
+
+// openAIFunction is the inner object in the OpenAI tool wrapper.
+type openAIFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Parameters  InputSchema `json:"parameters"`
+	Effects     []string    `json:"effects,omitempty"`
 }
 
 // Extract returns a ToolSchema for every @tool-annotated function in file.
@@ -108,5 +139,30 @@ func buildToolSchema(fn *ast.FunctionDecl, enumDecls map[string]*ast.EnumDecl) T
 			Required:   required,
 		},
 		Effects: effects,
+	}
+}
+
+// Serialize marshals schemas to JSON in the requested format.
+// Returns an error for unrecognized format values.
+func Serialize(schemas []ToolSchema, format Format) ([]byte, error) {
+	switch format {
+	case FormatAnthropic:
+		return json.MarshalIndent(schemas, "", "  ")
+	case FormatOpenAI:
+		tools := make([]openAITool, len(schemas))
+		for i, s := range schemas {
+			tools[i] = openAITool{
+				Type: "function",
+				Function: openAIFunction{
+					Name:        s.Name,
+					Description: s.Description,
+					Parameters:  s.InputSchema,
+					Effects:     s.Effects,
+				},
+			}
+		}
+		return json.MarshalIndent(tools, "", "  ")
+	default:
+		return nil, fmt.Errorf("unknown format %q: use %q or %q", format, FormatAnthropic, FormatOpenAI)
 	}
 }

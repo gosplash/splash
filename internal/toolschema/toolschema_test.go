@@ -339,3 +339,106 @@ fn search(
 		t.Errorf("expected only query in required, got %v", required)
 	}
 }
+
+// Serialize tests
+
+func TestSerialize_AnthropicFormat(t *testing.T) {
+	file := parseFile(`
+module demo
+/// Search the catalog.
+@tool
+fn search(query: String) needs DB.read -> String { return query }
+`)
+	schemas := toolschema.Extract(file)
+
+	out, err := toolschema.Serialize(schemas, toolschema.FormatAnthropic)
+	if err != nil {
+		t.Fatalf("Serialize returned error: %v", err)
+	}
+	s := string(out)
+
+	// Anthropic uses "input_schema", not "parameters"
+	if !strings.Contains(s, `"input_schema"`) {
+		t.Errorf("expected 'input_schema' key in anthropic output, got:\n%s", s)
+	}
+	if strings.Contains(s, `"parameters"`) {
+		t.Errorf("unexpected 'parameters' key in anthropic output, got:\n%s", s)
+	}
+	// No type/function wrapper (no top-level "type": "function")
+	if strings.Contains(s, `"type": "function"`) {
+		t.Errorf("unexpected 'type: function' wrapper in anthropic output, got:\n%s", s)
+	}
+	if strings.Contains(s, `"function"`) {
+		t.Errorf("unexpected 'function' wrapper in anthropic output, got:\n%s", s)
+	}
+}
+
+func TestSerialize_OpenAIFormat(t *testing.T) {
+	file := parseFile(`
+module demo
+/// Search the catalog.
+@tool
+fn search(query: String) needs DB.read -> String { return query }
+`)
+	schemas := toolschema.Extract(file)
+
+	out, err := toolschema.Serialize(schemas, toolschema.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("Serialize returned error: %v", err)
+	}
+	s := string(out)
+
+	// OpenAI uses "parameters", not "input_schema"
+	if strings.Contains(s, `"input_schema"`) {
+		t.Errorf("unexpected 'input_schema' key in openai output, got:\n%s", s)
+	}
+	if !strings.Contains(s, `"parameters"`) {
+		t.Errorf("expected 'parameters' key in openai output, got:\n%s", s)
+	}
+	// Must have type/function wrapper
+	if !strings.Contains(s, `"type": "function"`) {
+		t.Errorf("expected 'type: function' wrapper in openai output, got:\n%s", s)
+	}
+	if !strings.Contains(s, `"function"`) {
+		t.Errorf("expected 'function' wrapper object in openai output, got:\n%s", s)
+	}
+}
+
+func TestSerialize_UnknownFormat_ReturnsError(t *testing.T) {
+	schemas := toolschema.Extract(parseFile(`module demo`))
+	_, err := toolschema.Serialize(schemas, toolschema.Format("garbage"))
+	if err == nil {
+		t.Error("expected error for unknown format, got nil")
+	}
+}
+
+func TestSerialize_OpenAI_PreservesNameAndDescription(t *testing.T) {
+	file := parseFile(`
+module demo
+/// Lookup a user by ID.
+@tool
+fn get_user(user_id: Int) -> String { return "x" }
+`)
+	schemas := toolschema.Extract(file)
+	out, err := toolschema.Serialize(schemas, toolschema.FormatOpenAI)
+	if err != nil {
+		t.Fatalf("Serialize returned error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `"name": "get_user"`) {
+		t.Errorf("expected name in openai output, got:\n%s", s)
+	}
+	if !strings.Contains(s, `"description": "Lookup a user by ID."`) {
+		t.Errorf("expected description in openai output, got:\n%s", s)
+	}
+}
+
+func TestSerialize_EmptySchemas_ReturnsEmptyArray(t *testing.T) {
+	out, err := toolschema.Serialize([]toolschema.ToolSchema{}, toolschema.FormatAnthropic)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "[]" {
+		t.Errorf("expected empty array, got: %s", out)
+	}
+}
