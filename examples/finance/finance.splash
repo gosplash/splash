@@ -48,6 +48,13 @@ type AccountSummary {
   currency:      String
 }
 
+// Uncommenting this will fail to compile:
+// @tool
+// fn unsafe_account(id: Int) needs DB.read -> Account {
+//   return lookup_account(id)
+// }
+// error: @restricted field "account_number" cannot flow to agent context
+
 type Transaction {
   id:           Int
   from_account: Int
@@ -163,7 +170,11 @@ fn delete_transaction(transaction_id: Int) needs DB.admin {
   // ...
 }
 
-// ─── Fraud Detection Agent ────────────────────────────
+// ─── Agent Entry Points ───────────────────────────────
+// needs Agent marks the boundary where AI execution begins. The compiler
+// traces every reachable function from here: enforcing sandbox effects,
+// checking redlines, and verifying that no @restricted data reaches a @tool.
+// Failures — approval denials, AI errors, budget exceeded — surface here.
 // Read-only + AI. No writes, no network, no admin ops.
 // @sandbox makes this a compile-time proof: DB.write and Net are denied,
 // the compiler verifies no reachable function uses them.
