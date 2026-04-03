@@ -774,3 +774,185 @@ The complete Splash language specification — syntax, type system, stdlib refer
 ---
 
 *Splash v0.1 — gosplash.dev*
+
+---
+
+## Appendix: Example — Hello World
+
+The simplest Splash program. Demonstrates module declaration, a named type, a function with a declared return type, and a struct literal. Passes `splash check` and `splash build`.
+
+```splash
+module hello
+
+type Person {
+    name: String
+}
+
+fn greet(p: Person) -> String {
+    return "Hello, " + p.name
+}
+
+fn main() {
+    let p = Person { name: "world" }
+    println(greet(p))
+}
+```
+
+---
+
+## Appendix: Example — Health API
+
+A Whoop-like health data backend that proxies AI queries with access to user biometrics. Demonstrates `@sensitive`, `@restricted`, `@tool`, `@sandbox`, `@budget`, `@redline`, and `ai.prompt<T>`. Passes `splash check` and `splash tools`.
+
+```splash
+module main
+
+use std/ai
+
+// ─── Types ────────────────────────────────────────────
+
+type User {
+  id:           Int
+  display_name: String
+  @sensitive
+  email:        String
+  @restricted
+  ssn:          String
+}
+
+type BiometricSnapshot {
+  user_id:          Int
+  date:             String
+  hrv:              Float
+  resting_hr:       Int
+  respiratory_rate: Float
+  recovery_score:   Int
+  sleep_score:      Int
+  strain:           Float
+  skin_temp_delta:  Float
+}
+
+type HealthInsight {
+  summary:         String
+  status:          String
+  recommendations: List<String>
+  train_today:     Bool
+}
+
+enum RecoveryStatus {
+  recovering
+  baseline
+  peaked
+  overtrained
+}
+
+// PromptOptions maps to the OpenAI-compatible chat completions surface.
+// This will move to std/ai once PromptOptions is a first-class type there.
+type PromptOptions {
+  model:       String
+  input:       String
+  system:      String
+  temperature: Float
+  max_tokens:  Int
+  timeout:     Int    // seconds
+  budget:      Float  // USD cost cap
+}
+
+// ─── Data Layer (read-only) ───────────────────────────
+
+fn get_user_by_id(id: Int) needs DB.read -> User {
+  return User {
+    id: id,
+    display_name: "Jane",
+    email: "jane@example.com",
+    ssn: "000-00-0000"
+  }
+}
+
+fn get_latest_biometrics(user_id: Int) needs DB.read -> BiometricSnapshot {
+  return BiometricSnapshot {
+    user_id: user_id,
+    date: "2026-04-02",
+    hrv: 62.5,
+    resting_hr: 52,
+    respiratory_rate: 15.2,
+    recovery_score: 78,
+    sleep_score: 85,
+    strain: 12.4,
+    skin_temp_delta: 0.3
+  }
+}
+
+// ─── AI Tools ─────────────────────────────────────────
+// The compiler generates JSON Schema from these signatures.
+// @sensitive fields on User are blocked from @tool return types.
+
+/// Look up a user by their ID. Returns biometrics only.
+/// The LLM never sees email or SSN — those fields are classified.
+@tool
+fn get_user_biometrics(
+  /// The user's numeric ID
+  user_id: Int,
+) needs DB.read -> BiometricSnapshot {
+  let user = get_user_by_id(user_id)
+  return get_latest_biometrics(user.id)
+}
+
+/// Get recovery status based on today's biometrics.
+@tool
+fn get_recovery_status(
+  /// The user's numeric ID
+  user_id: Int,
+) needs DB.read -> RecoveryStatus {
+  let bio = get_latest_biometrics(user_id)
+  if bio.recovery_score > 80 {
+    return RecoveryStatus.peaked
+  }
+  if bio.recovery_score > 50 {
+    return RecoveryStatus.baseline
+  }
+  return RecoveryStatus.recovering
+}
+
+// ─── Agent ────────────────────────────────────────────
+// DB.read and AI only. No writes, no network, no filesystem.
+// The @sandbox enforces this at compile time — not at runtime.
+
+@sandbox(allow: [DB.read, AI], deny: [DB.write, Net, FS])
+@budget(max_cost: 0.10, max_calls: 5)
+fn ask_health_coach(
+  user_id: Int,
+  question: String,
+) needs Agent, DB.read, AI -> HealthInsight {
+  return ai.prompt<HealthInsight>(PromptOptions {
+    model:       "grok-4-1-fast",
+    input:       question,
+    system:      "You are a health coach with access to the user's health wearable data. Give concise, actionable advice based on their biometrics. Never reference raw numbers without context.",
+    temperature: 0.3,
+    max_tokens:  512,
+    timeout:     30,
+    budget:      0.10
+  })
+}
+
+// ─── Dangerous Operations ─────────────────────────────
+// These exist in the codebase but are permanently
+// unreachable from the agent. The compiler proves it.
+
+@redline(reason: "User deletion requires manual admin action and legal review")
+fn delete_user(user_id: Int) needs DB.write {
+  // ...
+}
+
+@redline(reason: "Biometric data export requires HIPAA compliance review")
+fn export_all_biometrics(user_id: Int) needs DB.read, FS {
+  // ...
+}
+
+// ─── Entry Point ──────────────────────────────────────
+
+fn main() {
+  let insight = ask_health_coach(1, "Should I train hard today? I feel tired but my numbers look good.")
+  println(insight.summary)
+}
+```
