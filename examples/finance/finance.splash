@@ -11,7 +11,7 @@
 //     (@restricted fields are a compile error in @tool return types)
 //   - High-value transfers require human or policy sign-off
 //     (@approve — the function body does not execute until the adapter clears it)
-//   - AI spend is capped at $0.50 per analysis run
+//   - AI spend is capped at $0.50 per fraud analysis run
 //     (@budget — compile-time argument type validation)
 //
 // Run:
@@ -19,6 +19,8 @@
 //   splash tools examples/finance/finance.splash
 
 module finance
+
+use std/ai
 
 // ─── Types ────────────────────────────────────────────
 
@@ -35,9 +37,10 @@ type Account {
   routing_number: String
 }
 
-// Safe to return from @tool — no classified fields.
-// The agent sees balances and names, never account identifiers.
-// Returning Account directly would fail: @restricted fields cannot reach @tool.
+// AccountSummary is the agent-safe projection of Account.
+// It contains only public fields — no email, no account identifiers.
+// Returning Account directly from a @tool is a compile error:
+// @restricted fields cannot flow to the agent's context window.
 type AccountSummary {
   id:            Int
   owner_name:    String
@@ -52,6 +55,29 @@ type Transaction {
   amount_cents: Int
   description:  String
   status:       String
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+type FraudInsight {
+  risk_level:     RiskLevel
+  recommendation: String
+  confidence:     Float
+}
+
+// PromptOptions maps to the OpenAI-compatible chat completions surface.
+// Will move to std/ai once PromptOptions is a first-class type there.
+type PromptOptions {
+  model:       String
+  input:       String
+  system:      String
+  temperature: Float
+  max_tokens:  Int
+  budget:      Float
 }
 
 // ─── Data Layer ───────────────────────────────────────
@@ -89,7 +115,7 @@ fn check_balance(
 // ─── Gated Operations ────────────────────────────────
 // The @approve gate fires inside the function body before any logic runs.
 // The ApprovalAdapter decides how to resolve it: Slack to the compliance
-// team, an automated policy engine, or a rule ("under $1,000 from a
+// team, an automated policy engine, or a rule ("under $100,000 from a
 // verified account — auto-approve with audit log entry"). The call site
 // writes normal code. The gate is the function's responsibility.
 
@@ -138,27 +164,57 @@ fn delete_transaction(transaction_id: Int) needs DB.admin {
 }
 
 // ─── Fraud Detection Agent ────────────────────────────
-// Read-only. $0.50 AI budget cap. No writes, no network, no admin ops.
-//
-// @sandbox makes the constraint a compile-time proof — not a policy
-// document, not a code review, a build failure. DB.write and Net are
-// denied. The compiler walks every reachable function and verifies none
-// of them use a denied effect.
-//
-// The compiler also proves that wire_transfer, close_account, and
-// delete_transaction are not reachable from this agent. The @redlines
-// would catch it anyway — but @sandbox catches effect violations first.
+// Read-only + AI. No writes, no network, no admin ops.
+// @sandbox makes this a compile-time proof: DB.write and Net are denied,
+// the compiler verifies no reachable function uses them.
+// @budget caps AI spend at $0.50 — a single analysis cannot consume
+// unbounded compute.
 
 @sandbox(allow: [DB.read, AI], deny: [DB.write, Net, DB.admin, FS])
 @budget(max_cost: 0.50, max_calls: 10)
 fn run_fraud_agent(
   account_id: Int,
-) needs Agent, DB.read, AI -> String {
+) needs Agent, DB.read, AI -> FraudInsight {
   let summary = check_balance(account_id)
-  return summary.owner_name
+  return ai.prompt<FraudInsight>(PromptOptions {
+    model:       "grok-4-1-fast",
+    input:       "Account: " + summary.owner_name + ", balance: " + summary.balance_cents + " " + summary.currency,
+    system:      "You are a fraud detection specialist. Analyze for anomalous activity. Be conservative — flag anything unusual. Output only the structured FraudInsight.",
+    temperature: 0.1,
+    max_tokens:  256,
+    budget:      0.50
+  })
 }
 
+// ─── Billing Agent ────────────────────────────────────
+// A different agent with a different capability surface.
+// DB.write and Net are allowed — this agent can initiate transfers.
+// Every transfer still goes through the @approve gate on transfer_funds.
+// DB.admin is still denied: wire_transfer, close_account, and
+// delete_transaction remain unreachable from this agent too.
+
+@sandbox(allow: [DB.read, DB.write, Net], deny: [DB.admin, FS, AI])
+@budget(max_cost: 0.01, max_calls: 5)
+@agent_allowed
+fn run_billing_agent(
+  from_id:      Int,
+  to_id:        Int,
+  amount_cents: Int,
+  memo:         String,
+) needs Agent, DB.read, DB.write, Net -> Transaction {
+  return transfer_funds(from_id, to_id, amount_cents, memo)
+}
+
+// ─── Entry Point ──────────────────────────────────────
+
 fn main() {
-  let result = run_fraud_agent(42)
-  println(result)
+  // Fraud path: read-only, AI-powered risk assessment
+  let insight = run_fraud_agent(42)
+  println(insight.recommendation)
+
+  // Billing path: transfer with approval gate
+  // The approval adapter (Slack, webhook, policy engine) resolves before
+  // transfer_funds executes. One denied approval = one failed request.
+  let txn = run_billing_agent(42, 99, 50000, "Q1 vendor payment")
+  println(txn.status)
 }
