@@ -55,3 +55,34 @@ go build -o splash ./cmd/splash
 # Try it on the health coach example
 ./splash check examples/health/health_api.splash
 ./splash tools examples/health/health_api.splash
+```
+
+The compiler is written in Go.
+
+Run tests with go test ./...
+
+Format code with go fmt ./...
+
+## Pull Request Process
+
+1. Fork the repository and create a feature branch.
+2 Make your changes and ensure tests pass (go test ./...).
+3. Verify that splash check still passes on existing examples.
+4. Open a Pull Request with a clear description of the changes.
+5. Reference any related issues.
+
+We aim to review PRs promptly. Small, focused changes are especially appreciated.
+
+## Design Changes
+
+For significant changes to the language (new syntax, effect system modifications, safety semantics, etc.), please open an issue first for discussion. Major decisions should align with the principles in the whitepaper and the current ROADMAP.md.Questions?
+
+Feel free to open an issue with the label question or reach out on X (links in the README).
+
+We're excited to build a safer foundation for AI agents together. 
+
+Contributions at any level help move the project forward.
+
+Happy hacking!
+
+
