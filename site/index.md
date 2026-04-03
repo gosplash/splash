@@ -53,6 +53,8 @@ Three failure modes drive most production incidents:
 
 These aren't developer failures or AI failures. They're system failures. The developer who logged the user object wasn't careless — the type system has no way to distinguish a loggable string from a PII email. The agent that called a write function didn't misbehave — nothing in its callable set indicated which functions were dangerous. The dependency update that added new capabilities wasn't negligent — the lockfile has no concept of capabilities to track.
 
+Hiding side effects doesn't make them safe — it makes them invisible.
+
 > **It doesn't matter whether a human or an AI wrote the code. Neither one can be expected to catch what the language gives the compiler no way to enforce.**
 
 Splash addresses two classes of failure. Structural mistakes — the wrong function callable from the wrong context, sensitive data flowing into a log, a dependency acquiring capabilities it wasn't granted — are caught at compile time. The binary that fails to build cannot cause the incident. Behavioral anomalies — an agent acting within its granted capabilities but making poor decisions — are addressed at runtime through `std/safety`: provenance chains, drift detection, and output contracts. Section 4 covers both layers.
@@ -70,6 +72,10 @@ The core premise is that most of what makes AI agent systems dangerous is struct
 Four design decisions carry most of the weight:
 
 **Effects as function signatures.** Every function declares the capabilities it requires: `needs DB, Net, Clock`. The compiler verifies that every call site provides the declared effects. A function declared with `needs DB.read` cannot call a function that `needs DB.write`. An agent cannot invoke a function that `needs FS` unless the agent was explicitly granted filesystem access. Violations fail to compile.
+
+Effects are also design pressure. A function's capability surface is visible in its signature — five effects on one function is the same signal as a constructor with ten parameters. The compiler doesn't just enforce safety; it rewards decomposition. The natural Splash architecture becomes small, focused functions with tight effect declarations, composed by a thin orchestration layer that declares the union. The agent entry point's `needs` clause is the capability manifest: readable by humans, auditable by tools, enforced by the compiler.
+
+*A note on the current vocabulary:* `DB.read`, `DB.write`, and `Net` describe the services they use rather than the capability boundaries they cross. This is a deliberate v0.1 choice — the names are immediately intuitive to developers. A v0.2 design pass will evaluate a boundary-oriented vocabulary (`Persist.read`, `Network`, `Infer`) that expresses *what external boundary a function crosses* rather than *which backend it uses*. The compiler mechanism and safety semantics are identical either way. The prerequisite for any rename is solving the granularity question: real sandboxing policies distinguish cache reads from database reads, and row mutations from schema changes — the new taxonomy must support those distinctions before it ships.
 
 **Data classification in the type system.** Fields annotated `@sensitive` or `@restricted` affect what constraints their containing types can satisfy. A `@sensitive Email` field prevents the type from satisfying the `Loggable` constraint. The logging call fails at build time, not in a runtime scan.
 
@@ -266,7 +272,9 @@ async fn charge_card(amount: Money, method: PaymentMethod) needs Net -> Result<C
 
 `@approve` is a precondition, not a return type modifier. The function's declared type is unchanged — `charge_card` returns a `Charge`. The annotation means "this function does not execute until the adapter approves." If the adapter denies, the function body never runs. The Splash programmer writes normal code; the compiler and runtime handle the gate.
 
-Phase 4b ships denial propagation: when a production adapter returns an error, the error cascades through the entire call stack without killing the process. An `@approve` function's Go return signature becomes `(T, error)` — the Splash programmer still writes `-> Charge`, but the generated Go propagates denial cleanly up to the request handler. One denied approval, one failed request, zero pod restarts.
+The error model is uniform across all agent failures. `@approve` denials, AI call failures, and budget exceeded errors all propagate as Go errors up the same call path to the `needs Agent` boundary — the agent entry point is the single declared error surface. The Splash programmer writes `-> Charge` and `-> HealthInsight`; the compiler injects the error propagation in generated Go. The agent entry point returns `(T, error)` and its callers — HTTP handlers, queue workers — handle it as a normal Go error. The compiler never injects `os.Exit` inside generated function bodies; that decision belongs to the application boundary, not the compiler.
+
+This symmetry is intentional: **error propagation follows the same path as capability propagation.** Effects flow up the call graph to the Agent boundary. Errors flow up the same path to the same boundary. Both terminate where agent execution begins.
 
 The future target exposes typed denial at the Splash level — callers handle `Denied` and `Timeout` as structured cases:
 
@@ -394,6 +402,8 @@ Structured concurrency maps to Go's goroutine model. `group { async f(); async g
 
 Context propagation is implemented via goroutine-local storage. Context is implicitly available in every Splash function; explicit reads (`ctx.remaining`, `ctx.check()`, `ctx.get(AuthUser)`) compile to reads from a goroutine-local value. Developers don't thread context through signatures; the compiler inserts the plumbing.
 
+**Backend abstraction.** Code generation targets a `Backend` interface. The current implementation emits Go. An LLVM backend is straightforward to add: the safety model is fully enforced before codegen, so the backend receives a verified, effect-annotated AST with no security-relevant decisions remaining. This separation is intentional. All guarantees about effects, data flow, and agent reachability are established in the compiler front-end. Backends are responsible only for translating verified programs into executable form. The same source file, the same call graph analysis, the same `@redline` and `@approve` enforcement — regardless of whether the output is a Go binary, a native object via LLVM, or a WASM module.
+
 ---
 
 ## Section 5: Supply Chain and Organizational Safety
@@ -501,9 +511,9 @@ Four SOC 2 control families map directly to Splash language properties:
 
 ## Section 6: Implementation Roadmap
 
-Splash compiles to Go. `splash build` is a frontend that parses, type-checks, and verifies Splash source, emits Go, and calls `go build`. The output is a single statically-linked binary. Splash inherits Go's runtime — goroutines, GC, fast compilation — while the frontend enforces Splash's safety properties before Go sees the code.
+The compilation model and backend abstraction are described in Section 4 (Compilation Model). The phases below track the buildout of the language and standard library against that architecture.
 
-The Go target is a deliberate choice. Building a production runtime from scratch is a multi-year project before a developer can ship their first API. Go's runtime is proven and well-understood. The Splash compiler team focuses on the frontend — type system, effect system, classification analysis, safety enforcement — and delegates runtime concerns to Go.
+The Go target is a deliberate first choice. Building a production runtime from scratch is a multi-year project before a developer can ship their first API. Go's runtime is proven and well-understood. The Splash compiler team focuses on the frontend — type system, effect system, classification analysis, safety enforcement — and delegates runtime concerns to Go. The `Backend` interface means additional targets (LLVM, WASM) can be added without touching the safety-relevant frontend.
 
 ### Phase 1: Parser and Type Checker
 
@@ -547,9 +557,11 @@ Deliverable: a developer can build a production-grade API with `splash new`, `sp
 - ✅ `@approve` adapter pattern, body injection, `StdinApproval` (Phase 4a)
 - ✅ Denial propagation — `@approve` functions get `(T, error)` Go signatures; error cascades through every transitive caller; `main()` exits gracefully (Phase 4b)
 - Non-blocking production adapters: `SlackApproval`, `WebhookApproval`, `PolicyApproval` (Phase 4c)
-- `@sandbox` and `@budget` enforcement at runtime (currently parsed, not enforced)
-- `Loggable` constraint enforcement — compile-time block on logging `@sensitive` fields
-- Multi-file module loading (`use other/module` resolves actual files)
+- ✅ `@sandbox` compile-time effect allow/deny enforcement against agent-reachable call graph
+- ✅ `@budget` compile-time argument type validation
+- `@budget` runtime enforcement — instrumented counter in `ai.prompt` calls, `BudgetExceeded` propagation (requires `std/ai` runtime)
+- ✅ `Loggable` built-in constraint; `@sensitive` blocks `Loggable` satisfaction; unknown constraint names are compile errors
+- ✅ Multi-file module loading (`use path` resolves sibling `.splash` files; cycle detection; `expose` list)
 - `splash deploy` with capability manifest diffing (lockfile-level capability tracking)
 
 Deliverable: `@approve` works in production without killing the process. One denied approval propagates as an error to one request; other requests in flight are unaffected. An organization can swap authorization strategies per environment without changing application code.
@@ -657,6 +669,73 @@ The pattern applies wherever an autonomous component makes decisions that trigge
 **Drone operations.** A navigation agent that needs `Drone.motors, Drone.navigation` cannot call `Drone.payload_release`. `@approve` on high-consequence maneuvers routes through a deterministic safety validator with a hard timeout — the same language primitive that routes human approval for financial transactions, applied to a 200ms pre-release check.
 
 The v0.1 compiler produces Go binaries for backend services. The domains above are the roadmap, not the current deliverable. But the primitives are already general — the same type system, the same call graph analysis, the same compiler. The agent doesn't have to be an LLM. It just has to be something that acts autonomously in a system where acting wrong is expensive.
+
+---
+
+## Section 8: Compiler Performance
+
+Splash's safety model requires whole-program analysis: the call graph must be complete before `@redline`, `@approve`, `@sandbox`, and `@containment` can be verified. This raises a practical question: does the analysis cost show up in developer feedback loops?
+
+The answer, measured on real hardware, is no.
+
+### Benchmark Methodology
+
+Benchmarks use synthetic Splash programs at three sizes — 100, 500, and 2000 functions — across three workloads:
+
+- **Flat:** independent functions with no effects or call relationships
+- **Effects chain:** linear call chain with `DB.read` declared at every site, exercising effect propagation checking at every call site
+- **Mixed types:** named record types with struct literal construction, exercising type resolution
+
+The end-to-end `splash check` benchmark runs the full pipeline — parse, type check, call graph construction, and all safety passes — on programs that include `@approve`, `@redline`, and `@sensitive` types, as a realistic representation of production code.
+
+All measurements on Apple M2.
+
+### Results
+
+**Call graph construction** (BFS + adjacency map, O(V+E)):
+
+| Functions | Build | Reachable BFS | Callers (reverse BFS) |
+|---|---|---|---|
+| 100 | 14 µs | — | — |
+| 1,000 | 180 µs | — | — |
+| 5,000 | 919 µs | — | — |
+
+**Type checker** (`Check` pass only, excluding parse):
+
+| Functions | Flat | Effect chain | Mixed types |
+|---|---|---|---|
+| 100 | 17 µs | 25 µs | 79 µs |
+| 500 | 108 µs | 159 µs | 485 µs |
+| 2,000 | 535 µs | 819 µs | — |
+
+**`splash check` full pipeline** (parse + type check + call graph + all safety passes, including file I/O):
+
+| Functions | Wall time |
+|---|---|
+| 100 | 218 µs |
+| 500 | 1.06 ms |
+| 2,000 | 6.24 ms |
+
+### Interpretation
+
+A 500-function Splash program clears `splash check` in 1 millisecond. A 2,000-function program — larger than most single-module backend services — in 6 milliseconds. These are wall-clock times including file I/O, not in-memory-only measurements.
+
+Scaling is linear in program size, as expected for O(V+E) analysis. The whole-program call graph requirement that gives Splash its soundness guarantees does not create a quadratic blowup — the graph is built in a single pass over the same data structure the type checker already constructs.
+
+The safety checks themselves (all five passes: `@redline`, `@approve`, `@containment`, `@sandbox`, data classification) add negligible overhead on top of type checking. They are additional predicates evaluated over the same graph, not separate traversals.
+
+Incremental caching — invalidating only the subgraph reachable from changed functions — is on the roadmap and would reduce hot-reload times further. The current single-shot analysis is already fast enough that caching is an optimization, not a requirement.
+
+### Runtime Overhead
+
+The safety model has no runtime cost for the common case. Effect checking, call graph analysis, data classification, and agent reachability are enforced entirely at compile time. The emitted Go binary carries no effect-checking overhead — effects are a frontend constraint, not a runtime mechanism.
+
+The only explicit runtime costs are:
+
+- **`@approve` gate:** one `ApprovalAdapter.Request(name)` call before the function body executes. Cost is determined by the adapter implementation (stdin prompt, Slack message, webhook). The compiler overhead is zero.
+- **`std/safety` provenance chains:** structured logging of agent decisions. Opt-in, disabled by default, cost proportional to chain depth.
+
+For everything else, Splash programs have Go-equivalent performance at runtime.
 
 ---
 

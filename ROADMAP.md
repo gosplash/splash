@@ -26,7 +26,7 @@ The launch surface is the compiler, the examples, and the whitepaper. The goal i
 **Tooling**
 - `splash tools` — JSON Schema from `@tool` signatures, filtered to agent-reachable set
 - Multi-file modules (`use path` loads sibling `.splash` files; cycle detection; `expose` list)
-- `std/ai` — `@tool`, `ai.prompt<T>`, `Result<T, AIError>`
+- `std/ai` — `@tool`, `ai.prompt<T>` (returns `T`; errors propagate to `needs Agent` boundary)
 - Nine documented examples covering every safety primitive
 
 ---
@@ -34,6 +34,27 @@ The launch surface is the compiler, the examples, and the whitepaper. The goal i
 ## v0.2 — Making It Usable
 
 Everything here makes Splash usable for building real applications. None of it is required to understand what Splash is or why it matters — but all of it is required before someone can ship production code with it.
+
+### `catch AIError` — local error handling escape hatch
+
+By default, `ai.prompt<T>` returns `T` and errors propagate invisibly to the `needs Agent` boundary. This is the right default: most callers have no meaningful recovery strategy and the boundary is the correct place to handle AI failures.
+
+`catch AIError` is the opt-in escape for callers that do have a recovery strategy:
+
+```splash
+fn ask_health_coach(user_id: Int, question: String) needs Agent, DB.read, AI -> HealthInsight {
+  catch AIError {
+    return HealthInsight { summary: "Service unavailable", status: "error", recommendations: [], train_today: false }
+  }
+  return ai.prompt<HealthInsight>(PromptOptions { ... })
+}
+```
+
+The `catch` block intercepts the error before it propagates. The function's return type stays `HealthInsight` — no `Result<T, E>` leak into the type system. The block must return a value of the declared return type.
+
+This is an opt-in escape hatch, not a replacement for the default. It's useful for retry logic, fallback responses, and graceful degradation below the Agent boundary. Without it, the only recovery option is at the agent entry point itself.
+
+Design constraint: `catch AIError` applies only to the immediately enclosing function body. It cannot catch errors from called functions unless those functions also use `catch`. This prevents silent error swallowing across module boundaries.
 
 ### `@bypass` — auditable escape hatch
 
