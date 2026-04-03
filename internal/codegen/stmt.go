@@ -91,7 +91,7 @@ func (e *Emitter) emitExprStmt(s *ast.ExprStmt) {
 	// Check if this is a direct call to an @approve function used as a statement
 	// (return value discarded). Handle the (T, error) or (error) return.
 	if call, ok := s.Expr.(*ast.CallExpr); ok {
-		if ident, ok2 := call.Callee.(*ast.Ident); ok2 && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) && e.inApprovalFn {
+		if ident, identOk := call.Callee.(*ast.Ident); identOk && (e.approveFns[ident.Name] || e.approveCallers[ident.Name]) && e.inApprovalFn {
 			calleeDecl := e.fnDecls[ident.Name]
 			hasReturnVal := calleeDecl != nil && calleeDecl.ReturnType != nil
 			// Propagate error up — uniform path for all error-propagating functions.
