@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,7 +19,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: splash <check|build|emit|tools> <file.splash> [-o output]")
+		fmt.Fprintln(os.Stderr, "usage: splash <check|build|emit|tools> <file.splash> [-o output] [--format anthropic|openai]")
 		os.Exit(1)
 	}
 	cmd, file := os.Args[1], os.Args[2]
@@ -48,7 +47,13 @@ func main() {
 			os.Exit(1)
 		}
 	case "tools":
-		if err := runTools(file); err != nil {
+		format := toolschema.FormatOpenAI // default
+		for i := 3; i < len(os.Args)-1; i++ {
+			if os.Args[i] == "--format" {
+				format = toolschema.Format(os.Args[i+1])
+			}
+		}
+		if err := runTools(file, format); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -227,7 +232,7 @@ func runBuild(path, out string) error {
 	return buildCmd.Run()
 }
 
-func runTools(path string) error {
+func runTools(path string, format toolschema.Format) error {
 	f, err := parseFile(path)
 	if err != nil {
 		return err
@@ -261,7 +266,7 @@ func runTools(path string) error {
 	if schemas == nil {
 		schemas = []toolschema.ToolSchema{}
 	}
-	out, err := json.MarshalIndent(schemas, "", "  ")
+	out, err := toolschema.Serialize(schemas, format)
 	if err != nil {
 		return err
 	}
