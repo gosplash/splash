@@ -322,10 +322,11 @@ body {
 }
 
 .content blockquote p {
-  font-family: var(--font-serif);
-  font-size: 1rem;
-  font-weight: 300;
-  line-height: 1.7;
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  line-height: 1.65;
 }
 
 .content blockquote strong {
