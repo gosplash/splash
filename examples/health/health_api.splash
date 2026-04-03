@@ -100,7 +100,7 @@ fn get_latest_biometrics(user_id: Int) needs DB.read -> BiometricSnapshot {
 /// Look up a user by their ID. Returns display name and biometrics.
 /// The LLM never sees email or SSN — those fields are classified.
 @tool
-fn get_user(
+fn get_user_biometrics(
   /// The user's numeric ID
   user_id: Int,
 ) needs DB.read -> BiometricSnapshot {
@@ -111,20 +111,20 @@ fn get_user(
   return get_latest_biometrics(user.id)
 }
 
-/// Get a recovery recommendation based on today's biometrics.
+/// Get recovery status based on today's biometrics.
 @tool
 fn get_recovery_status(
   /// The user's numeric ID
   user_id: Int,
-) needs DB.read -> String {
+) needs DB.read -> RecoveryStatus {
   let bio = get_latest_biometrics(user_id)
   if bio.recovery_score > 80 {
-    return "peaked"
+    return RecoveryStatus.peaked
   }
   if bio.recovery_score > 50 {
-    return "baseline"
+    return RecoveryStatus.baseline
   }
-  return "recovering"
+  return RecoveryStatus.recovering
 }
 
 // ─── Agent ────────────────────────────────────────────
