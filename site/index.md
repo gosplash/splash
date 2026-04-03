@@ -106,7 +106,7 @@ No Postgres. No Redis. No Docker. The `--adapters memory` flag wires every stdli
 // A function that reads from the database and calls an AI model.
 // Its capabilities are declared in the signature, not hidden in the body.
 
-async fn analyze(doc_id: DocumentId) needs DB, AI -> Result<DocumentInsight, AppError>
+fn analyze(doc_id: DocumentId) needs DB, AI -> Result<DocumentInsight, AppError>
 {
   let doc = try db.find(Document, doc_id)
   return ai.prompt<DocumentInsight>({
@@ -164,7 +164,7 @@ fn search_documents(
 ```splash
 @sandbox(allow: [DB.read, AI], deny: [Net, FS, DB.write])
 @budget(max_cost: Cost.usd(0.50), max_calls: 20)
-async fn answer_question(q: String) needs Agent -> Result<Answer, AgentError> {
+fn answer_question(q: String) needs Agent -> Result<Answer, AgentError> {
   return agent.execute(q, tools: [search_documents, lookup_reference])
 }
 ```
@@ -235,7 +235,7 @@ fn hard_delete_user(id: UserId) needs DB.write { ... }
 ```splash
 // Fails to compile:
 @sandbox(allow: [DB.write])
-async fn agent_cleanup(goal: String) needs Agent {
+fn agent_cleanup(goal: String) needs Agent {
   return agent.execute(goal, tools: [hard_delete_user])
   // Error: @redline fn "hard_delete_user" is not callable from Agent context.
   //        This restriction cannot be overridden.
@@ -266,7 +266,7 @@ fn process_refund(charge: ChargeId, amount: Money) needs DB, Net { ... }
 
 ```splash
 @approve
-async fn charge_card(amount: Money, method: PaymentMethod) needs Net -> Result<Charge, PaymentError>
+fn charge_card(amount: Money, method: PaymentMethod) needs Net -> Result<Charge, PaymentError>
 { ... }
 ```
 
@@ -283,7 +283,7 @@ The future target exposes typed denial at the Splash level — callers handle `D
 enum ApprovalError { Denied | Timeout | AdapterUnavailable }
 
 constraint ApprovalAdapter {
-  async fn request(self, req: ApprovalRequest) -> Result<ApprovalResponse, ApprovalError>
+  fn request(self, req: ApprovalRequest) -> Result<ApprovalResponse, ApprovalError>
 }
 ```
 
@@ -592,9 +592,9 @@ The `AIAdapter` constraint means Splash applications are not bound to any specif
 
 ```splash
 constraint AIAdapter {
-  async fn prompt<T: Serializable>(self, req: PromptRequest) -> Result<T, AIError>
-  async fn embed(self, text: String) -> Result<Embedding, AIError>
-  async fn stream(self, req: PromptRequest) -> Result<Stream<String>, AIError>
+  fn prompt<T: Serializable>(self, req: PromptRequest) -> Result<T, AIError>
+  fn embed(self, text: String) -> Result<Embedding, AIError>
+  fn stream(self, req: PromptRequest) -> Result<Stream<String>, AIError>
 }
 ```
 
@@ -742,8 +742,6 @@ For everything else, Splash programs have Go-equivalent performance at runtime.
 ## Appendix: The Splash Language Specification
 
 The complete Splash language specification — syntax, type system, stdlib reference, and code samples — is maintained as a companion document. Every claim in this paper about what the compiler enforces corresponds to a specific section of the specification.
-
-*Splash Language Specification v0.1*
 
 ---
 
