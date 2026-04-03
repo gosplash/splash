@@ -46,6 +46,8 @@ Three failure modes drive most production incidents:
 
 These aren't developer failures or AI failures. They're system failures. The developer who logged the user object wasn't careless — the type system has no way to distinguish a loggable string from a PII email. The agent that called a write function didn't misbehave — nothing in its callable set indicated which functions were dangerous. The dependency update that added new capabilities wasn't negligent — the lockfile has no concept of capabilities to track.
 
+Hiding side effects doesn't make them safe — it makes them invisible.
+
 > **It doesn't matter whether a human or an AI wrote the code. Neither one can be expected to catch what the language gives the compiler no way to enforce.**
 
 Splash addresses two classes of failure. Structural mistakes — the wrong function callable from the wrong context, sensitive data flowing into a log, a dependency acquiring capabilities it wasn't granted — are caught at compile time. The binary that fails to build cannot cause the incident. Behavioral anomalies — an agent acting within its granted capabilities but making poor decisions — are addressed at runtime through `std/safety`: provenance chains, drift detection, and output contracts. Section 4 covers both layers.
@@ -63,6 +65,10 @@ The core premise is that most of what makes AI agent systems dangerous is struct
 Four design decisions carry most of the weight:
 
 **Effects as function signatures.** Every function declares the capabilities it requires: `needs DB, Net, Clock`. The compiler verifies that every call site provides the declared effects. A function declared with `needs DB.read` cannot call a function that `needs DB.write`. An agent cannot invoke a function that `needs FS` unless the agent was explicitly granted filesystem access. Violations fail to compile.
+
+Effects are also design pressure. A function's capability surface is visible in its signature — five effects on one function is the same signal as a constructor with ten parameters. The compiler doesn't just enforce safety; it rewards decomposition. The natural Splash architecture becomes small, focused functions with tight effect declarations, composed by a thin orchestration layer that declares the union. The agent entry point's `needs` clause is the capability manifest: readable by humans, auditable by tools, enforced by the compiler.
+
+*A note on the current vocabulary:* `DB.read`, `DB.write`, and `Net` describe the services they use rather than the capability boundaries they cross. This is a deliberate v0.1 choice — the names are immediately intuitive to developers. A v0.2 design pass will evaluate a boundary-oriented vocabulary (`Persist.read`, `Network`, `Infer`) that expresses *what external boundary a function crosses* rather than *which backend it uses*. The compiler mechanism and safety semantics are identical either way. The prerequisite for any rename is solving the granularity question: real sandboxing policies distinguish cache reads from database reads, and row mutations from schema changes — the new taxonomy must support those distinctions before it ships.
 
 **Data classification in the type system.** Fields annotated `@sensitive` or `@restricted` affect what constraints their containing types can satisfy. A `@sensitive Email` field prevents the type from satisfying the `Loggable` constraint. The logging call fails at build time, not in a runtime scan.
 
