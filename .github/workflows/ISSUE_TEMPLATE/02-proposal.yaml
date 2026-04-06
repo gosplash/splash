@@ -1,0 +1,12 @@
+name: Proposal
+description: A detailed proposal for a significant change involving multiple related features or design decisions. Use this before filing multiple related requests.
+title: "proposal: brief title"
+labels: ["Proposal"]
+body:
+  - type: textarea
+    id: proposal-details
+    attributes:
+      label: Proposal Details
+      description: Describe the problem, proposed solution, and any design decisions or trade-offs. This should cover the scope of multiple related changes.
+    validations:
+      required: true

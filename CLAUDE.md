@@ -155,3 +155,5 @@ Do not implement any of the above without a plan in `docs/superpowers/plans/`.
 - `test:` test-only changes
 - `docs:` whitepaper, README, CLAUDE.md, examples
 - `refactor:` internal restructuring with no behavior change
+
+When creating a pull request, use the template in `.github/PULL_REQUEST_TEMPLATE.md`.

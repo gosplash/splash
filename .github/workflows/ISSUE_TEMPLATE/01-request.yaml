@@ -1,0 +1,26 @@
+name: Request
+description: Request a feature, documentation update, or other improvement.
+title: "request: brief description"
+labels: ["Request"]
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - feat
+        - docs
+        - refactor
+        - perf
+        - test
+        - ci
+        - chore
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe what you'd like and why.
+    validations:
+      required: true
