@@ -1,6 +1,6 @@
 // whoop_api.splash
 //
-// A Whoop-like health data backend that proxies LLM queries
+// A Whoop-like health data control plane that proxies LLM queries
 // with access to user biometrics. The AI can look up users
 // and their health data, but cannot modify records or access
 // restricted fields.
@@ -53,7 +53,7 @@ enum RecoveryStatus {
 
 // PromptOptions maps to the OpenAI-compatible chat completions surface.
 // Excluded: stream (Splash is sync), n (typed return = one completion),
-// tools/tool_choice (handled by @tool), response_format (the type arg covers it),
+// tools/tool_choice (handled by tool fn), response_format (the type arg covers it),
 // messages array (abstracted as system + input).
 // This will move to std/ai once PromptOptions is a first-class type there.
 type PromptOptions {
@@ -99,21 +99,19 @@ fn get_latest_biometrics(user_id: Int) needs DB.read -> BiometricSnapshot {
 
 /// Look up a user by their ID. Returns display name and biometrics.
 /// The LLM never sees email or SSN — those fields are classified.
-@tool
-fn get_user_biometrics(
+tool fn get_user_biometrics(
   /// The user's numeric ID
   user_id: Int,
 ) needs DB.read -> BiometricSnapshot {
   let user = get_user_by_id(user_id)
 
   // We return biometrics, not the User itself.
-  // Returning User would fail: @sensitive email in @tool return.
+  // Returning User would fail: @sensitive email in tool fn return.
   return get_latest_biometrics(user.id)
 }
 
 /// Get recovery status based on today's biometrics.
-@tool
-fn get_recovery_status(
+tool fn get_recovery_status(
   /// The user's numeric ID
   user_id: Int,
 ) needs DB.read -> RecoveryStatus {
@@ -154,13 +152,11 @@ fn ask_health_coach(
 // These exist in the codebase but are permanently
 // unreachable from the agent. The compiler proves it.
 
-@redline(reason: "User deletion requires manual admin action and legal review")
-fn delete_user(user_id: Int) needs DB.write {
+redline(reason: "User deletion requires manual admin action and legal review") fn delete_user(user_id: Int) needs DB.write {
   // ...
 }
 
-@redline(reason: "Biometric data export requires HIPAA compliance review")
-fn export_all_biometrics(user_id: Int) needs DB.read, FS {
+redline(reason: "Biometric data export requires HIPAA compliance review") fn export_all_biometrics(user_id: Int) needs DB.read, FS {
   // ...
 }
 

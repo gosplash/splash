@@ -1,4 +1,5 @@
-// Package safety runs enforcement passes over the call graph: @redline, @approve, @containment.
+// Package safety runs enforcement passes over the call graph: redline fn,
+// approve fn, and @containment.
 package safety
 
 import (
@@ -48,7 +49,7 @@ func sensitiveFields(decl *ast.TypeDecl) []string {
 	return names
 }
 
-// checkToolDataClassification emits an error for every @tool function whose
+// checkToolDataClassification emits an error for every tool function whose
 // return type contains @sensitive or @restricted fields.
 // PII in a tool's return value flows directly into the AI agent's context window.
 func (c *Checker) checkToolDataClassification(file *ast.File) []diagnostic.Diagnostic {
@@ -70,7 +71,7 @@ func (c *Checker) checkToolDataClassification(file *ast.File) []diagnostic.Diagn
 		if !ok {
 			continue
 		}
-		// Only check @tool functions.
+		// Only check tool functions.
 		hasTool := false
 		for _, ann := range fn.Annotations {
 			if ann.Kind == ast.AnnotTool {
@@ -90,12 +91,13 @@ func (c *Checker) checkToolDataClassification(file *ast.File) []diagnostic.Diagn
 		if !ok {
 			continue
 		}
-		if sf, bad := typeFields[named.Name]; bad {
+		typeName := stripQualifier(named.Name)
+		if sf, bad := typeFields[typeName]; bad {
 			diags = append(diags, diagnostic.Errorf(
 				fn.Position,
-				"@tool function %q returns type %s which contains sensitive or restricted fields (%s) — PII would flow into the AI agent's context",
+				"tool fn %q returns type %s which contains sensitive or restricted fields (%s) — PII would flow into the AI agent's context",
 				fn.Name,
-				named.Name,
+				typeName,
 				strings.Join(sf, ", "),
 			))
 		}
@@ -103,7 +105,14 @@ func (c *Checker) checkToolDataClassification(file *ast.File) []diagnostic.Diagn
 	return diags
 }
 
-// checkRedline emits an error for every @redline function that is agent-reachable.
+func stripQualifier(name string) string {
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		return name[idx+1:]
+	}
+	return name
+}
+
+// checkRedline emits an error for every redline function that is agent-reachable.
 // The error message includes the full call path from the agent entry point to the violation.
 func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentParents map[string]string) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
@@ -124,7 +133,7 @@ func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentParents 
 			path := callgraph.PathTo(agentParents, fn.Name)
 			diags = append(diags, diagnostic.Errorf(
 				fn.Position,
-				"@redline function %q is reachable from an agent context\n  call path: %s",
+				"redline fn %q is reachable from an agent context\n  call path: %s",
 				fn.Name,
 				strings.Join(path, " → "),
 			))
@@ -139,7 +148,7 @@ type containmentPolicy int
 const (
 	containmentNone         containmentPolicy = iota // no agent access
 	containmentReadOnly                              // DB.read only
-	containmentApprovedOnly                          // @approve or @agent_allowed required
+	containmentApprovedOnly                          // approve fn or @agent_allowed required
 	containmentUnrestricted                          // no containment annotation
 )
 
@@ -218,7 +227,7 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 			if !node.HasAnnotation(ast.AnnotApprove) && !node.HasAnnotation(ast.AnnotAgentAllowed) {
 				diags = append(diags, diagnostic.Errorf(
 					fn.Position,
-					"function %q is agent-reachable but module has @containment(agent: \"approved_only\") — add @approve or @agent_allowed",
+					"function %q is agent-reachable but module has @containment(agent: \"approved_only\") — add approve fn or @agent_allowed",
 					fn.Name,
 				))
 			}
@@ -369,7 +378,7 @@ func (c *Checker) checkBudget(file *ast.File) []diagnostic.Diagnostic {
 }
 
 // checkApprove emits an error for every agent-reachable function that combines
-// DBWrite and Net effects without @approve or @agent_allowed.
+// DBWrite and Net effects without approve fn or @agent_allowed.
 func (c *Checker) checkApprove(file *ast.File, g *callgraph.Graph, agentReachable map[string]bool) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 
@@ -390,7 +399,7 @@ func (c *Checker) checkApprove(file *ast.File, g *callgraph.Graph, agentReachabl
 			if !node.HasAnnotation(ast.AnnotApprove) && !node.HasAnnotation(ast.AnnotAgentAllowed) {
 				diags = append(diags, diagnostic.Errorf(
 					fn.Position,
-					"function %q combines DB.write and Net effects in an agent context — add @approve or @agent_allowed",
+					"function %q combines DB.write and Net effects in an agent context — add approve fn or @agent_allowed",
 					fn.Name,
 				))
 			}

@@ -133,8 +133,7 @@ fn helper() -> String { return "hi" }
 func TestExtract_SingleTool_Name(t *testing.T) {
 	file := parseFile(`
 module foo
-@tool
-fn search(query: String) -> String { return query }
+tool fn search(query: String) -> String { return query }
 `)
 	schemas := toolschema.Extract(file)
 	if len(schemas) != 1 {
@@ -148,8 +147,7 @@ fn search(query: String) -> String { return query }
 func TestExtract_RequiredParams(t *testing.T) {
 	file := parseFile(`
 module foo
-@tool
-fn search(query: String, limit: Int) -> String { return query }
+tool fn search(query: String, limit: Int) -> String { return query }
 `)
 	schemas := toolschema.Extract(file)
 	required := schemas[0].InputSchema.Required
@@ -161,8 +159,7 @@ fn search(query: String, limit: Int) -> String { return query }
 func TestExtract_OptionalParamNotRequired(t *testing.T) {
 	file := parseFile(`
 module foo
-@tool
-fn search(query: String, category: String?) -> String { return query }
+tool fn search(query: String, category: String?) -> String { return query }
 `)
 	schemas := toolschema.Extract(file)
 	required := schemas[0].InputSchema.Required
@@ -180,8 +177,7 @@ func TestExtract_DocComment_FunctionDescription(t *testing.T) {
 	file := parseFile(`
 module foo
 /// Search the product catalog.
-@tool
-fn search(query: String) -> String { return query }
+tool fn search(query: String) -> String { return query }
 `)
 	schemas := toolschema.Extract(file)
 	if schemas[0].Description != "Search the product catalog." {
@@ -193,8 +189,7 @@ fn search(query: String) -> String { return query }
 func TestExtract_DocComment_ParamDescription(t *testing.T) {
 	file := parseFile(`
 module foo
-@tool
-fn search(
+tool fn search(
   /// The search query
   query: String,
 ) -> String { return query }
@@ -212,10 +207,8 @@ fn search(
 func TestExtract_MultipleTools(t *testing.T) {
 	file := parseFile(`
 module foo
-@tool
-fn search(query: String) -> String { return query }
-@tool
-fn lookup(id: Int) -> String { return "x" }
+tool fn search(query: String) -> String { return query }
+tool fn lookup(id: Int) -> String { return "x" }
 fn internal() -> String { return "hidden" }
 `)
 	schemas := toolschema.Extract(file)
@@ -228,8 +221,7 @@ func TestToolSchema_EffectsField(t *testing.T) {
 	file := parseFile(`
 module demo
 /// Find records by query.
-@tool
-fn search(query: String) needs DB.read, Net -> String { return query }
+tool fn search(query: String) needs DB.read, Net -> String { return query }
 `)
 	tools := toolschema.Extract(file)
 	if len(tools) != 1 {
@@ -251,8 +243,7 @@ func TestToolSchema_NoEffectsOmitted(t *testing.T) {
 	file := parseFile(`
 module demo
 /// Simple tool with no effects.
-@tool
-fn ping() -> String { return "pong" }
+tool fn ping() -> String { return "pong" }
 `)
 	tools := toolschema.Extract(file)
 	if len(tools) != 1 {
@@ -273,10 +264,8 @@ fn ping() -> String { return "pong" }
 func TestExtractReachable_FiltersNonReachable(t *testing.T) {
 	file := parseFile(`
 module demo
-@tool
-fn reachable(query: String) -> String { return query }
-@tool
-fn restricted(id: Int) -> String { return "hidden" }
+tool fn reachable(query: String) -> String { return query }
+tool fn restricted(id: Int) -> String { return "hidden" }
 `)
 	agentReachable := map[string]bool{
 		"reachable": true,
@@ -294,8 +283,7 @@ func TestToolSchema_DefaultParamNotRequired(t *testing.T) {
 	src := `
 module demo
 /// Search with optional limit.
-@tool
-fn search(query: String, limit: Int = 10) -> String { return query }
+tool fn search(query: String, limit: Int = 10) -> String { return query }
 `
 	file := parseFile(src)
 	tools := toolschema.Extract(file)
@@ -321,8 +309,7 @@ fn search(query: String, limit: Int = 10) -> String { return query }
 func TestToolSchema_OptionalAndDefaultBothNotRequired(t *testing.T) {
 	src := `
 module demo
-@tool
-fn search(
+tool fn search(
   /// Required query string.
   query:   String,
   limit:   Int      = 10,
@@ -346,8 +333,7 @@ func TestSerialize_AnthropicFormat(t *testing.T) {
 	file := parseFile(`
 module demo
 /// Search the catalog.
-@tool
-fn search(query: String) needs DB.read -> String { return query }
+tool fn search(query: String) needs DB.read -> String { return query }
 `)
 	schemas := toolschema.Extract(file)
 
@@ -377,8 +363,7 @@ func TestSerialize_OpenAIFormat(t *testing.T) {
 	file := parseFile(`
 module demo
 /// Search the catalog.
-@tool
-fn search(query: String) needs DB.read -> String { return query }
+tool fn search(query: String) needs DB.read -> String { return query }
 `)
 	schemas := toolschema.Extract(file)
 
@@ -416,8 +401,7 @@ func TestSerialize_OpenAI_PreservesNameAndDescription(t *testing.T) {
 	file := parseFile(`
 module demo
 /// Lookup a user by ID.
-@tool
-fn get_user(user_id: Int) -> String { return "x" }
+tool fn get_user(user_id: Int) -> String { return "x" }
 `)
 	schemas := toolschema.Extract(file)
 	out, err := toolschema.Serialize(schemas, toolschema.FormatOpenAI)

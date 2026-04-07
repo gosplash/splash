@@ -20,7 +20,6 @@ func check(src string) []diagnostic.Diagnostic {
 	return c.Check(file, g)
 }
 
-
 func hasError(diags []diagnostic.Diagnostic) bool {
 	for _, d := range diags {
 		if d.Severity == diagnostic.Error {
@@ -34,12 +33,11 @@ func TestRedline_AgentCannotReach(t *testing.T) {
 	src := `
 module foo
 fn run_agent() needs Agent -> String { return dangerous() }
-@redline
-fn dangerous() -> String { return "boom" }
+redline fn dangerous() -> String { return "boom" }
 `
 	diags := check(src)
 	if !hasError(diags) {
-		t.Error("expected error: agent-reachable function is @redline")
+		t.Error("expected error: agent-reachable function is redline")
 	}
 }
 
@@ -47,12 +45,11 @@ func TestRedline_NonAgentCanCall(t *testing.T) {
 	src := `
 module foo
 fn safe_caller() -> String { return dangerous() }
-@redline
-fn dangerous() -> String { return "boom" }
+redline fn dangerous() -> String { return "boom" }
 `
 	diags := check(src)
 	if hasError(diags) {
-		t.Errorf("unexpected errors: non-agent can call @redline: %v", diags)
+		t.Errorf("unexpected errors: non-agent can call redline: %v", diags)
 	}
 }
 
@@ -62,12 +59,11 @@ func TestRedline_TransitiveViolation(t *testing.T) {
 module foo
 fn run_agent() needs Agent -> String { return helper() }
 fn helper() -> String { return dangerous() }
-@redline
-fn dangerous() -> String { return "boom" }
+redline fn dangerous() -> String { return "boom" }
 `
 	diags := check(src)
 	if !hasError(diags) {
-		t.Error("expected error: agent transitively reaches @redline function")
+		t.Error("expected error: agent transitively reaches redline function")
 	}
 }
 
@@ -76,8 +72,7 @@ func TestRedline_ErrorContainsCallPath(t *testing.T) {
 module foo
 fn run_agent() needs Agent -> String { return helper() }
 fn helper() -> String { return dangerous() }
-@redline
-fn dangerous() -> String { return "boom" }
+redline fn dangerous() -> String { return "boom" }
 `
 	diags := check(src)
 	if len(diags) == 0 {
@@ -107,8 +102,7 @@ func containsStr(s, sub string) bool {
 func TestRedline_NoAgent_NoError(t *testing.T) {
 	src := `
 module foo
-@redline
-fn dangerous() -> String { return "ok" }
+redline fn dangerous() -> String { return "ok" }
 fn other() -> String { return "hi" }
 `
 	diags := check(src)
@@ -125,7 +119,7 @@ fn exfil() needs DB.write, Net -> String { return "leaked" }
 `
 	diags := check(src)
 	if !hasError(diags) {
-		t.Error("expected error: agent-reachable function with DB.write+Net requires @approve")
+		t.Error("expected error: agent-reachable function with DB.write+Net requires approve fn")
 	}
 }
 
@@ -133,12 +127,11 @@ func TestApprove_WithApproveAnnotation_NoError(t *testing.T) {
 	src := `
 module foo
 fn run_agent() needs Agent -> String { return exfil() }
-@approve
-fn exfil() needs DB.write, Net -> String { return "ok" }
+approve fn exfil() needs DB.write, Net -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {
-		t.Errorf("unexpected errors: @approve present: %v", diags)
+		t.Errorf("unexpected errors: approve fn present: %v", diags)
 	}
 }
 
@@ -164,7 +157,7 @@ fn writer() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {
-		t.Errorf("unexpected errors: DB.write alone should not require @approve: %v", diags)
+		t.Errorf("unexpected errors: DB.write alone should not require approve fn: %v", diags)
 	}
 }
 
@@ -228,7 +221,7 @@ fn process() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if !hasError(diags) {
-		t.Error("expected error: approved_only requires @approve or @agent_allowed")
+		t.Error("expected error: approved_only requires approve fn or @agent_allowed")
 	}
 }
 
@@ -237,12 +230,11 @@ func TestContainment_ApprovedOnly_WithApprove_NoError(t *testing.T) {
 @containment(agent: "approved_only")
 module payments
 fn run_agent() needs Agent -> String { return process() }
-@approve
-fn process() needs DB.write -> String { return "ok" }
+approve fn process() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
 	if hasError(diags) {
-		t.Errorf("unexpected error: @approve satisfies approved_only: %v", diags)
+		t.Errorf("unexpected error: approve fn satisfies approved_only: %v", diags)
 	}
 }
 
@@ -254,8 +246,7 @@ type User {
     @sensitive
     email: String
 }
-@tool
-fn get_user(id: Int) -> User {
+tool fn get_user(id: Int) -> User {
     return User { id: id, email: "a@b.com" }
 }
 fn run_agent() needs Agent -> User {
@@ -264,7 +255,7 @@ fn run_agent() needs Agent -> User {
 `
 	diags := check(src)
 	if len(diags) == 0 {
-		t.Fatal("expected error: @tool returning @sensitive type, but got no diagnostics")
+		t.Fatal("expected error: tool fn returning @sensitive type, but got no diagnostics")
 	}
 	found := false
 	for _, d := range diags {
@@ -284,8 +275,7 @@ type Point {
     x: Int
     y: Int
 }
-@tool
-fn get_point() -> Point {
+tool fn get_point() -> Point {
     return Point { x: 1, y: 2 }
 }
 fn run_agent() needs Agent -> Point {
@@ -294,7 +284,7 @@ fn run_agent() needs Agent -> Point {
 `
 	diags := check(src)
 	if hasError(diags) {
-		t.Errorf("expected no error for @tool returning public type, got: %v", diags)
+		t.Errorf("expected no error for tool fn returning public type, got: %v", diags)
 	}
 }
 
@@ -306,8 +296,7 @@ type Profile {
     @restricted
     ssn: String
 }
-@tool
-fn get_profile(id: Int) -> Profile {
+tool fn get_profile(id: Int) -> Profile {
     return Profile { id: id, ssn: "123-45-6789" }
 }
 fn run_agent() needs Agent -> Profile {
@@ -316,7 +305,7 @@ fn run_agent() needs Agent -> Profile {
 `
 	diags := check(src)
 	if len(diags) == 0 {
-		t.Fatal("expected error: @tool returning @restricted type, but got no diagnostics")
+		t.Fatal("expected error: tool fn returning @restricted type, but got no diagnostics")
 	}
 	found := false
 	for _, d := range diags {
@@ -337,8 +326,7 @@ type User {
     @sensitive
     email: String
 }
-@tool
-fn find_user(id: Int) -> User? {
+tool fn find_user(id: Int) -> User? {
     return User { id: id, email: "a@b.com" }
 }
 fn run_agent() needs Agent -> User? {
@@ -347,7 +335,7 @@ fn run_agent() needs Agent -> User? {
 `
 	diags := check(src)
 	if len(diags) == 0 {
-		t.Fatal("expected error: @tool returning User? which has @sensitive fields")
+		t.Fatal("expected error: tool fn returning User? which has @sensitive fields")
 	}
 	found := false
 	for _, d := range diags {

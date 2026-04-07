@@ -25,8 +25,6 @@ const (
 )
 
 var annotationNames = map[string]AnnotationKind{
-	"redline":          AnnotRedline,
-	"approve":          AnnotApprove,
 	"containment":      AnnotContainment,
 	"agent_allowed":    AnnotAgentAllowed,
 	"sandbox":          AnnotSandbox,
@@ -36,7 +34,6 @@ var annotationNames = map[string]AnnotationKind{
 	"restricted":       AnnotRestricted,
 	"internal":         AnnotInternal,
 	"audit":            AnnotAudit,
-	"tool":             AnnotTool,
 	"trace":            AnnotTrace,
 	"deadline":         AnnotDeadline,
 	"route":            AnnotRoute,

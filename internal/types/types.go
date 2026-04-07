@@ -45,9 +45,9 @@ var (
 
 // NamedType represents a user-defined named type.
 type NamedType struct {
-	Name                   string
-	TypeArgs              []Type
-	FieldClassifications  []Classification
+	Name                 string
+	TypeArgs             []Type
+	FieldClassifications []Classification
 }
 
 func (n *NamedType) TypeName() string {
@@ -96,6 +96,28 @@ func Named(name string) *NamedType {
 	return &NamedType{
 		Name: name,
 	}
+}
+
+// ModuleType represents an imported module namespace.
+type ModuleType struct {
+	Name    string
+	Exports map[string]Type
+}
+
+func (m *ModuleType) TypeName() string {
+	return "module " + m.Name
+}
+
+func (m *ModuleType) IsAssignableTo(other Type) bool {
+	otherModule, ok := other.(*ModuleType)
+	if !ok {
+		return false
+	}
+	return m.Name == otherModule.Name
+}
+
+func (m *ModuleType) Classification() Classification {
+	return ClassPublic
 }
 
 // OptionalType represents a type that can be nil.

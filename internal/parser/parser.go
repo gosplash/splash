@@ -74,6 +74,25 @@ func (p *Parser) current() token.Token {
 	return token.Token{Kind: token.EOF}
 }
 
+func isNameKind(k token.Kind) bool {
+	switch k {
+	case token.IDENT, token.REDLINE, token.TOOL, token.APPROVE, token.AGENT:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) eatName() token.Token {
+	if isNameKind(p.current().Kind) {
+		return p.advance()
+	}
+	cur := p.current()
+	p.errorf(cur.Pos, "expected identifier, got %v (%q)", cur.Kind, cur.Literal)
+	p.advance()
+	return cur
+}
+
 // peek returns the token one position ahead.
 func (p *Parser) peek() token.Token {
 	if p.pos+1 < len(p.tokens) {
@@ -115,7 +134,7 @@ func (p *Parser) sync() {
 	for {
 		switch p.current().Kind {
 		case token.FN, token.TYPE, token.ENUM, token.CONSTRAINT,
-			token.MODULE, token.EXPOSE, token.USE, token.AT, token.RBRACE, token.SEMICOLON, token.EOF:
+			token.MODULE, token.EXPOSE, token.USE, token.AT, token.ASYNC, token.REDLINE, token.TOOL, token.APPROVE, token.AGENT, token.RBRACE, token.SEMICOLON, token.EOF:
 			return
 		}
 		p.advance()
@@ -126,7 +145,7 @@ func (p *Parser) sync() {
 func isTopLevelKeyword(k token.Kind) bool {
 	switch k {
 	case token.FN, token.TYPE, token.ENUM, token.CONSTRAINT,
-		token.MODULE, token.EXPOSE, token.USE, token.AT, token.ASYNC, token.EOF:
+		token.MODULE, token.EXPOSE, token.USE, token.AT, token.ASYNC, token.REDLINE, token.TOOL, token.APPROVE, token.AGENT, token.EOF:
 		return true
 	}
 	return false
@@ -180,7 +199,7 @@ func (p *Parser) ParseFile() (*ast.File, []diagnostic.Diagnostic) {
 func (p *Parser) parseModuleDecl() *ast.ModuleDecl {
 	pos := p.current().Pos
 	p.eat(token.MODULE)
-	name := p.eat(token.IDENT)
+	name := p.eatName()
 	return &ast.ModuleDecl{
 		Name:     name.Literal,
 		Position: pos,
@@ -192,7 +211,7 @@ func (p *Parser) parseExposeList() []string {
 	p.eat(token.EXPOSE)
 	var names []string
 	for {
-		if !p.check(token.IDENT) {
+		if !isNameKind(p.current().Kind) {
 			break
 		}
 		names = append(names, p.advance().Literal)
@@ -211,11 +230,11 @@ func (p *Parser) parseUseDecl() *ast.UseDecl {
 
 	// path is slash-separated identifiers
 	var parts []string
-	if p.check(token.IDENT) {
+	if isNameKind(p.current().Kind) {
 		parts = append(parts, p.advance().Literal)
 		for p.check(token.SLASH) {
 			p.advance() // consume /
-			if p.check(token.IDENT) {
+			if isNameKind(p.current().Kind) {
 				parts = append(parts, p.advance().Literal)
 			}
 		}
@@ -223,9 +242,9 @@ func (p *Parser) parseUseDecl() *ast.UseDecl {
 	path := strings.Join(parts, "/")
 
 	var alias string
-	if p.check(token.IDENT) && p.current().Literal == "as" {
+	if isNameKind(p.current().Kind) && p.current().Literal == "as" {
 		p.advance() // consume "as"
-		if p.check(token.IDENT) {
+		if isNameKind(p.current().Kind) {
 			alias = p.advance().Literal
 		}
 	}
@@ -255,10 +274,13 @@ func (p *Parser) parseTopLevelDecl() ast.Decl {
 
 	switch p.current().Kind {
 	case token.FN:
-		return p.parseFunctionDecl(annots, false, doc)
+		return p.parseFunctionDecl(annots, false, false, doc)
 	case token.ASYNC:
-		p.advance() // consume async
-		return p.parseFunctionDecl(annots, true, doc)
+		isAsync, isAgent, annots := p.parseFunctionModifiers(annots)
+		return p.parseFunctionDecl(annots, isAsync, isAgent, doc)
+	case token.REDLINE, token.TOOL, token.APPROVE, token.AGENT:
+		isAsync, isAgent, annots := p.parseFunctionModifiers(annots)
+		return p.parseFunctionDecl(annots, isAsync, isAgent, doc)
 	case token.TYPE:
 		return p.parseTypeDecl(annots)
 	case token.ENUM:
@@ -284,17 +306,33 @@ func (p *Parser) parseAnnotation() ast.Annotation {
 	pos := p.current().Pos
 	p.eat(token.AT)
 
-	nameTok := p.eat(token.IDENT)
+	nameTok := p.current()
+	if nameTok.Kind == token.EOF {
+		p.errorf(nameTok.Pos, "expected annotation name, got EOF")
+		return ast.Annotation{Args: map[string]ast.Expr{}, Pos: pos}
+	}
+	p.advance()
+
 	kind, ok := ast.LookupAnnotation(nameTok.Literal)
 	if !ok {
 		p.errorf(nameTok.Pos, "unknown annotation %q", nameTok.Literal)
 	}
 
+	args := p.parseAnnotationArgs()
+
+	return ast.Annotation{
+		Kind: kind,
+		Args: args,
+		Pos:  pos,
+	}
+}
+
+func (p *Parser) parseAnnotationArgs() map[string]ast.Expr {
 	args := map[string]ast.Expr{}
 	if p.check(token.LPAREN) {
 		p.advance() // consume (
 		for !p.check(token.RPAREN) && !p.check(token.EOF) {
-			keyTok := p.eat(token.IDENT)
+			keyTok := p.eatName()
 			p.eat(token.COLON)
 			val := p.parseExpr(precLowest)
 			args[keyTok.Literal] = val
@@ -305,20 +343,42 @@ func (p *Parser) parseAnnotation() ast.Annotation {
 		}
 		p.eat(token.RPAREN)
 	}
+	return args
+}
 
-	return ast.Annotation{
-		Kind: kind,
-		Args: args,
-		Pos:  pos,
+func (p *Parser) parseFunctionModifiers(annots []ast.Annotation) (bool, bool, []ast.Annotation) {
+	isAsync := false
+	isAgent := false
+	for {
+		switch p.current().Kind {
+		case token.ASYNC:
+			p.advance()
+			isAsync = true
+		case token.REDLINE:
+			pos := p.current().Pos
+			p.advance()
+			annots = append(annots, ast.Annotation{Kind: ast.AnnotRedline, Args: p.parseAnnotationArgs(), Pos: pos})
+		case token.TOOL:
+			annots = append(annots, ast.Annotation{Kind: ast.AnnotTool, Args: map[string]ast.Expr{}, Pos: p.current().Pos})
+			p.advance()
+		case token.APPROVE:
+			annots = append(annots, ast.Annotation{Kind: ast.AnnotApprove, Args: map[string]ast.Expr{}, Pos: p.current().Pos})
+			p.advance()
+		case token.AGENT:
+			p.advance()
+			isAgent = true
+		default:
+			return isAsync, isAgent, annots
+		}
 	}
 }
 
 // parseFunctionDecl parses: fn name[<TypeParams>](params) [needs Effects] [-> ReturnType] Block
-func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool, doc string) *ast.FunctionDecl {
+func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool, isAgent bool, doc string) *ast.FunctionDecl {
 	pos := p.current().Pos
 	p.eat(token.FN)
 
-	name := p.eat(token.IDENT)
+	name := p.eatName()
 
 	// optional type params
 	typeParams := p.parseTypeParams()
@@ -332,6 +392,9 @@ func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool, doc st
 	var effects []ast.EffectExpr
 	if p.check(token.NEEDS) {
 		effects = p.parseEffects()
+	}
+	if isAgent && !hasEffect(effects, "Agent") {
+		effects = append(effects, ast.EffectExpr{Name: "Agent", Pos: pos})
 	}
 
 	// optional return type
@@ -358,6 +421,15 @@ func (p *Parser) parseFunctionDecl(annots []ast.Annotation, isAsync bool, doc st
 	}
 }
 
+func hasEffect(effects []ast.EffectExpr, name string) bool {
+	for _, effect := range effects {
+		if effect.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // parseTypeParams parses optional generic type parameters: <T, U: Constraint>
 func (p *Parser) parseTypeParams() []ast.TypeParam {
 	if !p.check(token.LT) {
@@ -368,14 +440,14 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 	var params []ast.TypeParam
 	for !p.check(token.GT) && !p.check(token.EOF) {
 		pos := p.current().Pos
-		name := p.eat(token.IDENT)
+		name := p.eatName()
 		var constraints []string
 		if p.check(token.COLON) {
 			p.advance() // consume :
-			constraints = append(constraints, p.eat(token.IDENT).Literal)
+			constraints = append(constraints, p.eatName().Literal)
 			for p.check(token.PLUS) {
 				p.advance()
-				constraints = append(constraints, p.eat(token.IDENT).Literal)
+				constraints = append(constraints, p.eatName().Literal)
 			}
 		}
 		params = append(params, ast.TypeParam{
@@ -427,7 +499,7 @@ func (p *Parser) parseParam() ast.Param {
 		variadic = true
 	}
 
-	name := p.eat(token.IDENT)
+	name := p.eatName()
 	p.eat(token.COLON)
 	typ := p.parseTypeExpr()
 
@@ -453,12 +525,12 @@ func (p *Parser) parseEffects() []ast.EffectExpr {
 	var effects []ast.EffectExpr
 	for {
 		pos := p.current().Pos
-		nameTok := p.eat(token.IDENT)
+		nameTok := p.eatName()
 		name := nameTok.Literal
 		// optional dotted suffix: DB.read, DB.admin
 		for p.check(token.DOT) {
 			p.advance()
-			sub := p.eat(token.IDENT)
+			sub := p.eatName()
 			name = name + "." + sub.Literal
 		}
 		effects = append(effects, ast.EffectExpr{Name: name, Pos: pos})
@@ -500,7 +572,7 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	}
 
 	// named type (possibly with generics)
-	name := p.eat(token.IDENT)
+	name := p.parseQualifiedIdent()
 	var typeArgs []ast.TypeExpr
 	if p.check(token.LT) {
 		p.advance()
@@ -514,7 +586,7 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 		p.eat(token.GT)
 	}
 	var te ast.TypeExpr = &ast.NamedTypeExpr{
-		Name:     name.Literal,
+		Name:     name,
 		TypeArgs: typeArgs,
 		Position: pos,
 	}
@@ -533,7 +605,7 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 func (p *Parser) parseTypeDecl(annots []ast.Annotation) *ast.TypeDecl {
 	pos := p.current().Pos
 	p.eat(token.TYPE)
-	name := p.eat(token.IDENT)
+	name := p.eatName()
 	typeParams := p.parseTypeParams()
 
 	p.eat(token.LBRACE)
@@ -546,7 +618,7 @@ func (p *Parser) parseTypeDecl(annots []ast.Annotation) *ast.TypeDecl {
 		}
 
 		fieldPos := p.current().Pos
-		fieldName := p.eat(token.IDENT)
+		fieldName := p.eatName()
 		p.eat(token.COLON)
 		fieldType := p.parseTypeExpr()
 
@@ -579,13 +651,13 @@ func (p *Parser) parseTypeDecl(annots []ast.Annotation) *ast.TypeDecl {
 func (p *Parser) parseEnumDecl(annots []ast.Annotation) *ast.EnumDecl {
 	pos := p.current().Pos
 	p.eat(token.ENUM)
-	name := p.eat(token.IDENT)
+	name := p.eatName()
 
 	p.eat(token.LBRACE)
 	var variants []ast.EnumVariant
 	for !p.check(token.RBRACE) && !p.check(token.EOF) {
 		vpos := p.current().Pos
-		vname := p.eat(token.IDENT)
+		vname := p.eatName()
 		var payload ast.TypeExpr
 		if p.check(token.LPAREN) {
 			p.advance()
@@ -612,7 +684,7 @@ func (p *Parser) parseEnumDecl(annots []ast.Annotation) *ast.EnumDecl {
 func (p *Parser) parseConstraintDecl(annots []ast.Annotation) *ast.ConstraintDecl {
 	pos := p.current().Pos
 	p.eat(token.CONSTRAINT)
-	name := p.eat(token.IDENT)
+	name := p.eatName()
 	typeParams := p.parseTypeParams()
 
 	p.eat(token.LBRACE)
@@ -625,7 +697,7 @@ func (p *Parser) parseConstraintDecl(annots []ast.Annotation) *ast.ConstraintDec
 			isStatic = true
 		}
 		p.eat(token.FN)
-		mname := p.eat(token.IDENT)
+		mname := p.eatName()
 		p.eat(token.LPAREN)
 		params := p.parseParams()
 		p.eat(token.RPAREN)
@@ -713,7 +785,7 @@ func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
 func (p *Parser) parseLetStmt() *ast.LetStmt {
 	pos := p.current().Pos
 	p.eat(token.LET)
-	name := p.eat(token.IDENT)
+	name := p.eatName()
 
 	var typ ast.TypeExpr
 	if p.check(token.COLON) {
@@ -768,7 +840,7 @@ func (p *Parser) parseGuardStmt() *ast.GuardStmt {
 func (p *Parser) parseForStmt() *ast.ForStmt {
 	pos := p.current().Pos
 	p.eat(token.FOR)
-	binding := p.eat(token.IDENT)
+	binding := p.eatName()
 	p.eat(token.IN)
 	iter := p.parseExpr(precLowest)
 	body := p.parseBlockStmt()
@@ -895,13 +967,12 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.advance()
 		return &ast.NoneLiteral{Position: cur.Pos}
 
-	case token.IDENT:
-		p.advance()
+	case token.IDENT, token.TOOL, token.APPROVE, token.AGENT:
 		// Struct literal: TypeName { field: expr, ... }
-		// Only attempt if identifier starts with uppercase (type names are capitalized).
-		if p.check(token.LBRACE) && len(cur.Literal) > 0 && cur.Literal[0] >= 'A' && cur.Literal[0] <= 'Z' {
-			return p.parseStructLiteral(cur)
+		if p.isStructLiteralAhead() {
+			return p.parseStructLiteral()
 		}
+		p.advance()
 		return &ast.Ident{Name: cur.Literal, Position: cur.Pos}
 
 	case token.BANG, token.MINUS:
@@ -931,7 +1002,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 func (p *Parser) parseMemberExpr(obj ast.Expr) ast.Expr {
 	tok := p.advance()
 	optional := tok.Kind == token.OPT_CHAIN
-	member := p.eat(token.IDENT)
+	member := p.eatName()
 	return &ast.MemberExpr{
 		Object:   obj,
 		Member:   member.Literal,
@@ -966,7 +1037,7 @@ func (p *Parser) isGenericCallAhead() bool {
 		return false
 	}
 	i++ // past <
-	if i >= len(p.tokens) || p.tokens[i].Kind != token.IDENT {
+	if i >= len(p.tokens) || !isNameKind(p.tokens[i].Kind) {
 		return false
 	}
 	i++ // past first type arg ident
@@ -977,7 +1048,7 @@ func (p *Parser) isGenericCallAhead() bool {
 	// optional comma-separated additional type args
 	for i < len(p.tokens) && p.tokens[i].Kind == token.COMMA {
 		i++ // past comma
-		if i >= len(p.tokens) || p.tokens[i].Kind != token.IDENT {
+		if i >= len(p.tokens) || !isNameKind(p.tokens[i].Kind) {
 			return false
 		}
 		i++ // past type arg ident
@@ -1008,13 +1079,14 @@ func (p *Parser) parseNullCoalesceExpr(left ast.Expr) ast.Expr {
 	return &ast.NullCoalesceExpr{Left: left, Right: right, Position: pos}
 }
 
-func (p *Parser) parseStructLiteral(nameTok token.Token) *ast.StructLiteral {
-	pos := nameTok.Pos
+func (p *Parser) parseStructLiteral() *ast.StructLiteral {
+	pos := p.current().Pos
+	typeName := p.parseQualifiedIdent()
 	p.eat(token.LBRACE)
 	var fields []ast.StructField
 	for !p.check(token.RBRACE) && !p.check(token.EOF) {
 		fpos := p.current().Pos
-		name := p.eat(token.IDENT)
+		name := p.eatName()
 		p.eat(token.COLON)
 		val := p.parseExpr(precLowest)
 		fields = append(fields, ast.StructField{Name: name.Literal, Value: val, Pos: fpos})
@@ -1024,7 +1096,40 @@ func (p *Parser) parseStructLiteral(nameTok token.Token) *ast.StructLiteral {
 		p.advance()
 	}
 	p.eat(token.RBRACE)
-	return &ast.StructLiteral{TypeName: nameTok.Literal, Fields: fields, Position: pos}
+	return &ast.StructLiteral{TypeName: typeName, Fields: fields, Position: pos}
+}
+
+func (p *Parser) parseQualifiedIdent() string {
+	name := p.eatName().Literal
+	for p.check(token.DOT) && isNameKind(p.peek().Kind) {
+		p.advance()
+		name += "." + p.eatName().Literal
+	}
+	return name
+}
+
+func (p *Parser) isStructLiteralAhead() bool {
+	if !isNameKind(p.current().Kind) {
+		return false
+	}
+	if p.peek().Kind == token.LBRACE {
+		return startsUpper(p.current().Literal)
+	}
+	if p.peek().Kind == token.DOT &&
+		p.pos+2 < len(p.tokens) &&
+		isNameKind(p.tokens[p.pos+2].Kind) &&
+		p.pos+3 < len(p.tokens) &&
+		p.tokens[p.pos+3].Kind == token.LBRACE {
+		return startsUpper(p.tokens[p.pos+2].Literal)
+	}
+	return false
+}
+
+func startsUpper(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	return s[0] >= 'A' && s[0] <= 'Z'
 }
 
 func (p *Parser) parseListLiteral() *ast.ListLiteral {

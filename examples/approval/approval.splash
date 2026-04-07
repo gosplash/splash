@@ -1,7 +1,7 @@
-// @approve example.
+// approve fn example.
 // Demonstrates: approval gate as a function precondition.
 //
-// @approve means "this function does not execute until the adapter approves."
+// approve fn means "this function does not execute until the adapter approves."
 // The function signature is unchanged — charge_card returns a Charge.
 // The compiler injects splashApprove("charge_card") as the first statement
 // of the function body. The Splash programmer writes normal code.
@@ -10,7 +10,7 @@
 //      splash emit  examples/approval/approval.splash
 //
 // splash emit shows the generated Go — look for splashApprove at the top
-// of the @approve function bodies and the ApprovalAdapter interface in the
+// of the approve fn bodies and the ApprovalAdapter interface in the
 // preamble. Call sites are untouched.
 
 module billing
@@ -23,18 +23,16 @@ type Charge {
 /// Charge a customer. Requires human approval before executing.
 /// The adapter decides what "approval" means — terminal prompt in dev,
 /// Slack or webhook in production. Same function, different adapter.
-@approve
-fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge {
+approve fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge {
     return Charge { customer_id: customer_id, amount_cents: amount_cents }
 }
 
 /// Refund a charge. Also gated — refunds require the same approval flow.
-@approve
-fn issue_refund(customer_id: Int, amount_cents: Int) needs Net -> Charge {
+approve fn issue_refund(customer_id: Int, amount_cents: Int) needs Net -> Charge {
     return Charge { customer_id: customer_id, amount_cents: amount_cents }
 }
 
-/// Internal helper. No @approve — not a high-consequence operation.
+/// Internal helper. No approve fn gate — not a high-consequence operation.
 fn validate_amount(amount_cents: Int) -> Bool {
     if amount_cents > 0 {
         return true
@@ -43,15 +41,15 @@ fn validate_amount(amount_cents: Int) -> Bool {
 }
 
 /// Agent entry point. Can charge and refund, but both are gated.
-/// @redline would block this function from ever running —
-/// @approve lets it run, but only after the adapter says yes.
+/// redline fn would block this function from ever running —
+/// approve fn lets it run, but only after the adapter says yes.
 ///
 /// Note: the agent calls charge_card like any other function. It doesn't
 /// know about the approval gate. The gate fires inside charge_card's body —
 /// invisible to the caller, enforced by the compiler. This is the difference
 /// between body injection and call-site injection: the caller writes normal
 /// code; the precondition is the function's own responsibility.
-fn run_billing_agent(customer_id: Int, amount_cents: Int) needs Agent, Net -> Charge {
+agent fn run_billing_agent(customer_id: Int, amount_cents: Int) needs Net -> Charge {
     let ok = validate_amount(amount_cents)
     let charge = charge_card(customer_id, amount_cents)
     return charge

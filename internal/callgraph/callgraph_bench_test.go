@@ -106,7 +106,7 @@ func BenchmarkReachable_5000(b *testing.B) {
 	}
 }
 
-// BenchmarkCallers measures reverse BFS (used for @approve cascade).
+// BenchmarkCallers measures reverse BFS (used for approve fn cascade).
 
 func BenchmarkCallers_100(b *testing.B) {
 	g := callgraph.Build(parseBench(genChain(100)))

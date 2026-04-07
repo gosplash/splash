@@ -450,6 +450,64 @@ fn get_amount() -> Int {
 	}
 }
 
+func TestUseDecl_ImportedFunctionAvailableByNamespace(t *testing.T) {
+	mainSrc := `
+module app
+use billing
+fn run() -> Int {
+    return billing.get_amount()
+}
+`
+	billingContent := `
+module billing
+fn get_amount() -> Int {
+    return 100
+}
+`
+	diags := checkWithImports(mainSrc, map[string]string{
+		"billing.splash": billingContent,
+	})
+	if hasError(diags) {
+		t.Errorf("expected no errors after namespaced import access, got: %v", diags)
+	}
+}
+
+func TestUseDecl_ImportedTypeAvailableByNamespace(t *testing.T) {
+	mainSrc := `
+module app
+use billing
+fn run() -> billing.Charge {
+    return billing.Charge { customer_id: 1, amount_cents: 100 }
+}
+`
+	billingContent := `
+module billing
+type Charge {
+    customer_id: Int
+    amount_cents: Int
+}
+`
+	diags := checkWithImports(mainSrc, map[string]string{
+		"billing.splash": billingContent,
+	})
+	if hasError(diags) {
+		t.Errorf("expected no errors after namespaced type access, got: %v", diags)
+	}
+}
+
+func TestAgentKeywordFunctionTypechecks(t *testing.T) {
+	src := `
+module app
+agent fn run_agent() -> String {
+    return "ok"
+}
+`
+	diags := check(src)
+	if hasError(diags) {
+		t.Errorf("expected agent keyword function to type-check, got: %v", diags)
+	}
+}
+
 func TestUseDecl_MissingModule_Error(t *testing.T) {
 	// Importing a module that doesn't exist should produce an error.
 	mainSrc := `

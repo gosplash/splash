@@ -38,7 +38,7 @@ func emitSrcWithApproval(t *testing.T, src string) string {
 	t.Helper()
 	f := parse(t, src)
 
-	// Collect @approve function names from AST
+	// Collect approve fn function names from AST
 	approveFns := make(map[string]bool)
 	for _, decl := range f.Declarations {
 		fn, ok := decl.(*ast.FunctionDecl)
@@ -321,30 +321,29 @@ fn greeting(name: String?) -> String {
 func TestApproveGate(t *testing.T) {
 	src := `
 module payments
-@approve
-fn processPayment(amount: Int) {
+approve fn processPayment(amount: Int) {
     let x = amount
 }
 fn run() {
     processPayment(100)
 }
 `
-	// Use plain emitSrc (no graph) — cascade does not fire, but @approve function
+	// Use plain emitSrc (no graph) — cascade does not fire, but approve fn function
 	// itself still gets the approval gate and error return.
 	out := emitSrc(t, src)
 	mustGoSyntax(t, out)
 
-	// Void @approve function gets error return
+	// Void approve fn function gets error return
 	if !strings.Contains(out, "func processPayment(amount int) error") {
-		t.Errorf("expected error return on @approve function, got:\n%s", out)
+		t.Errorf("expected error return on approve fn function, got:\n%s", out)
 	}
 	// Body injection is now an error-returning guard
 	if !strings.Contains(out, `if err := splashApprove("processPayment"); err != nil`) {
 		t.Errorf("expected error-returning gate, got:\n%s", out)
 	}
-	// Implicit return nil after void @approve function body
+	// Implicit return nil after void approve fn function body
 	if !strings.Contains(out, "return nil") {
-		t.Errorf("expected 'return nil' at end of void @approve body, got:\n%s", out)
+		t.Errorf("expected 'return nil' at end of void approve fn body, got:\n%s", out)
 	}
 	// Helper in preamble
 	if !strings.Contains(out, "func splashApprove") {
@@ -367,8 +366,7 @@ fn run() {
 func TestApproveCascade(t *testing.T) {
 	src := `
 module payments
-@approve
-fn charge(amount: Int) -> Int {
+approve fn charge(amount: Int) -> Int {
     return amount
 }
 fn run() -> Int {
@@ -379,15 +377,15 @@ fn run() -> Int {
 	out := emitSrcWithApproval(t, src)
 	mustGoSyntax(t, out)
 
-	// @approve function: (Int, error) return
+	// approve fn function: (Int, error) return
 	if !strings.Contains(out, "func charge(amount int) (int, error)") {
-		t.Errorf("expected (int, error) return on @approve function, got:\n%s", out)
+		t.Errorf("expected (int, error) return on approve fn function, got:\n%s", out)
 	}
-	// @approve function body: error-returning gate
+	// approve fn function body: error-returning gate
 	if !strings.Contains(out, `if err := splashApprove("charge"); err != nil`) {
 		t.Errorf("expected error-returning gate in charge body, got:\n%s", out)
 	}
-	// @approve function: explicit return becomes return x, nil
+	// approve fn function: explicit return becomes return x, nil
 	if !strings.Contains(out, "return amount, nil") {
 		t.Errorf("expected 'return amount, nil' inside charge, got:\n%s", out)
 	}
@@ -413,12 +411,11 @@ fn run() -> Int {
 }
 
 func TestApproveCascadeTransitive(t *testing.T) {
-	// Three-level chain: top → middle → @approve charge
+	// Three-level chain: top → middle → approve fn charge
 	// Both middle and top must get (T, error) signatures and call-site error handling.
 	src := `
 module payments
-@approve
-fn charge(amount: Int) -> Int {
+approve fn charge(amount: Int) -> Int {
     return amount
 }
 fn middle(amount: Int) -> Int {
@@ -454,8 +451,7 @@ fn top(amount: Int) -> Int {
 func TestApproveMainExit(t *testing.T) {
 	src := `
 module main
-@approve
-fn doWork() {
+approve fn doWork() {
     println("done")
 }
 fn main() {
@@ -486,8 +482,7 @@ fn main() {
 func TestApprovalAdapterSwap(t *testing.T) {
 	src := `
 module payments
-@approve
-fn processPayment(amount: Int) {
+approve fn processPayment(amount: Int) {
     let x = amount
 }
 `

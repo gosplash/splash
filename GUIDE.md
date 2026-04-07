@@ -4,25 +4,60 @@ This is the guide for writing Splash fluently. The [SPEC](SPEC.md) is the gramma
 
 ---
 
+## What Splash Is For
+
+Splash is a control-plane language for software whose authority must be statically understood before it runs.
+
+That usually means:
+
+- agent entrypoints
+- tool surfaces
+- approval-gated actions
+- policy-aware data access
+- workflows where capability boundaries matter as much as business logic
+
+It does not mean "all backend code." If a problem does not involve statically-governed authority, capability, reachability, or data-flow constraints, a general-purpose language is often the better tool.
+
+Splash is intentionally narrow. That narrowness is part of the value proposition.
+
+---
+
 ## The Mental Model
 
 Splash programs have two concerns: **what they do** and **what they're allowed to do**. Most languages only let you express the first. Splash lets you express both, and the compiler enforces the contract.
 
 Effects are declarations, not implementations. When you write `needs DB.read`, you are not causing a database read — you are declaring that this function requires the database-read capability to be in scope. The compiler enforces this requirement across the entire call graph. The effect tells readers exactly what this code touches.
 
-Safety annotations (`@redline`, `@approve`, `@sandbox`, `@containment`) are also declarations. They describe invariants the compiler enforces over the call graph. You write them once; the compiler checks them forever, on every build.
+Safety annotations (`redline fn`, `approve fn`, `@sandbox`, `@containment`) are also declarations. They describe invariants the compiler enforces over the call graph. You write them once; the compiler checks them forever, on every build.
+
+In v0.2, some of the most important agent-facing concepts also have first-class declaration syntax:
+
+- `tool fn` for AI-callable tool surfaces
+- `approve fn` for human-gated operations
+- `agent fn` for agent entrypoints
 
 The call graph is the central data structure. The compiler builds it, identifies every agent entry point, and traces every reachable function. All safety checks operate over this reachable set. If a function is not reachable from an agent root, it is outside the agent's authority. If a dangerous function is reachable, the build fails.
 
-Agent entry points are functions that declare `needs Agent` (runtime entry) or are exposed as `@tool` (external agent interface). These are the trust boundaries where the agent's authority begins.
+Agent entry points are functions that declare `needs Agent`, use `agent fn`, or are exposed as `tool fn` (external agent interface). These are the trust boundaries where the agent's authority begins.
 
 Splash programs are capability graphs: functions are nodes, effects are capabilities, and the compiler enforces which nodes an agent can reach.
+
+Use the introspection commands to inspect what the compiler knows:
+
+```bash
+splash graph file.splash       # agent roots, direct call edges, annotations
+splash effects file.splash     # function → declared effect surface
+splash approvals file.splash   # approval-gated functions and transitive callers
+```
 
 ---
 
 ## What Splash Does Not Do
 
+- It is not a general-purpose replacement for Go, Rust, or TypeScript
 - It does not enforce effects at runtime
+- It is not a memory-safety system for arbitrary native code
+- It is not a post-hoc vulnerability scanner
 - It does not verify external Go libraries called via FFI — those form a trust boundary
 - It does not prevent you from writing code with consequences — it makes reachability of that code explicit
 
@@ -38,7 +73,7 @@ Start with three questions before writing a line of code:
 
 2. **What effects does each operation require?** Be specific. A function that reads a report needs `DB.read`. A function that reads a report and summarizes it needs `DB.read, AI`. Write the smallest `needs` clause that is correct.
 
-3. **What should an agent never be able to do?** Put `@redline` on those functions immediately. A `@redline` is an absolute guarantee, not a runtime check. If it ends up reachable, the build fails with a full call path.
+3. **What should an agent never be able to do?** Put `redline fn` on those functions immediately. A `redline fn` is an absolute guarantee, not a runtime check. If it ends up reachable, the build fails with a full call path.
 
 ---
 
@@ -62,19 +97,18 @@ The `needs DB.read` is not documentation — it is a constraint the compiler enf
 
 ## Writing Agent Tools
 
-A `@tool` function is the interface between an AI agent and your system. It has three parts: the implementation, the type signature (which becomes the JSON Schema), and the doc comment (which becomes the description).
+A `tool fn` is the interface between an AI agent and your system. It has three parts: the implementation, the type signature (which becomes the JSON Schema), and the doc comment (which becomes the description).
 
 ```splash
-@tool
 /// Search orders by customer email. Returns up to limit results.
-fn search_orders(email: String, limit: Int) needs DB.read -> List<OrderSummary> {
+tool fn search_orders(email: String, limit: Int) needs DB.read -> List<OrderSummary> {
     return db.query(email, limit)
 }
 ```
 
 `splash tools` derives the full JSON Schema from this. No hand-written schema. No drift between docs and implementation. By default the output uses the OpenAI wire format (`type/function` wrapper, `parameters` key). Pass `--format anthropic` for the Anthropic format (`input_schema` key, no wrapper).
 
-**Rules for `@tool` functions:**
+**Rules for tool functions:**
 
 - Return types must not contain `@sensitive` or `@restricted` fields. The build fails if classified data can reach an agent. An agent's context window is not a secure store — if you need to return data that touches PII, return a projection type that contains only public fields.
 - Write the doc comment as a description for the agent — be precise about what the function does, what the parameters mean, and what it returns.
@@ -91,15 +125,13 @@ type User {
     email: String
 }
 
-// UserSummary contains only public fields — safe to return from @tool
+// UserSummary contains only public fields — safe to return from tool fn
 type UserSummary {
     id:   Int
     name: String
 }
 
-@tool
-/// Look up a user by ID.
-fn get_user(id: Int) needs DB.read -> UserSummary {
+tool fn get_user(id: Int) needs DB.read -> UserSummary {
     let user = db.find(id)
     return UserSummary { id: user.id, name: user.name }
 }
@@ -111,36 +143,34 @@ fn get_user(id: Int) needs DB.read -> UserSummary {
 
 Two annotations protect dangerous functions. They are not interchangeable.
 
-**`@redline` — compile-time prohibition.** The build fails if any agent-reachable path reaches this function. No policy, no runtime check, no adapter. The function simply cannot execute in an agent context.
+**`redline fn` — compile-time prohibition.** The build fails if any agent-reachable path reaches this function. No policy, no runtime check, no adapter. The function simply cannot execute in an agent context.
 
-Use `@redline` for operations that should never be automated under any circumstances: dropping tables, rebuilding indices, deleting production data, revoking credentials.
+Use `redline fn` for operations that should never be automated under any circumstances: dropping tables, rebuilding indices, deleting production data, revoking credentials.
 
 ```splash
-@redline(reason: "Schema changes require DBA sign-off")
-fn drop_table(table_name: String) needs DB.admin { ... }
+redline(reason: "Schema changes require DBA sign-off") fn drop_table(table_name: String) needs DB.admin { ... }
 ```
 
-**`@approve` — human gate.** The function can run, but only after the `ApprovalAdapter` approves it. In development, this prompts stdin. In production, swap in a webhook or Slack adapter.
+**`approve fn` — human gate.** The function can run, but only after the `ApprovalAdapter` approves it. In development, this prompts stdin. In production, swap in a webhook or Slack adapter.
 
-Use `@approve` for high-consequence operations that should be possible to automate with oversight: charging a card, sending a bulk email, publishing a deployment.
+Use `approve fn` for high-consequence operations that should be possible to automate with oversight: charging a card, sending a bulk email, publishing a deployment.
 
 ```splash
-@approve
 /// Charge a customer. Requires human approval before executing.
-fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
+approve fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
 ```
 
-The `@approve` gate is injected into the function body — the caller writes normal code. The approval fires inside `charge_card`, invisible to the call site. This is deliberate: the gate is the function's responsibility, not the caller's.
+The approval gate is injected into the function body — the caller writes normal code. The approval fires inside `charge_card`, invisible to the call site. This is deliberate: the gate is the function's responsibility, not the caller's.
 
-**`@approve` widens the return type.** The generated Go signature becomes `(Charge, error)`. This error propagates through all transitive callers up to the `needs Agent` boundary — the agent entry point is where errors surface. `fn main()` is emitted as `run() error` with a thin wrapper that handles process exit; the compiler never injects `os.Exit` inside generated function bodies. In production, agent entry points are called from HTTP handlers or queue workers, where the `(T, error)` return integrates naturally.
+**`approve fn` widens the return type.** The generated Go signature becomes `(Charge, error)`. This error propagates through all transitive callers up to the `needs Agent` boundary — the agent entry point is where errors surface. `fn main()` is emitted as `run() error` with a thin wrapper that handles process exit; the compiler never injects `os.Exit` inside generated function bodies. In production, agent entry points are called from HTTP handlers or queue workers, where the `(T, error)` return integrates naturally.
 
 **Choosing between them:**
 
 | Question | Answer |
 |----------|--------|
-| Could this operation ever be safe to automate? | `@approve` |
-| Should this operation never be automated, period? | `@redline` |
-| Could the agent cause irreversible damage by reaching this? | `@redline` |
+| Could this operation ever be safe to automate? | `approve fn` |
+| Should this operation never be automated, period? | `redline fn` |
+| Could the agent cause irreversible damage by reaching this? | `redline fn` |
 
 ---
 
@@ -177,7 +207,7 @@ type Customer {
     display_name: String
 
     @sensitive
-    email:        String    // PII — can't be logged, can't flow to @tool
+    email:        String    // PII — can't be logged, can't flow to tool fn
 
     @restricted
     payment_token: String?  // process-local — no storage adapter accepts it
@@ -186,7 +216,7 @@ type Customer {
 
 The classification of `Customer` is `@restricted` because the highest-classified field is `@restricted`. The compiler enforces:
 
-- `@tool` functions cannot return `Customer` or any type containing `@sensitive`/`@restricted` fields.
+- `tool fn` functions cannot return `Customer` or any type containing `@sensitive`/`@restricted` fields.
 - `println` (and anything requiring `Loggable`) cannot accept `Customer`.
 
 **Design principle:** expose public projections at the boundary, keep classified data internal.
@@ -195,13 +225,13 @@ The classification of `Customer` is `@restricted` because the highest-classified
 // The internal type carries full data
 type Customer { ... }
 
-// The boundary type is safe to return from @tool
+// The boundary type is safe to return from tool fn
 type CustomerProfile {
     id:           Int
     display_name: String
 }
 
-@tool
+tool fn
 /// Look up a customer profile. Does not include contact info.
 fn get_profile(id: Int) needs DB.read -> CustomerProfile { ... }
 ```
@@ -224,7 +254,7 @@ Three policies:
 |--------|--------------------|
 | `"none"` | Nothing — agents cannot reach any function in this module |
 | `"read_only"` | Only functions with `DB.read` effects |
-| `"approved_only"` | Only functions annotated with `@approve` or `@agent_allowed` |
+| `"approved_only"` | Only functions annotated with `approve fn` or `@agent_allowed` |
 
 `"approved_only"` is the most useful: it lets agents call billing functions, but every call goes through the approval gate. The module is open to automation but never uncontrolled.
 
@@ -237,7 +267,7 @@ module billing
 @agent_allowed  // agents can read balance without approval
 fn get_balance(id: Int) needs DB.read -> Int { ... }
 
-@approve        // but charging still requires a gate
+approve fn        // but charging still requires a gate
 fn charge(id: Int, amount: Int) needs Net -> Charge { ... }
 ```
 
@@ -262,11 +292,12 @@ type Customer { ... }
 module agent
 use types
 
-@tool
-fn get_order(id: Int) needs DB.read -> OrderSummary { ... }
+tool fn get_order(id: Int) needs DB.read -> OrderSummary { ... }
 ```
 
 `use types` injects `Order`, `OrderSummary`, and `Customer` directly into `agent`'s namespace — no prefix. The compiler resolves `types.splash` in the same directory, type-checks both files together, and emits them as a single Go package.
+
+This flat injection is the v0.1 module behavior. It keeps small programs terse, but it also makes ownership less explicit than a namespaced import model would. Prefer exposed names that remain unambiguous at the use site, and expect the module system to become more explicit over time.
 
 **`expose` is the public API.** Only listed names are injected. Internal helpers and intermediate types stay in the declaring module's namespace.
 
@@ -280,14 +311,14 @@ fn get_order(id: Int) needs DB.read -> OrderSummary { ... }
 
 **Missing `needs Agent` on the entry point.** An agent entry function that doesn't declare `needs Agent` won't be treated as an agent root by the call graph. Safety checks won't trace paths from it.
 
-**Returning classified types from `@tool`.** If your `@tool` function returns a type with `@sensitive` fields, the build fails. Create a projection type.
+**Returning classified types from `tool fn`.** If your `tool fn` function returns a type with `@sensitive` fields, the build fails. Create a projection type.
 
-**Treating `@sandbox` as a substitute for `@redline`.** `@sandbox` constrains effects; it does not prevent a function from being reachable. A `@redline` function inside a `@sandbox` agent will still fail the build — `@sandbox` does not exempt it.
+**Treating `@sandbox` as a substitute for `redline fn`.** `@sandbox` constrains effects; it does not prevent a function from being reachable. A `redline fn` function inside a `@sandbox` agent will still fail the build — `@sandbox` does not exempt it.
 
-**Forgetting `///` doc comments on `@tool` parameters.** The JSON Schema description for each parameter comes from the `///` comment immediately above it in the parameter list:
+**Forgetting `///` doc comments on `tool fn` parameters.** The JSON Schema description for each parameter comes from the `///` comment immediately above it in the parameter list:
 
 ```splash
-@tool
+tool fn
 /// Find all orders matching the given filters.
 fn find_orders(
     /// The customer ID to filter by.
@@ -317,7 +348,7 @@ type Customer {
     email:        String
 }
 
-// Safe to return from @tool — no classified fields
+// Safe to return from tool fn — no classified fields
 type OrderSummary {
     id:          Int
     status:      String
@@ -331,7 +362,7 @@ type Order {
     total:    Int
 }
 
-@tool
+tool fn
 /// Search orders for a customer. Returns public summaries only.
 fn search_orders(
     /// The customer ID to search.
@@ -342,19 +373,17 @@ fn search_orders(
     return db.query(customer_id, limit)
 }
 
-// @approve: refunds are consequential — require human sign-off
-// @redline would block this entirely; @approve allows it with oversight
-@approve
-fn refund_order(order_id: Int, reason: String) needs DB.write, Net -> OrderSummary {
+// approve fn: refunds are consequential — require human sign-off
+// redline fn would block this entirely; approve fn allows it with oversight
+approve fn refund_order(order_id: Int, reason: String) needs DB.write, Net -> OrderSummary {
     return OrderSummary { id: order_id, status: "refunded", total_cents: 0 }
 }
 
 // Blocks any agent from calling this — too destructive to automate
-@redline(reason: "Account deletion requires CX team sign-off")
-fn delete_account(customer_id: Int) needs DB.admin { ... }
+redline(reason: "Account deletion requires CX team sign-off") fn delete_account(customer_id: Int) needs DB.admin { ... }
 
 // Agent entry point. @sandbox pins the effect surface to DB.read only for
-// the search path; the refund path adds Net and DB.write (via @approve).
+// the search path; the refund path adds Net and DB.write (via approve fn).
 @sandbox(allow: [DB.read, DB.write, Net])
 @budget(max_cost: 0.01, max_calls: 10)
 fn run_support_agent(customer_id: Int) needs Agent, DB.read -> String {
@@ -365,7 +394,7 @@ fn run_support_agent(customer_id: Int) needs Agent, DB.read -> String {
 
 What the compiler enforces on this file:
 
-- `search_orders` is a valid `@tool`: `OrderSummary` has no classified fields.
-- `delete_account` with `@redline` — if `run_support_agent` ever gains a call path to it, the build fails.
+- `search_orders` is a valid `tool fn`: `OrderSummary` has no classified fields.
+- `delete_account` with `redline fn` — if `run_support_agent` ever gains a call path to it, the build fails.
 - `@sandbox(allow: [DB.read, DB.write, Net])` — the compiler checks every function reachable from `run_support_agent` uses only those effects.
 - `@budget` — `max_cost: 0.01` is numeric and `max_calls: 10` is an integer. Both pass type validation.

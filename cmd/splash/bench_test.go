@@ -13,21 +13,21 @@ import (
 )
 
 // genCheckSrc generates a Splash program suitable for end-to-end splash check
-// benchmarking. It includes a call chain, effect declarations, an @approve
-// function, a @redline function, and a @sensitive type — exercising all
+// benchmarking. It includes a call chain, effect declarations, an approve fn
+// declaration, a redline function, and a @sensitive type — exercising all
 // safety passes, not just the parser and type checker.
 func genCheckSrc(n int) string {
 	var b strings.Builder
 	b.WriteString("module bench\n\n")
 
-	// Sensitive type — exercises @tool data classification check
+	// Sensitive type — exercises tool fn data classification check
 	b.WriteString("type Credential {\n    id: Int\n    @sensitive\n    token: String\n}\n\n")
 
-	// @approve function — exercises approval cascade
-	b.WriteString("@approve\nfn sensitive_op() needs DB.write -> Int { return 0 }\n\n")
+	// approve fn declaration — exercises approval cascade
+	b.WriteString("approve fn sensitive_op() needs DB.write -> Int { return 0 }\n\n")
 
-	// @redline function — must not be agent-reachable
-	b.WriteString("@redline(reason: \"admin only\")\nfn admin_op() needs DB.admin -> Int { return 0 }\n\n")
+	// redline function — must not be agent-reachable
+	b.WriteString("redline(reason: \"admin only\") fn admin_op() needs DB.admin -> Int { return 0 }\n\n")
 
 	// Call chain with DB.read effect
 	b.WriteString("fn f0() needs DB.read -> Int { return 0 }\n")

@@ -1,16 +1,16 @@
 // finance.splash
 //
-// A simplified payment processor demonstrating the failure modes that
+// A simplified payment control plane demonstrating the failure modes that
 // actually happen when AI agents touch financial systems — and how
 // Splash catches each one at compile time.
 //
 // What the compiler enforces here:
 //   - The fraud agent cannot reach transfer_funds or wire_transfer
-//     (@sandbox + @redline — the compiler proves the paths don't connect)
+//     (@sandbox + redline fn — the compiler proves the paths don't connect)
 //   - Account identifiers never reach the agent
-//     (@restricted fields are a compile error in @tool return types)
+//     (@restricted fields are a compile error in tool fn return types)
 //   - High-value transfers require human or policy sign-off
-//     (@approve — the function body does not execute until the adapter clears it)
+//     (approve fn — the function body does not execute until the adapter clears it)
 //   - AI spend is capped at $0.50 per fraud analysis run
 //     (@budget — compile-time argument type validation)
 //
@@ -39,7 +39,7 @@ type Account {
 
 // AccountSummary is the agent-safe projection of Account.
 // It contains only public fields — no email, no account identifiers.
-// Returning Account directly from a @tool is a compile error:
+// Returning Account directly from a tool fn is a compile error:
 // @restricted fields cannot flow to the agent's context window.
 type AccountSummary {
   id:            Int
@@ -49,7 +49,7 @@ type AccountSummary {
 }
 
 // Uncommenting this will fail to compile:
-// @tool
+// tool fn
 // fn unsafe_account(id: Int) needs DB.read -> Account {
 //   return lookup_account(id)
 // }
@@ -105,8 +105,7 @@ fn lookup_account(id: Int) needs DB.read -> Account {
 
 /// Get current balance and account summary.
 /// Never returns account numbers, routing numbers, or email.
-@tool
-fn check_balance(
+tool fn check_balance(
   /// The account ID to look up
   account_id: Int,
 ) needs DB.read -> AccountSummary {
@@ -120,14 +119,13 @@ fn check_balance(
 }
 
 // ─── Gated Operations ────────────────────────────────
-// The @approve gate fires inside the function body before any logic runs.
+// The approve fn gate fires inside the function body before any logic runs.
 // The ApprovalAdapter decides how to resolve it: Slack to the compliance
 // team, an automated policy engine, or a rule ("under $100,000 from a
 // verified account — auto-approve with audit log entry"). The call site
 // writes normal code. The gate is the function's responsibility.
 
-@approve
-fn transfer_funds(
+approve fn transfer_funds(
   from_id:      Int,
   to_id:        Int,
   amount_cents: Int,
@@ -146,34 +144,31 @@ fn transfer_funds(
 // ─── Redlines ─────────────────────────────────────────
 // No agent context can reach these — ever.
 // The compiler traces every path from every needs Agent function.
-// A path that reaches a @redline fails the build with the full call chain.
+// A path that reaches a redline fn fails the build with the full call chain.
 //
 // Try adding `wire_transfer(from_id, "021000021", 500000)` to
 // run_fraud_agent below. The build will fail:
 //
-//   error: @redline fn "wire_transfer" is reachable from agent context
+//   error: redline fn "wire_transfer" is reachable from agent context
 //     run_fraud_agent → wire_transfer
 //     reason: Wire transfers require dual authorization and SWIFT compliance review
 
-@redline(reason: "Wire transfers require dual authorization and SWIFT compliance review")
-fn wire_transfer(from_id: Int, to_routing: String, amount_cents: Int) needs DB.write, Net {
+redline(reason: "Wire transfers require dual authorization and SWIFT compliance review") fn wire_transfer(from_id: Int, to_routing: String, amount_cents: Int) needs DB.write, Net {
   // ...
 }
 
-@redline(reason: "Account closure requires legal review and 30-day notice period")
-fn close_account(account_id: Int) needs DB.admin {
+redline(reason: "Account closure requires legal review and 30-day notice period") fn close_account(account_id: Int) needs DB.admin {
   // ...
 }
 
-@redline(reason: "Transaction records are an immutable audit trail — deletion is prohibited by regulation")
-fn delete_transaction(transaction_id: Int) needs DB.admin {
+redline(reason: "Transaction records are an immutable audit trail — deletion is prohibited by regulation") fn delete_transaction(transaction_id: Int) needs DB.admin {
   // ...
 }
 
 // ─── Agent Entry Points ───────────────────────────────
 // needs Agent marks the boundary where AI execution begins. The compiler
 // traces every reachable function from here: enforcing sandbox effects,
-// checking redlines, and verifying that no @restricted data reaches a @tool.
+// checking redlines, and verifying that no @restricted data reaches a tool fn.
 // Failures — approval denials, AI errors, budget exceeded — surface here.
 // Read-only + AI. No writes, no network, no admin ops.
 // @sandbox makes this a compile-time proof: DB.write and Net are denied,
@@ -199,16 +194,15 @@ fn run_fraud_agent(
 
 // ─── Billing Agent ────────────────────────────────────
 // A different agent with a different capability surface.
-// @approve on the entry point gates the entire workflow — the adapter
+// approve fn on the entry point gates the entire workflow — the adapter
 // clears the billing run before any logic executes. transfer_funds also
-// carries its own @approve gate (defense in depth).
+// carries its own approve fn gate (defense in depth).
 // DB.admin is still denied: wire_transfer, close_account, and
 // delete_transaction remain unreachable from this agent too.
 
 @sandbox(allow: [DB.read, DB.write, Net], deny: [DB.admin, FS, AI])
 @budget(max_cost: 0.01, max_calls: 5)
-@approve
-fn run_billing_agent(
+approve fn run_billing_agent(
   from_id:      Int,
   to_id:        Int,
   amount_cents: Int,

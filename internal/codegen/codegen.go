@@ -17,7 +17,7 @@ import (
 // gains a new capability that affects code generation.
 type Options struct {
 	// ApprovalCallers is the set of functions that transitively call any
-	// @approve function. The backend widens their return signatures to (T, error).
+	// approval-gated function. The backend widens their return signatures to (T, error).
 	ApprovalCallers map[string]bool
 }
 
@@ -41,14 +41,15 @@ func (b *goBackend) Emit(f *ast.File, opts Options) string {
 
 // Emitter accumulates Go source for a single Splash file.
 type Emitter struct {
-	body          strings.Builder
-	imports       map[string]bool
-	indent        int
-	needsCoalesce bool
-	needsApproval bool
+	body             strings.Builder
+	imports          map[string]bool
+	indent           int
+	needsCoalesce    bool
+	needsApproval    bool
+	moduleNamespaces map[string]bool
 
 	// Phase 4b: approval cascade
-	approveFns     map[string]bool              // @approve-annotated function names (built in EmitFile pre-pass)
+	approveFns     map[string]bool              // approval-gated function names (built in EmitFile pre-pass)
 	approveCallers map[string]bool              // transitive callers of approveFns (set externally via SetApprovalCallers)
 	fnDecls        map[string]*ast.FunctionDecl // all function declarations (for return-type lookups at call sites)
 
@@ -61,15 +62,16 @@ type Emitter struct {
 // New creates a ready-to-use Emitter.
 func New() *Emitter {
 	return &Emitter{
-		imports:        make(map[string]bool),
-		approveFns:     make(map[string]bool),
-		approveCallers: make(map[string]bool),
-		fnDecls:        make(map[string]*ast.FunctionDecl),
+		imports:          make(map[string]bool),
+		moduleNamespaces: make(map[string]bool),
+		approveFns:       make(map[string]bool),
+		approveCallers:   make(map[string]bool),
+		fnDecls:          make(map[string]*ast.FunctionDecl),
 	}
 }
 
 // SetApprovalCallers provides the set of functions that transitively call any
-// @approve function. Used by the CLI driver after callgraph analysis.
+// approval-gated function. Used by the CLI driver after callgraph analysis.
 // The emitter always builds approveFns itself from AST annotations in EmitFile.
 func (e *Emitter) SetApprovalCallers(approveCallers map[string]bool) {
 	e.approveCallers = approveCallers
@@ -77,7 +79,15 @@ func (e *Emitter) SetApprovalCallers(approveCallers map[string]bool) {
 
 // EmitFile generates a complete Go source file from a Splash AST.
 func (e *Emitter) EmitFile(f *ast.File) string {
-	// Pre-pass: index all function declarations and collect @approve names.
+	for _, u := range f.Uses {
+		ns := u.Alias
+		if ns == "" {
+			parts := strings.Split(u.Path, "/")
+			ns = parts[len(parts)-1]
+		}
+		e.moduleNamespaces[ns] = true
+	}
+	// Pre-pass: index all function declarations and collect approval-gated names.
 	// approveFns is always built from AST annotations regardless of external input.
 	for _, decl := range f.Declarations {
 		fn, ok := decl.(*ast.FunctionDecl)
@@ -151,7 +161,8 @@ func (e *Emitter) emitTypeName(t ast.TypeExpr) string {
 	}
 	switch typ := t.(type) {
 	case *ast.NamedTypeExpr:
-		switch typ.Name {
+		name := stripModuleQualifier(typ.Name)
+		switch name {
 		case "String":
 			return "string"
 		case "Int":
@@ -166,7 +177,7 @@ func (e *Emitter) emitTypeName(t ast.TypeExpr) string {
 			}
 			return "[]any"
 		default:
-			return typ.Name
+			return name
 		}
 	case *ast.OptionalTypeExpr:
 		return "*" + e.emitTypeName(typ.Inner)
@@ -191,6 +202,13 @@ func (e *Emitter) writeLine(format string, args ...any) {
 	fmt.Fprintf(&e.body, strings.Repeat("\t", e.indent)+format+"\n", args...)
 }
 
+func stripModuleQualifier(name string) string {
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		return name[idx+1:]
+	}
+	return name
+}
+
 // --- runtime helper sources ---
 
 const splashCoalesceHelper = `func splashCoalesce[T any](val *T, fallback T) T {
@@ -201,7 +219,7 @@ const splashCoalesceHelper = `func splashCoalesce[T any](val *T, fallback T) T {
 }
 `
 
-const splashApprovalHelper = `// ApprovalAdapter is the interface for @approve gate implementations.
+const splashApprovalHelper = `// ApprovalAdapter is the interface for approve fn gate implementations.
 // Request blocks until the named function is approved.
 // Return nil to approve; return an error to deny.
 // StdinApproval (the default) loops until the operator types y — it never returns an error.
@@ -214,7 +232,7 @@ type ApprovalAdapter interface {
 var _splashApproval ApprovalAdapter = &splashStdinApproval{}
 
 // SetApprovalAdapter replaces the package-level approval adapter.
-// Call this in tests or in production main() before any @approve function runs.
+// Call this in tests or in production main() before any approval-gated function runs.
 func SetApprovalAdapter(a ApprovalAdapter) { _splashApproval = a }
 
 type splashStdinApproval struct{}
@@ -235,4 +253,3 @@ func splashApprove(name string) error {
 	return _splashApproval.Request(name)
 }
 `
-

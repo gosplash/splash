@@ -2,6 +2,8 @@
 package callgraph
 
 import (
+	"slices"
+
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
 )
@@ -35,8 +37,33 @@ type Graph struct {
 // Node returns the node for the named function, or nil if not found.
 func (g *Graph) Node(name string) *Node { return g.nodes[name] }
 
+// Nodes returns all nodes sorted by function name.
+func (g *Graph) Nodes() []*Node {
+	names := make([]string, 0, len(g.nodes))
+	for name := range g.nodes {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	nodes := make([]*Node, 0, len(names))
+	for _, name := range names {
+		nodes = append(nodes, g.nodes[name])
+	}
+	return nodes
+}
+
+// Callees returns the node's direct callees sorted by function name.
+func (n *Node) Callees() []string {
+	callees := make([]string, 0, len(n.callees))
+	for name := range n.callees {
+		callees = append(callees, name)
+	}
+	slices.Sort(callees)
+	return callees
+}
+
 // AgentRoots returns the names of all agent entry-point functions:
-// those with the Agent effect or annotated with @tool.
+// those with the Agent effect or marked as tool functions.
 func (g *Graph) AgentRoots() []string {
 	var roots []string
 	for name, node := range g.nodes {
@@ -44,6 +71,7 @@ func (g *Graph) AgentRoots() []string {
 			roots = append(roots, name)
 		}
 	}
+	slices.Sort(roots)
 	return roots
 }
 

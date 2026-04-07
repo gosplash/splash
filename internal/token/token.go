@@ -35,6 +35,10 @@ const (
 	AWAIT
 	TRY
 	NEEDS
+	REDLINE
+	TOOL
+	APPROVE
+	AGENT
 	NONE
 	STATIC
 	OVERRIDE
@@ -100,6 +104,10 @@ var keywords = map[string]Kind{
 	"await":      AWAIT,
 	"try":        TRY,
 	"needs":      NEEDS,
+	"redline":    REDLINE,
+	"tool":       TOOL,
+	"approve":    APPROVE,
+	"agent":      AGENT,
 	"none":       NONE,
 	"static":     STATIC,
 	"override":   OVERRIDE,

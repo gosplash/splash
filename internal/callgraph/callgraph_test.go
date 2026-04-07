@@ -85,8 +85,7 @@ fn unrelated() -> String { return "x" }
 
 func TestAgentRoots_ToolAnnotation(t *testing.T) {
 	src := `module foo
-@tool
-fn search() -> String { return "results" }
+tool fn search() -> String { return "results" }
 fn helper() -> String { return "hi" }
 `
 	toks := lexer.New("test.splash", src).Tokenize()
@@ -95,7 +94,7 @@ fn helper() -> String { return "hi" }
 	g := callgraph.Build(file)
 	roots := g.AgentRoots()
 	if len(roots) != 1 || roots[0] != "search" {
-		t.Errorf("expected [search] as agent root via @tool, got %v", roots)
+		t.Errorf("expected [search] as agent root via tool fn, got %v", roots)
 	}
 }
 
@@ -164,8 +163,7 @@ func TestNode_HasAnnotation(t *testing.T) {
 	_ = token.Position{} // ensure import used
 	file := parse(`
 module foo
-@redline
-fn danger() -> String { return "boom" }
+redline fn danger() -> String { return "boom" }
 `)
 	g := callgraph.Build(file)
 	node := g.Node("danger")
@@ -173,21 +171,20 @@ fn danger() -> String { return "boom" }
 		t.Fatal("expected node for 'danger'")
 	}
 	if !node.HasAnnotation(ast.AnnotRedline) {
-		t.Error("expected @redline annotation on 'danger'")
+		t.Error("expected redline annotation on 'danger'")
 	}
 }
 
 func TestCallers(t *testing.T) {
 	file := parse(`
 module foo
-@approve
-fn charge() -> Int { return 0 }
+approve fn charge() -> Int { return 0 }
 fn run() -> Int { return charge() }
 fn unrelated() -> Int { return 0 }
 `)
 	g := callgraph.Build(file)
 
-	// Seed the target set — charge is @approve
+	// Seed the target set — charge is approve fn
 	targets := map[string]bool{"charge": true}
 	callers := g.Callers(targets)
 
@@ -208,8 +205,7 @@ fn unrelated() -> Int { return 0 }
 func TestCallersTransitive(t *testing.T) {
 	file := parse(`
 module foo
-@approve
-fn leaf() { }
+approve fn leaf() { }
 fn middle() { leaf() }
 fn top() { middle() }
 fn outside() { }

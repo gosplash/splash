@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/token"
@@ -18,6 +19,13 @@ func parse(t *testing.T, src string) *ast.File {
 		t.Logf("diagnostic: %s", d)
 	}
 	return file
+}
+
+func parseWithDiags(t *testing.T, src string) (*ast.File, []diagnostic.Diagnostic) {
+	t.Helper()
+	toks := lexer.New("test.splash", src).Tokenize()
+	p := parser.New("test.splash", toks)
+	return p.ParseFile()
 }
 
 func TestParseModule(t *testing.T) {
@@ -96,18 +104,118 @@ type User {
 	}
 }
 
-func TestParseAnnotationOnFunction(t *testing.T) {
+func TestParseRedlineKeywordFunction(t *testing.T) {
 	src := `
 module foo
-@redline(reason: "dangerous")
-fn drop() needs DB.admin { }`
+redline(reason: "dangerous") fn drop() needs DB.admin { }`
 	file := parse(t, src)
 	fn := file.Declarations[0].(*ast.FunctionDecl)
 	if len(fn.Annotations) != 1 {
 		t.Fatalf("expected 1 annotation, got %d", len(fn.Annotations))
 	}
 	if fn.Annotations[0].Kind != ast.AnnotRedline {
-		t.Errorf("expected @redline, got %d", fn.Annotations[0].Kind)
+		t.Errorf("expected redline annotation kind, got %d", fn.Annotations[0].Kind)
+	}
+	if got := fn.Annotations[0].Args["reason"]; got == nil {
+		t.Fatalf("expected redline reason arg to be preserved")
+	}
+}
+
+func TestParseToolKeywordFunction(t *testing.T) {
+	src := `
+module foo
+tool fn search(query: String) -> String {
+  return query
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	if len(fn.Annotations) != 1 || fn.Annotations[0].Kind != ast.AnnotTool {
+		t.Fatalf("expected tool keyword to attach the tool annotation kind, got %+v", fn.Annotations)
+	}
+}
+
+func TestParseApproveKeywordFunction(t *testing.T) {
+	src := `
+module foo
+approve fn charge() -> String {
+  return "ok"
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	if len(fn.Annotations) != 1 || fn.Annotations[0].Kind != ast.AnnotApprove {
+		t.Fatalf("expected approve keyword to attach the approve annotation kind, got %+v", fn.Annotations)
+	}
+}
+
+func TestParseLegacyToolAnnotationRejected(t *testing.T) {
+	_, diags := parseWithDiags(t, `
+module foo
+@tool
+fn search(query: String) -> String {
+  return query
+}`)
+	if len(diags) == 0 {
+		t.Fatal("expected diagnostics for legacy @tool syntax")
+	}
+}
+
+func TestParseLegacyApproveAnnotationRejected(t *testing.T) {
+	_, diags := parseWithDiags(t, `
+module foo
+@approve
+fn charge() -> String {
+  return "ok"
+}`)
+	if len(diags) == 0 {
+		t.Fatal("expected diagnostics for legacy @approve syntax")
+	}
+}
+
+func TestParseLegacyRedlineAnnotationRejected(t *testing.T) {
+	_, diags := parseWithDiags(t, `
+module foo
+@redline(reason: "dangerous")
+fn drop() needs DB.admin { }
+`)
+	if len(diags) == 0 {
+		t.Fatal("expected diagnostics for legacy @redline syntax")
+	}
+}
+
+func TestParseAgentKeywordFunctionAddsAgentEffect(t *testing.T) {
+	src := `
+module foo
+agent fn run_search() needs DB.read -> String {
+  return "ok"
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	foundAgent := false
+	for _, eff := range fn.Effects {
+		if eff.Name == "Agent" {
+			foundAgent = true
+			break
+		}
+	}
+	if !foundAgent {
+		t.Fatalf("expected agent keyword to add Agent effect, got %+v", fn.Effects)
+	}
+}
+
+func TestParseQualifiedTypeExpr(t *testing.T) {
+	src := `
+module foo
+fn run() -> billing.Charge {
+  return billing.Charge { amount_cents: 100 }
+}`
+	file := parse(t, src)
+	fn := file.Declarations[0].(*ast.FunctionDecl)
+	named, ok := fn.ReturnType.(*ast.NamedTypeExpr)
+	if !ok {
+		t.Fatalf("expected qualified named type, got %T", fn.ReturnType)
+	}
+	if named.Name != "billing.Charge" {
+		t.Fatalf("expected qualified type name, got %q", named.Name)
 	}
 }
 
@@ -180,8 +288,7 @@ fn greet(name: String) -> String {
 func TestParam_DocComment(t *testing.T) {
 	src := `
 module foo
-@tool
-fn search(
+tool fn search(
   /// The search query
   query: String,
   /// Max results to return
@@ -220,8 +327,7 @@ func TestDocComment_AfterAnnotation_NotAttached(t *testing.T) {
 	// Doc after an annotation does not attach: the required ordering is doc-then-annotation.
 	src := `
 module foo
-@tool
-fn search(query: String) -> String {
+tool fn search(query: String) -> String {
   return query
 }`
 	file := parse(t, src)

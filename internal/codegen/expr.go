@@ -35,6 +35,9 @@ func (e *Emitter) emitExprStr(expr ast.Expr) string {
 	case *ast.CallExpr:
 		return e.emitCallExpr(ex)
 	case *ast.MemberExpr:
+		if id, ok := ex.Object.(*ast.Ident); ok && e.moduleNamespaces[id.Name] && !ex.Optional {
+			return ex.Member
+		}
 		return fmt.Sprintf("%s.%s", e.emitExprStr(ex.Object), ex.Member)
 	case *ast.IndexExpr:
 		return fmt.Sprintf("%s[%s]", e.emitExprStr(ex.Object), e.emitExprStr(ex.Index))
@@ -105,7 +108,7 @@ func (e *Emitter) emitStructLiteral(ex *ast.StructLiteral) string {
 	for _, f := range ex.Fields {
 		fields = append(fields, fmt.Sprintf("%s: %s", f.Name, e.emitExprStr(f.Value)))
 	}
-	return fmt.Sprintf("%s{%s}", ex.TypeName, strings.Join(fields, ", "))
+	return fmt.Sprintf("%s{%s}", stripModuleQualifier(ex.TypeName), strings.Join(fields, ", "))
 }
 
 func (e *Emitter) emitListLiteral(ex *ast.ListLiteral) string {
@@ -133,7 +136,8 @@ func (e *Emitter) zeroValueFor(t ast.TypeExpr) string {
 	}
 	switch typ := t.(type) {
 	case *ast.NamedTypeExpr:
-		switch typ.Name {
+		name := stripModuleQualifier(typ.Name)
+		switch name {
 		case "String":
 			return `""`
 		case "Int":
@@ -145,7 +149,7 @@ func (e *Emitter) zeroValueFor(t ast.TypeExpr) string {
 		case "List":
 			return "nil"
 		default:
-			return typ.Name + "{}"
+			return name + "{}"
 		}
 	case *ast.OptionalTypeExpr:
 		return "nil"

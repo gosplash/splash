@@ -14,13 +14,12 @@ module agent
 use types
 
 /// Search the catalog and return matching results.
-@tool
-fn search(query: SearchQuery) needs DB.read -> SearchResult {
-    return SearchResult { title: query.text, url: "https://example.com", score: 1 }
+tool fn search(query: types.SearchQuery) needs DB.read -> types.SearchResult {
+    return types.SearchResult { title: query.text, url: "https://example.com", score: 1 }
 }
 
-/// Entry point for the search agent.
-fn run_search(text: String) needs Agent, DB.read -> SearchResult {
-    let q = SearchQuery { text: text, limit: 10 }
+/// Entry point for the search agent. Namespaced access makes ownership explicit.
+agent fn run_search(text: String) needs DB.read -> types.SearchResult {
+    let q = types.SearchQuery { text: text, limit: 10 }
     return search(q)
 }

@@ -1,5 +1,5 @@
 // Effect system example.
-// Demonstrates: needs declarations, effect propagation, @redline, @approve.
+// Demonstrates: needs declarations, effect propagation, redline fn, approve fn.
 //
 // Every function declares the capabilities it requires in its signature.
 // The compiler verifies that every call site provides the declared effects.
@@ -7,19 +7,17 @@
 
 module reports
 
-// @redline: permanently unreachable from any Agent context.
+// redline fn: permanently unreachable from any Agent context.
 // The compiler traces the full call graph from every agent entry point.
-// Any path to a @redline function fails the build — no policy can override.
-@redline(reason: "Schema mutations require human DBA review")
-fn drop_report_table() needs DB.admin {
+// Any path to a redline function fails the build — no policy can override.
+redline(reason: "Schema mutations require human DBA review") fn drop_report_table() needs DB.admin {
     let op = "drop"
 }
 
-// @approve: when an agent reaches this function, the runtime emits a
+// approve fn: when an agent reaches this function, the runtime emits a
 // structured audit log before execution proceeds (v0.1 behavior).
 // Phase 4 will add full suspension and human sign-off.
-@approve
-fn archive_reports(before_date: String) needs DB.write {
+approve fn archive_reports(before_date: String) needs DB.write {
     let archived = before_date
 }
 
@@ -38,8 +36,8 @@ fn generate_summary(report_id: Int) needs DB.read, AI -> String {
 
 // Agent entry point. The compiler traces all reachable paths from here:
 //   - fetch_report and generate_summary are reachable (safe)
-//   - drop_report_table is @redline: build fails if it becomes reachable
-//   - archive_reports is @approve: audit log emitted at call site
+//   - drop_report_table is redline fn: build fails if it becomes reachable
+//   - archive_reports is approve fn: audit log emitted at call site
 fn run_report_agent(goal: String) needs Agent, DB.read, AI -> String {
     let summary = generate_summary(1)
     return summary

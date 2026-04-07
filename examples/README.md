@@ -1,12 +1,17 @@
 # Splash Examples
 
-Eight examples demonstrating the core language features. All can be checked with `splash check` and built with `splash build`. `@tool` functions emit JSON Schema via `splash tools`. `splash emit` prints the generated Go source.
+These examples focus on Splash's actual design center: control-plane software whose authority must be statically understood before it runs. They are intentionally centered on agent entrypoints, tool surfaces, approval gates, containment, and data-flow boundaries rather than generic application code.
+
+All can be checked with `splash check` and built with `splash build`. `tool fn` declarations emit JSON Schema via `splash tools`. `splash emit` prints the generated Go source.
 
 ```
 splash check <file.splash>         # parse + type check + safety enforcement
 splash build <file.splash>         # codegen → go build → binary
 splash emit  <file.splash>         # print generated Go source
-splash tools <file.splash>         # emit JSON Schema for @tool functions
+splash tools <file.splash>         # emit JSON Schema for tool declarations
+splash graph <file.splash>         # print agent roots + direct call graph
+splash effects <file.splash>       # print each function's effect surface
+splash approvals <file.splash>     # print approval-gated functions + callers
 ```
 
 ---
@@ -42,21 +47,19 @@ Every function declares the capabilities it requires in its signature. The compi
 
 - `needs` clause on function declarations
 - Effect propagation through the call graph
-- `@redline` — permanently blocks a function from agent contexts
-- `@approve` — requires human sign-off (emits structured audit log in v0.1)
+- `redline fn` — permanently blocks a function from agent contexts
+- `approve fn` — requires human sign-off (emits structured audit log in v0.1)
 
 ```splash
-@redline(reason: "Schema mutations require human DBA review")
-fn drop_report_table() needs DB.admin { ... }
+redline(reason: "Schema mutations require human DBA review") fn drop_report_table() needs DB.admin { ... }
 
-@approve
-fn archive_reports(before_date: String) needs DB.write { ... }
+approve fn archive_reports(before_date: String) needs DB.write { ... }
 
 // generate_summary inherits both effects it transitively needs
 fn generate_summary(id: Int) needs DB.read, AI -> String { ... }
 ```
 
-**Try breaking it.** Add a function with `needs Agent` that calls `drop_report_table()`. `splash check` will fail with a `@redline` violation.
+**Try breaking it.** Add a function with `needs Agent` that calls `drop_report_table()`. `splash check` will fail with a `redline fn` violation.
 
 ---
 
@@ -81,7 +84,7 @@ type User {
 }
 ```
 
-Two enforcement checks are active: `@tool` functions cannot return types with `@sensitive` or `@restricted` fields (safety checker), and `println` rejects arguments of `@sensitive`-classified types (type checker). Run `splash check examples/data_safety/data_safety.splash` — the file checks clean because it only uses public fields in its functions. Add `@tool fn expose_user(id: Int) -> User { ... }` to see the first enforcement in action.
+Two enforcement checks are active: `tool fn` functions cannot return types with `@sensitive` or `@restricted` fields (safety checker), and `println` rejects arguments of `@sensitive`-classified types (type checker). Run `splash check examples/data_safety/data_safety.splash` — the file checks clean because it only uses public fields in its functions. Add `tool fn expose_user(id: Int) -> User { ... }` to see the first enforcement in action.
 
 ---
 
@@ -94,42 +97,39 @@ Two enforcement checks are active: `@tool` functions cannot return types with `@
 Three policies:
 - `"none"` — agents can't touch anything in this module
 - `"read_only"` — agents can call read functions, not write
-- `"approved_only"` — every agent call requires `@approve`
+- `"approved_only"` — every agent call requires `approve fn`
 
 ```splash
 @containment(agent: "approved_only")
 module billing
 
-@approve
-fn charge_customer(customer_id: Int, amount_cents: Int) needs DB.write, Net { ... }
+approve fn charge_customer(customer_id: Int, amount_cents: Int) needs DB.write, Net { ... }
 ```
 
-**Try breaking it.** Remove the `@approve` annotation from `charge_customer`. `splash check` will flag the containment violation — `approved_only` requires every function callable from agents to be annotated.
+**Try breaking it.** Remove `approve` from `charge_customer`. `splash check` will flag the containment violation — `approved_only` requires every function callable from agents to be approval-gated.
 
 ---
 
 ## 05 · agent_tools
 
-**`agent_tools/agent_tools.splash`** — `@tool` and agent entry points.
+**`agent_tools/agent_tools.splash`** — `tool fn` and `agent fn`.
 
-`@tool` turns any function into an AI-callable tool. The doc comment becomes the tool description. The type signature becomes the JSON schema. The function is the implementation — one source of truth for all three.
+`tool fn` turns any function into an AI-callable tool. The doc comment becomes the tool description. The type signature becomes the JSON schema. The function is the implementation — one source of truth for all three.
 
-- `@tool` on read-safe functions
+- `tool fn` on read-safe functions
 - Optional parameters with default values
-- `@redline` on dangerous operations (index rebuilds require a human)
-- Agent entry point with scoped effect declarations
+- `redline fn` on dangerous operations (index rebuilds require a human)
+- `agent fn` entry point with scoped effect declarations
 
 ```splash
-@tool
-fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> { ... }
+tool fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> { ... }
 
-@redline(reason: "Index rebuilds require human operator sign-off")
-fn rebuild_search_index() needs DB.write { ... }
+redline(reason: "Index rebuilds require human operator sign-off") fn rebuild_search_index() needs DB.write { ... }
 
-fn run_search_agent(goal: String) needs Agent, DB.read -> String { ... }
+agent fn run_search_agent(goal: String) needs DB.read -> String { ... }
 ```
 
-The agent entry point declares `needs Agent, DB.read`. The compiler verifies that no reachable path from this function requires more than those effects, and that no `@redline` function is reachable.
+The agent entry point carries the structural `Agent` effect through `agent fn`. The compiler verifies that no reachable path from this function requires more than the declared effects, and that no `redline fn` function is reachable.
 
 ---
 
@@ -142,7 +142,7 @@ The agent entry point declares `needs Agent, DB.read`. The compiler verifies tha
 - `use std/ai` module import
 - `ai.prompt<T>` generic call syntax
 - `Result<T, AIError>` return type
-- `@tool` with `effects: ["AI"]` in schema output
+- `tool fn` with `effects: ["AI"]` in schema output
 
 ```splash
 use std/ai
@@ -150,7 +150,7 @@ use std/ai
 type SermonInsight { title: String; summary: String }
 
 /// Analyze a sermon transcript and extract structured insights.
-@tool
+tool fn
 async fn analyze_sermon(transcript: String) needs AI -> Result<SermonInsight, AIError> {
   return ai.prompt<SermonInsight>(transcript)
 }
@@ -162,19 +162,17 @@ Run `splash tools ai_prompt/ai_prompt.splash` to see the generated JSON Schema w
 
 ## 07 · approval
 
-**`approval/approval.splash`** — `@approve` as a function precondition.
+**`approval/approval.splash`** — `approve fn` as a function precondition.
 
-`@approve` means the function does not execute until the `ApprovalAdapter` approves the call. The function's return type is unchanged — `charge_card` returns a `Charge`. The compiler injects `splashApprove("charge_card")` as the first statement of the function body. Call sites are untouched.
+`approve fn` means the function does not execute until the `ApprovalAdapter` approves the call. The function's return type is unchanged at the Splash level — `charge_card` returns a `Charge`. The compiler injects `splashApprove("charge_card")` as the first statement of the function body. Call sites are untouched.
 
 ```splash
-@approve
-fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
+approve fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
 
-@approve
-fn issue_refund(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
+approve fn issue_refund(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
 ```
 
-Run `splash emit approval/approval.splash` to see the generated Go. `splashApprove` appears at the top of each `@approve` function body. `validate_amount` and `run_billing_agent` are untouched — no injection at call sites. The `ApprovalAdapter` interface and `SetApprovalAdapter` swap function are in the preamble.
+Run `splash emit approval/approval.splash` to see the generated Go. `splashApprove` appears at the top of each `approve fn` body. `validate_amount` and `run_billing_agent` are untouched — no injection at call sites. The `ApprovalAdapter` interface and `SetApprovalAdapter` swap function are in the preamble.
 
 The default adapter (`StdinApproval`) loops on a terminal prompt until the operator types `y`. Swap it at initialization for production:
 
@@ -187,9 +185,9 @@ SetApprovalAdapter(&WebhookApproval{URL: secrets.ApprovalWebhook})
 
 ## 08 · multi_file
 
-**`multi_file/types.splash`** and **`multi_file/agent.splash`** — multi-file modules.
+**`multi_file/types.splash`** and **`multi_file/agent.splash`** — multi-file modules with namespaced access.
 
-`use types` in `agent.splash` loads `types.splash` from the same directory. `SearchResult` and `SearchQuery` are defined in `types.splash`; `agent.splash` references them as if they were local. The compiler resolves the import, type-checks both files, and emits a single Go package.
+`use types` in `agent.splash` loads `types.splash` from the same directory. `SearchResult` and `SearchQuery` are defined in `types.splash`; `agent.splash` can reference them through the `types.` namespace. The compiler resolves the import, type-checks both files, and emits a single Go package.
 
 ```splash
 // types.splash
@@ -202,8 +200,7 @@ type SearchQuery  { text: String; limit: Int }
 module agent
 use types
 
-@tool
-fn search(query: SearchQuery) needs DB.read -> SearchResult { ... }
+tool fn search(query: types.SearchQuery) needs DB.read -> types.SearchResult { ... }
 ```
 
 Run `splash emit examples/multi_file/agent.splash` to see both modules merged into one Go package.
@@ -255,7 +252,7 @@ go build ./cmd/splash/...
 ./splash emit examples/approval/approval.splash
 ./splash emit examples/containment/containment.splash
 
-# Emit JSON Schema for @tool functions
+# Emit JSON Schema for tool declarations
 ./splash tools examples/agent_tools/agent_tools.splash
 ./splash tools examples/ai_prompt/ai_prompt.splash
 ```
@@ -268,19 +265,19 @@ go build ./cmd/splash/...
 | Type checker | ✅ Complete |
 | Effect system (`needs`) | ✅ Complete |
 | Call graph analysis | ✅ Complete |
-| `@redline` enforcement | ✅ Complete |
+| `redline fn` enforcement | ✅ Complete |
 | `@containment` enforcement | ✅ Complete |
-| `@approve` runtime (`ApprovalAdapter`, `StdinApproval`) | ✅ Complete (Phase 4a) |
+| `approve fn` runtime (`ApprovalAdapter`, `StdinApproval`) | ✅ Complete (Phase 4a) |
 | Go codegen | ✅ Complete |
 | `splash check` / `splash build` / `splash emit` | ✅ Complete |
-| `@tool` JSON Schema (`splash tools`) | ✅ Complete |
-| `@tool` safety filtering (agent-reachable only) | ✅ Complete |
+| `tool fn` JSON Schema (`splash tools`) | ✅ Complete |
+| `tool fn` safety filtering (agent-reachable only) | ✅ Complete |
 | `use std/ai` + `ai.prompt<T>` type checking | ✅ Complete |
 | Effects field in tool schema output | ✅ Complete |
 | Member access type resolution | ✅ Complete |
-| `@approve` denial / error cascade (`(T, error)` Go signatures) | ✅ Complete (Phase 4b) |
+| `approve fn` denial / error cascade (`(T, error)` Go signatures) | ✅ Complete (Phase 4b) |
 | `@sandbox` effect allow/deny enforcement (compile-time) | ✅ Complete |
 | `@budget` argument type validation (compile-time) | ✅ Complete |
 | `std/db` stdlib | Planned — Phase 4 |
-| `@sensitive` / `Loggable` enforcement (`@tool` return type + `println`) | ✅ Complete |
+| `@sensitive` / `Loggable` enforcement (`tool fn` return type + `println`) | ✅ Complete |
 | Multi-file modules (`use path` loads sibling `.splash` files) | ✅ Complete |

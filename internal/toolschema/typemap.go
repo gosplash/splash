@@ -1,6 +1,10 @@
 package toolschema
 
-import "gosplash.dev/splash/internal/ast"
+import (
+	"strings"
+
+	"gosplash.dev/splash/internal/ast"
+)
 
 // TypeExprToSchema converts a Splash type expression to a JSON Schema property.
 // Exported so tests can call it directly.
@@ -24,7 +28,8 @@ func typeExprToSchema(te ast.TypeExpr, enumDecls map[string]*ast.EnumDecl) *Sche
 }
 
 func namedTypeToSchema(t *ast.NamedTypeExpr, enumDecls map[string]*ast.EnumDecl) *SchemaProperty {
-	switch t.Name {
+	name := stripQualifier(t.Name)
+	switch name {
 	case "String":
 		return &SchemaProperty{Type: "string"}
 	case "Int":
@@ -42,7 +47,7 @@ func namedTypeToSchema(t *ast.NamedTypeExpr, enumDecls map[string]*ast.EnumDecl)
 		}
 		return &SchemaProperty{Type: "array"}
 	}
-	if decl, ok := enumDecls[t.Name]; ok {
+	if decl, ok := enumDecls[name]; ok {
 		var variants []string
 		for _, v := range decl.Variants {
 			variants = append(variants, v.Name)
@@ -50,6 +55,13 @@ func namedTypeToSchema(t *ast.NamedTypeExpr, enumDecls map[string]*ast.EnumDecl)
 		return &SchemaProperty{Type: "string", Enum: variants}
 	}
 	return &SchemaProperty{Type: "object"}
+}
+
+func stripQualifier(name string) string {
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		return name[idx+1:]
+	}
+	return name
 }
 
 func buildEnumIndex(file *ast.File) map[string]*ast.EnumDecl {

@@ -46,11 +46,11 @@ fn public_id(user: User) -> Int {
 //
 // splash check catches this today:
 //
-//   @tool
+//   tool fn
 //   fn expose_user(id: Int) -> User {
 //       return User { id: id, display_name: "Alice", email: "alice@example.com", ssn: none }
 //   }
-//   // Error: @tool function "expose_user" returns type User which contains
+//   // Error: tool fn function "expose_user" returns type User which contains
 //   // sensitive or restricted fields (email, ssn) — PII would flow into the
 //   // AI agent's context
 //

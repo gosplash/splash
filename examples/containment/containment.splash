@@ -8,23 +8,21 @@
 // Three policies:
 //   @containment(agent: "none")           — agents can't touch this module
 //   @containment(agent: "read_only")      — agents can call read functions only
-//   @containment(agent: "approved_only")  — every agent call requires @approve
+//   @containment(agent: "approved_only")  — every agent call requires approve fn
 
 @containment(agent: "approved_only")
 module billing
 
-// @approve is required for all functions under "approved_only" containment.
+// approve fn is required for all functions under "approved_only" containment.
 // The compiler injects a splashApprove gate at the top of the function body —
 // the function does not execute until the ApprovalAdapter approves the call.
-@approve
-fn charge_customer(customer_id: Int, amount_cents: Int) needs DB.write, Net {
+approve fn charge_customer(customer_id: Int, amount_cents: Int) needs DB.write, Net {
     let charged = amount_cents
 }
 
-// Read operations also require @approve under "approved_only" containment.
-// Under "read_only" containment, this would be callable without @approve.
-@approve
-fn get_balance(customer_id: Int) needs DB.read -> Int {
+// Read operations also require approve fn under "approved_only" containment.
+// Under "read_only" containment, this would be callable without approve fn.
+approve fn get_balance(customer_id: Int) needs DB.read -> Int {
     return 0
 }
 

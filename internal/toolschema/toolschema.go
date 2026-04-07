@@ -1,4 +1,4 @@
-// Package toolschema generates JSON Schema tool definitions from @tool-annotated
+// Package toolschema generates JSON Schema tool definitions from tool-marked
 // Splash function declarations. Use Serialize() with FormatAnthropic or FormatOpenAI
 // to target specific API wire formats.
 package toolschema
@@ -9,7 +9,7 @@ import (
 	"gosplash.dev/splash/internal/ast"
 )
 
-// ToolSchema is the complete schema for a single @tool function.
+// ToolSchema is the complete schema for a single tool function.
 type ToolSchema struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description,omitempty"`
@@ -60,7 +60,7 @@ type openAIFunction struct {
 	Effects     []string    `json:"effects,omitempty"`
 }
 
-// Extract returns a ToolSchema for every @tool-annotated function in file.
+// Extract returns a ToolSchema for every tool function in file.
 func Extract(file *ast.File) []ToolSchema {
 	enumDecls := buildEnumIndex(file)
 	var tools []ToolSchema
@@ -77,8 +77,8 @@ func Extract(file *ast.File) []ToolSchema {
 	return tools
 }
 
-// ExtractReachable returns a ToolSchema for every @tool-annotated function
-// that appears in the agent-reachable set. Functions excluded by @redline or
+// ExtractReachable returns a ToolSchema for every tool function
+// that appears in the agent-reachable set. Functions excluded by redline or
 // @containment will not be in agentReachable and are silently omitted — their
 // absence from the output is the guarantee.
 func ExtractReachable(file *ast.File, agentReachable map[string]bool) []ToolSchema {

@@ -1,5 +1,5 @@
 // AI structured output example.
-// Demonstrates: use std/ai, ai.prompt<T> generic call syntax, @tool with AI effects.
+// Demonstrates: use std/ai, ai.prompt<T> generic call syntax, tool fn with AI effects.
 //
 // ai.prompt<T> uses a Splash type as the structured output contract.
 // The type is the JSON Schema. The compiler validates the return type at
@@ -20,14 +20,13 @@ type SermonInsight {
 }
 
 /// Analyze a sermon transcript and extract structured insights.
-@tool
-fn analyze_sermon(transcript: String) needs AI -> SermonInsight {
+tool fn analyze_sermon(transcript: String) needs AI -> SermonInsight {
   return ai.prompt<SermonInsight>(transcript)
 }
 
 // Agent entry point. Declares needs Agent, AI.
 // The compiler verifies that all reachable paths are consistent with these effects,
-// and that no @redline function is reachable from this context.
+// and that no redline fn function is reachable from this context.
 fn run_sermon_agent(transcript: String) needs Agent, AI -> String {
   let insight = analyze_sermon(transcript)
   return transcript

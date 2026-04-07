@@ -23,9 +23,13 @@
 
 ## 1. Overview
 
-Splash is a statically-typed, compiled language that transpiles to Go. Its distinguishing feature is a compile-time safety model purpose-built for AI agents: an effect system, call graph analysis, data classification, and a suite of annotations (`@redline`, `@approve`, `@containment`, `@sandbox`, `@budget`, `@sensitive`, `@restricted`) that enforce agent safety properties before codegen.
+Splash is a statically-typed, compiled control-plane language that transpiles to Go. It is designed for software whose authority must be statically understood before it runs, especially AI agent systems and other autonomous control software.
+
+Its distinguishing feature is a compile-time safety model: an effect system, call graph analysis, data classification, and a suite of annotations (`redline fn`, `approve fn`, `@containment`, `@sandbox`, `@budget`, `@sensitive`, `@restricted`) that enforce authority and safety properties before codegen.
 
 The Go backend receives a verified, effect-annotated AST with no security-relevant decisions remaining.
+
+This specification describes the current v0.1 language. It does not imply that Splash is a general-purpose replacement for Go or a universal software-security mechanism. The design center is statically-governed control software.
 
 ---
 
@@ -46,7 +50,8 @@ The Go backend receives a verified, effect-annotated AST with no security-releva
 fn       type     enum     constraint   module   expose   use
 let      return   if       else         guard    for      in
 match    needs    none     static       override where
-async    await    try      true         false
+async    await    try      tool         approve  agent
+true     false
 ```
 
 ### 2.3 Identifiers
@@ -120,6 +125,8 @@ use_path ::= ident ("/" ident)*   -- resolves to sibling .splash file
            | "std" "/" ident      -- standard library module
 ```
 
+Imported modules are available by namespace (`billing.charge_customer()`). The current compiler also preserves flat symbol injection for compatibility, but namespaced access is the preferred v0.2 style.
+
 ### 3.2 Declarations
 
 ```
@@ -147,9 +154,11 @@ Annotation argument values that are identifiers with dots (e.g. `DB.read`) are p
 ### 3.4 Functions
 
 ```
-function_decl ::= ["async"] "fn" ident ["<" type_params ">"]
+function_decl ::= function_modifiers "fn" ident ["<" type_params ">"]
                   "(" params ")" ["needs" effect_list] ["->" type_expr]
                   block_stmt
+
+function_modifiers ::= ("async" | "tool" | "approve" | "agent")*
 
 type_params ::= type_param ("," type_param)*
 type_param  ::= ident [":" constraint_bound ("+" constraint_bound)*]
@@ -174,11 +183,13 @@ See [Section 5](#5-effect-system) for the complete effect vocabulary.
 ### 3.6 Types
 
 ```
-type_expr ::= ident                          -- named type: Int, String, MyType
-            | ident "<" type_args ">"        -- generic: List<String>, Result<T, E>
+type_expr ::= qualified_ident                -- named type: Int, String, billing.Charge
+            | qualified_ident "<" type_args ">" -- generic: List<String>, Result<T, E>
             | type_expr "?"                  -- optional: String?, Int?
             | "fn" "(" type_list ")" ["->" type_expr]  -- function type
             | type_expr "|" type_expr        -- union (parsed, limited typechecker support)
+
+qualified_ident ::= ident ("." ident)*
 
 type_args ::= type_expr ("," type_expr)*
 type_list ::= type_expr ("," type_expr)*
@@ -379,9 +390,9 @@ fn bad() -> String {
 }
 ```
 
-### 5.4 Effect Propagation Through `@approve`
+### 5.4 Effect Propagation Through `approve fn`
 
-`@approve` functions widen their return type to `(T, error)`. All transitive callers also receive the widened signature. The type checker propagates this widening before codegen.
+`approve fn` functions widen their return type to `(T, error)`. All transitive callers also receive the widened signature. The type checker propagates this widening before codegen.
 
 ---
 
@@ -389,29 +400,26 @@ fn bad() -> String {
 
 Annotations appear immediately before declarations. Multiple annotations may be stacked.
 
-### 6.1 `@tool`
+### 6.1 `tool fn`
 
 ```splash
-@tool
-fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> { ... }
+tool fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> { ... }
 ```
 
-Marks a function as AI-callable. `splash tools` emits a JSON Schema entry for every `@tool` function. `@tool` functions may not return a type whose data classification exceeds `@internal` (see [Section 7](#7-data-classification)).
+Marks a function as AI-callable. `splash tools` emits a JSON Schema entry for every `tool fn` function. `tool fn` functions may not return a type whose data classification exceeds `@internal` (see [Section 7](#7-data-classification)).
 
-### 6.2 `@redline`
+### 6.2 `redline fn`
 
 ```splash
-@redline
-fn delete_all_data() needs DB.admin -> Void { ... }
+redline fn delete_all_data() needs DB.admin -> Void { ... }
 ```
 
 Build fails if any agent-reachable call path reaches this function. The error includes the full call path from the agent root to the redlined function.
 
-### 6.3 `@approve`
+### 6.3 `approve fn`
 
 ```splash
-@approve
-fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
+approve fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
 ```
 
 Injects a human approval gate. At compile time:
@@ -486,7 +494,7 @@ type User {
 }
 ```
 
-A `@sensitive` field elevates the containing type's data classification. `@tool` functions cannot return a type with any `@sensitive` field. Functions requiring `Loggable` cannot accept a type with `@sensitive` fields.
+A `@sensitive` field elevates the containing type's data classification. `tool fn` functions cannot return a type with any `@sensitive` field. Functions requiring `Loggable` cannot accept a type with `@sensitive` fields.
 
 ### 6.9 `@restricted`
 
@@ -531,7 +539,7 @@ A type with no annotated fields is `public`. A type with at least one `@internal
 
 Two rules are enforced today:
 
-1. **`@tool` return type:** A `@tool` function cannot return a type whose classification exceeds `@internal`. PII (`@sensitive`) and process-local data (`@restricted`) must not flow into the agent's context window.
+1. **`tool fn` return type:** A `tool fn` function cannot return a type whose classification exceeds `@internal`. PII (`@sensitive`) and process-local data (`@restricted`) must not flow into the agent's context window.
 
 2. **`Loggable` constraint:** A type parameter constrained with `Loggable` cannot be instantiated with a type whose classification exceeds `public`. Logging PII is rejected at compile time.
 
@@ -613,7 +621,7 @@ source (.splash)
   → Parser        []token.Token → *ast.File
   → TypeChecker   type inference, effect propagation, constraint satisfaction
   → CallGraph     directed call graph, AgentRoots(), Reachable(), Callers()
-  → SafetyChecker @redline, @approve, @containment, @sandbox, @budget, data classification
+  → SafetyChecker redline fn, approve fn, @containment, @sandbox, @budget, data classification
   → Emitter       verified AST → Go source
   → go build      Go source → native binary
 ```
@@ -631,7 +639,7 @@ Each stage is independent. The CLI wires them in `cmd/splash/main.go`.
 
 ### 10.2 Agent Roots
 
-The call graph treats any function with `needs Agent` or `@tool` as an agent root. Safety passes operate over the set of functions reachable from these roots.
+The call graph treats any function with `needs Agent` or `tool fn` as an agent root. Safety passes operate over the set of functions reachable from these roots.
 
 ### 10.3 Error Reporting
 
@@ -672,18 +680,18 @@ Splash `enum` declarations become Go type aliases with constants. Variants with 
 
 `needs Agent` functions define the error surface of agent execution. Two kinds of runtime failures propagate to this boundary:
 
-1. **`@approve` denials** — when the `ApprovalAdapter` rejects a call, the error propagates through all transitive callers up to the `needs Agent` function.
+1. **`approve fn` denials** — when the `ApprovalAdapter` rejects a call, the error propagates through all transitive callers up to the `needs Agent` function.
 2. **AI call failures** — when `ai.prompt<T>` fails (network error, model error, timeout), the error propagates the same way.
 
 In Splash source, neither failure is visible. Functions declare their return types without error handling. The compiler injects the error propagation in generated Go.
 
-Any function annotated with `@approve` — and all transitive callers up to the `needs Agent` boundary — have their return type widened from `T` to `(T, error)` in the generated Go. The call to `splashApprove("fn_name")` is injected as the first statement.
+Any function annotated with `approve fn` — and all transitive callers up to the `needs Agent` boundary — have their return type widened from `T` to `(T, error)` in the generated Go. The call to `splashApprove("fn_name")` is injected as the first statement.
 
 **The symmetry:** error propagation follows capability propagation. Effects flow up the call graph to the Agent boundary; errors flow up the same path to the same boundary.
 
-### 11.5 `@tool` Functions
+### 11.5 `tool fn` Functions
 
-`@tool` functions are emitted as normal Go functions. Their JSON Schema is a separate output from `splash tools` — it is not embedded in the generated Go.
+`tool fn` functions are emitted as normal Go functions. Their JSON Schema is a separate output from `splash tools` — it is not embedded in the generated Go.
 
 ### 11.6 Multi-File Modules
 
@@ -732,14 +740,14 @@ No other runtime support is injected. All safety enforcement is complete before 
 
 | Annotation                                          | Applies To | Purpose                                                   |
 |-----------------------------------------------------|------------|-----------------------------------------------------------|
-| `@tool`                                             | function   | AI-callable; `splash tools` emits JSON Schema             |
-| `@redline`                                          | function   | Build fails if agent-reachable                            |
-| `@approve`                                          | function   | Human gate; `(T, error)` cascade through callers          |
+| `tool fn`                                             | function   | AI-callable; `splash tools` emits JSON Schema             |
+| `redline fn`                                          | function   | Build fails if agent-reachable                            |
+| `approve fn`                                          | function   | Human gate; `(T, error)` cascade through callers          |
 | `@agent_allowed`                                    | function   | Exempt from `@containment(agent: "approved_only")`        |
 | `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | Module-level agent access policy             |
 | `@sandbox(allow: [...], deny: [...])`               | function   | Constrain effects of entire reachable call graph          |
 | `@budget(max_cost: Float, max_calls: Int)`          | function   | Compile-time resource limit validation                    |
-| `@sensitive`                                        | field      | PII; blocks `@tool` return and `Loggable` usage           |
+| `@sensitive`                                        | field      | PII; blocks `tool fn` return and `Loggable` usage           |
 | `@restricted`                                       | field      | Process-local; no storage adapter accepts it              |
 | `@internal`                                         | field      | Internal-only; raises classification above `public`       |
 
@@ -762,7 +770,7 @@ No other runtime support is injected. All safety enforcement is complete before 
 
 ## Appendix C: Data Classification Quick Reference
 
-| Classification  | Field Annotation | `@tool` returnable? | `Loggable`? |
+| Classification  | Field Annotation | `tool fn` returnable? | `Loggable`? |
 |-----------------|-----------------|---------------------|-------------|
 | `public`        | (none)          | Yes                 | Yes         |
 | `@internal`     | `@internal`     | Yes                 | No          |

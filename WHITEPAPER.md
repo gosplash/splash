@@ -10,7 +10,7 @@
 
 ---
 
-Splash is a capability-secure backend language with first-class agent semantics — the first integrated, production-oriented compiler-enforced safety layer for AI agent systems. It prevents PII leaks, constrains agent capabilities, and audits every automated decision — before the binary is produced. These are type-system properties, not runtime policies. It doesn't matter whether a human or an AI wrote the code. The compiler enforces the same constraints on both.
+Splash is a capability-secure control-plane language with first-class agent semantics — an integrated, production-oriented compiler-enforced safety layer for AI agent systems. It statically governs authority, capability, reachability, approval boundaries, tool exposure, and key data-flow constraints before the binary is produced. These are type-system and compiler properties, not runtime policies. It doesn't matter whether a human or an AI wrote the code. The compiler enforces the same constraints on both.
 
 ---
 
@@ -44,7 +44,7 @@ This document has four audiences. Each reads a different path through it.
 
 6. **The agent boundary is the error boundary.** Failures — approval denials, AI errors, budget exceeded — surface at the `needs Agent` boundary. Error propagation follows the same path as capability propagation. Both terminate where agent execution begins.
 
-7. **Redlines are absolute.** There is no flag, policy, or annotation that overrides `@redline`. All other escape valves are auditable, greppable, and visible in the call graph — they are concessions, not features.
+7. **Redlines are absolute.** There is no flag, policy, or annotation that overrides `redline fn`. All other escape valves are auditable, greppable, and visible in the call graph — they are concessions, not features.
 
 8. **Trust boundaries must be explicit.** Foreign code is trusted by declaration, not by accident. The surface area is legible and minimizable.
 
@@ -80,6 +80,8 @@ Hiding side effects doesn't make them safe — it makes them invisible.
 
 Splash addresses two classes of failure. Structural mistakes — the wrong function callable from the wrong context, sensitive data flowing into a log, a dependency acquiring capabilities it wasn't granted — are caught at compile time. The binary that fails to build cannot cause the incident. Behavioral anomalies — an agent acting within its granted capabilities but making poor decisions — are addressed at runtime through `std/safety`: provenance chains, drift detection, and output contracts. Section 4 covers both layers.
 
+These are not universal software security claims. Splash is not a memory-safety system for C, a post-hoc vulnerability scanner, or a replacement for broader application security work. Its scope is narrower and more specific: making the authority and safety constraints of autonomous software structurally visible and mechanically enforceable before the program runs.
+
 The compile-time guarantees are the foundation. They are type-system properties enforced before the binary is produced — not runtime policies that can be misconfigured, not linter rules that can be suppressed.
 
 ---
@@ -88,7 +90,7 @@ The compile-time guarantees are the foundation. They are type-system properties 
 
 Splash is a compiled, statically-typed programming language for backend systems and AI agent infrastructure. Its syntax is legible to both human reviewers and LLMs: explicit contracts, no magic, no implicit coercion.
 
-The core premise is that most of what makes AI agent systems dangerous is structurally expressible. The wrong function is callable from the wrong context. Sensitive data can flow into a log. A dependency can acquire capabilities it wasn't granted. Structurally expressible problems have structural solutions. A compiler can enforce the constraint. Safety moves from "the developer remembered" to "the build failed."
+The core premise is that many of the highest-consequence failure modes in AI agent systems are structurally expressible. The wrong function is callable from the wrong context. Sensitive data can flow into a log or tool response. A dependency can acquire capabilities it wasn't granted. An approval boundary can be bypassed by reachability the developer did not see. Structurally expressible problems have structural solutions. A compiler can enforce the constraint. Safety moves from "the developer remembered" to "the build failed."
 
 Four design decisions carry most of the weight:
 
@@ -168,8 +170,7 @@ The `@sensitive` annotation isn't a warning. The `Email` type no longer satisfie
 
 ```splash
 /// Search documents by topic, author, or keyword.
-@tool
-fn search_documents(
+tool fn search_documents(
   /// The search query — topic, keyword, or author name
   query:   String,
   limit:   Int     = 10,
@@ -178,7 +179,7 @@ fn search_documents(
 ) needs DB -> List<DocumentResult> { ... }
 ```
 
-`@tool` turns any function into an AI-callable tool. The doc comment becomes the tool description. The type signature becomes the JSON Schema. The same source is the implementation, the schema, and the documentation.
+`tool fn` turns any function into an AI-callable tool. The doc comment becomes the tool description. The type signature becomes the JSON Schema. The same source is the implementation, the schema, and the documentation.
 
 ### Sandboxed Agents
 
@@ -221,15 +222,15 @@ If `User.location` exists in the type definition but no migration creates the co
 | Concern | Common Approach | Splash |
 |---|---|---|
 | PII in logs | Runtime scanning | Compile-time data classification |
-| AI tool calling | Manual OpenAPI specs | `@tool` on any function |
+| AI tool calling | Manual OpenAPI specs | `tool fn` on any function |
 | Agent sandboxing | Docker + configuration | Effect-system capability bounds |
 | Structured outputs | Hand-written JSON Schema | Type signature is the schema |
 | Backend portability | Rewrite application code | Adapter swap in `main()` |
 | Context / deadlines | `ctx` as first parameter | Implicit availability, explicit access |
 | Database migrations | Separate tool, no type checking | Compiler-verified, up/down required |
 | Dep privilege escalation | Invisible in lockfile | Lockfile diff + human approval |
-| Agent danger zones | Prompt engineering | `@redline` — call graph enforcement |
-| Human-in-the-loop | Manual integration per vendor | `@approve` keyword |
+| Agent danger zones | Prompt engineering | `redline fn` — call graph enforcement |
+| Human-in-the-loop | Manual integration per vendor | `approve fn` keyword |
 
 ---
 
@@ -241,24 +242,22 @@ If `User.location` exists in the type definition but no migration creates the co
 
 Three annotations form the compiler-enforced AI safety layer. They are not library calls you can forget to make. They are part of the language.
 
-**`@redline` — absolute prohibitions.**
+**`redline fn` — absolute prohibitions.**
 
 ```splash
-@redline(reason: "Schema mutations require human DBA review")
-fn drop_table(table: String) needs DB.admin { ... }
+redline(reason: "Schema mutations require human DBA review") fn drop_table(table: String) needs DB.admin { ... }
 
-@redline(reason: "User deletion has legal and compliance implications")
-fn hard_delete_user(id: UserId) needs DB.write { ... }
+redline(reason: "User deletion has legal and compliance implications") fn hard_delete_user(id: UserId) needs DB.write { ... }
 ```
 
-`@redline` marks a function as unreachable from any Agent context. The compiler traces every call path from `agent.execute()` and `needs Agent` functions. If any path reaches a `@redline` function, the build fails. No policy file can relax this. No flag can suppress it.
+`redline fn` marks a function as unreachable from any Agent context. The compiler traces every call path from `agent.execute()` and `needs Agent` functions. If any path reaches a `redline fn` function, the build fails. No policy file can relax this. No flag can suppress it.
 
 ```splash
 // Fails to compile:
 @sandbox(allow: [DB.write])
 fn agent_cleanup(goal: String) needs Agent {
   return agent.execute(goal, tools: [hard_delete_user])
-  // Error: @redline fn "hard_delete_user" is not callable from Agent context.
+  // Error: redline fn "hard_delete_user" is not callable from Agent context.
   //        This restriction cannot be overridden.
 }
 ```
@@ -278,22 +277,21 @@ fn process_refund(charge: ChargeId, amount: Money) needs DB, Net { ... }
 ```splash
 @containment(agent: .none)          // agents can't touch anything
 @containment(agent: .read_only)     // agents can call read functions, not write
-@containment(agent: .approved_only) // every call from agent context requires @approve
+@containment(agent: .approved_only) // every call from agent context requires approve fn
 ```
 
-**`@approve` — human-in-the-loop as a language keyword.**
+**`approve fn` — human-in-the-loop as a language keyword.**
 
-`@approve` means "this action requires authorization before execution." The annotation lives on the function. The compiler enforces that it is present where policy demands. The runtime routes the approval request through an `ApprovalAdapter` — the organization decides how authorization works.
+`approve fn` means "this action requires authorization before execution." The annotation lives on the function. The compiler enforces that it is present where policy demands. The runtime routes the approval request through an `ApprovalAdapter` — the organization decides how authorization works.
 
 ```splash
-@approve
-fn charge_card(amount: Money, method: PaymentMethod) needs Net -> Result<Charge, PaymentError>
+approve fn charge_card(amount: Money, method: PaymentMethod) needs Net -> Result<Charge, PaymentError>
 { ... }
 ```
 
-`@approve` is a precondition, not a return type modifier. The function's declared type is unchanged — `charge_card` returns a `Charge`. The annotation means "this function does not execute until the adapter approves." If the adapter denies, the function body never runs. The Splash programmer writes normal code; the compiler and runtime handle the gate.
+`approve fn` is a precondition, not a return type modifier. The function's declared type is unchanged — `charge_card` returns a `Charge`. The annotation means "this function does not execute until the adapter approves." If the adapter denies, the function body never runs. The Splash programmer writes normal code; the compiler and runtime handle the gate.
 
-The error model is uniform across all agent failures. `@approve` denials, AI call failures, and budget exceeded errors all propagate as Go errors up the same call path to the `needs Agent` boundary — the agent entry point is the single declared error surface. The Splash programmer writes `-> Charge` and `-> HealthInsight`; the compiler injects the error propagation in generated Go. The agent entry point returns `(T, error)` and its callers — HTTP handlers, queue workers — handle it as a normal Go error. The compiler never injects `os.Exit` inside generated function bodies; that decision belongs to the application boundary, not the compiler.
+The error model is uniform across all agent failures. `approve fn` denials, AI call failures, and budget exceeded errors all propagate as Go errors up the same call path to the `needs Agent` boundary — the agent entry point is the single declared error surface. The Splash programmer writes `-> Charge` and `-> HealthInsight`; the compiler injects the error propagation in generated Go. The agent entry point returns `(T, error)` and its callers — HTTP handlers, queue workers — handle it as a normal Go error. The compiler never injects `os.Exit` inside generated function bodies; that decision belongs to the application boundary, not the compiler.
 
 This symmetry is intentional: **error propagation follows the same path as capability propagation.** Effects flow up the call graph to the Agent boundary. Errors flow up the same path to the same boundary. Both terminate where agent execution begins.
 
@@ -327,30 +325,34 @@ fn main() {
 
 `StdinApproval` blocks the calling goroutine on a terminal prompt — honest behavior for a development tool where a human is present. Production adapters (`WebhookApproval`, `SlackApproval`) are designed to be non-blocking: the approval request is enqueued, a response channel is awaited with a deadline, and the outcome flows back as a typed result. A pending approval in production does not block the agent's event loop. Phase 4a shipped the adapter pattern with `StdinApproval`. Phase 4b shipped denial propagation: the error cascades from adapter through every transitive caller, so production adapters that return denial errors work correctly without process-killing behavior. Non-blocking production adapters (`SlackApproval`, `WebhookApproval`) are the next milestone.
 
-The compiler enforces `@approve` requirements when `@containment` policy demands it:
+The compiler enforces `approve fn` requirements when `@containment` policy demands it:
 
 ```splash
 @containment(agent: .approved_only)
 module billing
 ```
 
-Any function in the `billing` module that is reachable from an agent context but lacks `@approve` fails to compile. The developer must add `@approve` or `@agent_allowed(reason: "...")`. Silence is a build failure.
+Any function in the `billing` module that is reachable from an agent context but lacks `approve fn` fails to compile. The developer must add `approve fn` or `@agent_allowed(reason: "...")`. Silence is a build failure.
 
 ### Stability Boundary
 
 | Mechanism | Status | Enforced By |
 |---|---|---|
-| `@redline` | Stable v0.1 | Compiler — call graph analysis |
+| `redline fn` | Stable v0.1 | Compiler — call graph analysis |
 | `@containment` | Stable v0.1 | Compiler — module boundary |
-| `@approve` annotation | Stable v0.1 | Compiler — presence enforcement |
-| `@approve` runtime dispatch | Stable v0.1 | Runtime — `ApprovalAdapter` + denial cascade |
+| `tool fn` | Stable v0.1 | Compiler — tool exposure + schema generation |
+| `approve fn` | Stable v0.1 | Compiler — presence enforcement + caller widening |
+| `agent fn` | Stable v0.1 | Compiler — explicit agent entry boundary |
+| `approve fn` runtime dispatch | Stable v0.1 | Runtime — `ApprovalAdapter` + denial cascade |
 | `@agent_allowed` | Stable v0.1 | Compiler — requires stated reason |
 | Capability decay | **Unstable** | Runtime (`std/safety`) |
 | Provenance chains | **Unstable** | Runtime (`std/safety`) |
 | Drift detection | **Unstable** | Runtime (`std/safety`) |
 | Output contracts | **Unstable** | Runtime (`std/safety`) |
 
-The compiler-enforced primitives will not change without a major version. The `std/safety` runtime APIs ship for production use and feedback. The mechanisms that prove out become stable in v0.2.
+The stability boundary is the compiler-enforced model, not every piece of surface spelling that existed in early drafts. The canonical declaration forms are `tool fn`, `approve fn`, and `agent fn`; earlier annotation spellings for tool and approval declarations are not part of the stable surface.
+
+The compiler-enforced primitives above will not change without a major version. The `std/safety` runtime APIs ship for production use and feedback. The mechanisms that prove out become stable in v0.2.
 
 ### Formal Properties
 
@@ -381,21 +383,21 @@ Effects form a partial order via subset inclusion. Refinements (`DB.read`, `DB.w
 
 **Effect polymorphism.** v0.1 does not support effect polymorphism. Effects are monomorphic and declared. A generic function cannot be parameterized over its effects — it must declare a fixed effect set, and callers must satisfy it. This is a deliberate scoping decision: effect polymorphism (as in Koka or Frank) adds significant complexity to the type system and inference engine. The monomorphic system covers the practical cases — a function that sometimes needs `DB` and sometimes doesn't is two functions. If production experience shows that effect polymorphism is needed, it's on the v0.2 roadmap. Stating "we don't support X" clearly is more useful than leaving researchers to discover it.
 
-**Soundness.** The effect system has no escape hatch by design. There is no `unsafe` block, no `@suppress` annotation, no compiler flag that relaxes checking. `@redline` cannot be overridden by policy or configuration. The analysis is whole-program: compilation units cannot circumvent `@redline` or `@approve` enforcement through separate compilation, because both checks require the complete call graph. A Splash program that builds has been verified — every call site satisfies the callee's effect requirements, every agent-reachable path has been checked against `@redline` and `@approve` constraints, and every `@sensitive` and `@restricted` classification has been propagated through the type system. Within its declared scope, the system is sound. This is a deliberate design choice: an escape hatch is a vulnerability.
+**Soundness.** The effect system has no escape hatch by design. There is no `unsafe` block, no `@suppress` annotation, no compiler flag that relaxes checking. `redline fn` cannot be overridden by policy or configuration. The analysis is whole-program: compilation units cannot circumvent `redline fn` or `approve fn` enforcement through separate compilation, because both checks require the complete call graph. A Splash program that builds has been verified — every call site satisfies the callee's effect requirements, every agent-reachable path has been checked against `redline fn` and `approve fn` constraints, and every `@sensitive` and `@restricted` classification has been propagated through the type system. Within its declared scope, the system is sound. This is a deliberate design choice: an escape hatch is a vulnerability.
 
-**Escape valves.** The no-escape-hatch stance will be revisited deliberately in v0.2, which will introduce a `@bypass(reason: "...", approved_by: "...")` annotation. It requires a stated justification, is logged to the provenance chain, and is surfaced by `splash audit`. The key constraint: `@bypass` is never available for `@redline`. Redlines are absolute. Everything else — effect mismatches, classification violations — admits an auditable, greppable override rather than forcing developers off the language. Bypassed constraints do not propagate implicitly; any call site relying on a bypass must itself declare it, ensuring the escape is visible in the call graph and cannot silently undermine downstream safety assumptions.
+**Escape valves.** The no-escape-hatch stance will be revisited deliberately in v0.2, which will introduce a `@bypass(reason: "...", approved_by: "...")` annotation. It requires a stated justification, is logged to the provenance chain, and is surfaced by `splash audit`. The key constraint: `@bypass` is never available for `redline fn`. Redlines are absolute. Everything else — effect mismatches, classification violations — admits an auditable, greppable override rather than forcing developers off the language. Bypassed constraints do not propagate implicitly; any call site relying on a bypass must itself declare it, ensuring the escape is visible in the call graph and cannot silently undermine downstream safety assumptions.
 
 #### Agent Context and Call Graph Analysis
 
 Agent context is a distinguished capability in the effect system. Functions with `needs Agent`, and call paths reachable from `agent.execute()`, are agent-context entry points. The compiler builds the full call graph and propagates agent-reachability transitively.
 
-For `@redline` enforcement: a function `f` marked `@redline` must not appear in any call path from any agent-context entry point. If such a path exists, the build fails.
+For `redline fn` enforcement: a function `f` marked `redline fn` must not appear in any call path from any agent-context entry point. If such a path exists, the build fails.
 
-This analysis runs over the same call graph the compiler builds for `needs` propagation — every call site must satisfy the callee's effect requirements, so the full graph is already available. `@redline` and `@approve` checks are additional predicates evaluated over that graph in the same pass.
+This analysis runs over the same call graph the compiler builds for `needs` propagation — every call site must satisfy the callee's effect requirements, so the full graph is already available. `redline fn` and `approve fn` checks are additional predicates evaluated over that graph in the same pass.
 
-The analysis is whole-program. Compilation units cannot be checked in isolation for `@redline` and `@approve` correctness. This constraint is intentional: it prevents effect laundering through separately-compiled modules.
+The analysis is whole-program. Compilation units cannot be checked in isolation for `redline fn` and `approve fn` correctness. This constraint is intentional: it prevents effect laundering through separately-compiled modules.
 
-**Scalability.** Whole-program call graph analysis is O(V+E) in the number of functions and call edges — linear in program size. For the server-side programs Splash targets (thousands of functions, not millions), this is fast in practice, and it runs as a single pass over the same graph the effect checker already builds. The cost is real but bounded and predictable. Incremental builds can cache the call graph and invalidate only the subgraph reachable from changed functions; this is on the Phase 3 roadmap. Dynamic dispatch and runtime-loaded code are conservatively approximated in the call graph; where full resolution is not possible, the compiler defaults to denying agent reachability, preserving the soundness of `@redline` and `@approve` enforcement.
+**Scalability.** Whole-program call graph analysis is O(V+E) in the number of functions and call edges — linear in program size. For the server-side programs Splash targets (thousands of functions, not millions), this is fast in practice, and it runs as a single pass over the same graph the effect checker already builds. The cost is real but bounded and predictable. Incremental builds can cache the call graph and invalidate only the subgraph reachable from changed functions; this is on the Phase 3 roadmap. Dynamic dispatch and runtime-loaded code are conservatively approximated in the call graph; where full resolution is not possible, the compiler defaults to denying agent reachability, preserving the soundness of `redline fn` and `approve fn` enforcement.
 
 #### Data Classification
 
@@ -417,13 +419,13 @@ Splash compiles to Go. The frontend handles parsing, type inference, effect chec
 
 Splash inherits Go's runtime: goroutines, garbage collection, fast compilation, a mature toolchain. The safety properties live in the Splash frontend. Go sees generated code that has already been verified; it does not need to understand Splash's effect system.
 
-**Runtime overhead.** Splash's safety properties are enforced entirely at compile time. The emitted Go binary carries no effect-checking overhead — effects are a frontend constraint, not a runtime mechanism. The only runtime cost is explicit and opt-in: `@approve` gates invoke an `ApprovalAdapter` before the function body executes, and `std/safety` provenance chains record agent decision paths. For everything else, Splash programs have Go-equivalent performance.
+**Runtime overhead.** Splash's safety properties are enforced entirely at compile time. The emitted Go binary carries no effect-checking overhead — effects are a frontend constraint, not a runtime mechanism. The only runtime cost is explicit and opt-in: `approve fn` gates invoke an `ApprovalAdapter` before the function body executes, and `std/safety` provenance chains record agent decision paths. For everything else, Splash programs have Go-equivalent performance.
 
 Structured concurrency maps to Go's goroutine model. `group { async f(); async g() }` compiles to a goroutine group with cancellation semantics using Go's `context` package and `errgroup`. The structured guarantee — all children cancelled and awaited before the parent continues — is upheld by the generated code.
 
 Context propagation is implemented via goroutine-local storage. Context is implicitly available in every Splash function; explicit reads (`ctx.remaining`, `ctx.check()`, `ctx.get(AuthUser)`) compile to reads from a goroutine-local value. Developers don't thread context through signatures; the compiler inserts the plumbing.
 
-**Backend abstraction.** Code generation targets a `Backend` interface. The current implementation emits Go. An LLVM backend is straightforward to add: the safety model is fully enforced before codegen, so the backend receives a verified, effect-annotated AST with no security-relevant decisions remaining. This separation is intentional. All guarantees about effects, data flow, and agent reachability are established in the compiler front-end. Backends are responsible only for translating verified programs into executable form. The same source file, the same call graph analysis, the same `@redline` and `@approve` enforcement — regardless of whether the output is a Go binary, a native object via LLVM, or a WASM module.
+**Backend abstraction.** Code generation targets a `Backend` interface. The current implementation emits Go. An LLVM backend is straightforward to add: the safety model is fully enforced before codegen, so the backend receives a verified, effect-annotated AST with no security-relevant decisions remaining. This separation is intentional. All guarantees about effects, data flow, and agent reachability are established in the compiler front-end. Backends are responsible only for translating verified programs into executable form. The same source file, the same call graph analysis, the same `redline fn` and `approve fn` enforcement — regardless of whether the output is a Go binary, a native object via LLVM, or a WASM module.
 
 #### Trust Boundaries and Foreign Code
 
@@ -534,7 +536,7 @@ Four SOC 2 control families map directly to Splash language properties:
 
 **CC6 (Logical and Physical Access Controls).** Effect declarations and `@sandbox` constraints implement least-privilege access at the language level. Every agent's capabilities are declared, locked, and auditable from source.
 
-**CC7 (System Operations).** `@approve` gates create mandatory approval workflows for high-risk operations. The approval prompt, timeout, and timeout policy are declared in source and enforced by the runtime.
+**CC7 (System Operations).** `approve fn` gates create mandatory approval workflows for high-risk operations. The approval prompt, timeout, and timeout policy are declared in source and enforced by the runtime.
 
 **CC9 (Risk Mitigation).** `std/resilience` (CircuitBreaker, RetryPolicy, Bulkhead) provides documented, testable failure handling. `std/safety` provenance chains create the audit trail CC9 requires for automated decisions.
 
@@ -562,20 +564,20 @@ Deliverable: a type-checker that accepts or rejects Splash programs and produces
 
 - Effect declaration and propagation (`needs` checking at every call site)
 - Call graph construction and agent-context reachability analysis
-- `@redline` enforcement via call graph tracing
+- `redline fn` enforcement via call graph tracing
 - `@containment` module boundary enforcement
-- `@approve` annotation enforcement: compiler verifies presence at agent-reachable call sites
+- `approve fn` annotation enforcement: compiler verifies presence at agent-reachable call sites
 - Data classification checks (`@sensitive`, `@restricted` constraint satisfaction)
 - Go code generation from typed, verified ASTs
 - `splash build` and `splash dev` CLI
 
 Deliverable: `splash build` compiles a Splash program to a Go binary. Effect system and safety properties are enforced before Go processes the output.
 
-The call graph analysis powering `@redline` and `@approve` piggybacks on the graph the compiler builds for `needs` propagation. Effect checking already requires knowing, for each call site, what effects the callee needs and whether the caller provides them. `@redline` and `@approve` are additional predicates evaluated over the same graph in the same pass.
+The call graph analysis powering `redline fn` and `approve fn` piggybacks on the graph the compiler builds for `needs` propagation. Effect checking already requires knowing, for each call site, what effects the callee needs and whether the caller provides them. `redline fn` and `approve fn` are additional predicates evaluated over the same graph in the same pass.
 
 ### Phase 3: Standard Library
 
-- `std/ai` with `@tool`, `ai.prompt<T>`, `@sandbox`, `@budget` ✅
+- `std/ai` with `tool fn`, `ai.prompt<T>`, `@sandbox`, `@budget` ✅
 - `std/db`, `std/cache`, `std/http`, `std/queue`, `std/storage` with default adapters
 - `std/jwt`, `std/crypto`, `std/secrets`
 - `std/resilience` (CircuitBreaker, RetryPolicy, Bulkhead)
@@ -587,8 +589,8 @@ Deliverable: a developer can build a production-grade API with `splash new`, `sp
 
 ### Phase 4: Runtime Safety
 
-- ✅ `@approve` adapter pattern, body injection, `StdinApproval` (Phase 4a)
-- ✅ Denial propagation — `@approve` functions get `(T, error)` Go signatures; error cascades through every transitive caller; `main()` exits gracefully (Phase 4b)
+- ✅ `approve fn` adapter pattern, body injection, `StdinApproval` (Phase 4a)
+- ✅ Denial propagation — `approve fn` functions get `(T, error)` Go signatures; error cascades through every transitive caller; `main()` exits gracefully (Phase 4b)
 - Non-blocking production adapters: `SlackApproval`, `WebhookApproval`, `PolicyApproval` (Phase 4c)
 - ✅ `@sandbox` compile-time effect allow/deny enforcement against agent-reachable call graph
 - ✅ `@budget` compile-time argument type validation
@@ -597,7 +599,7 @@ Deliverable: a developer can build a production-grade API with `splash new`, `sp
 - ✅ Multi-file module loading (`use path` resolves sibling `.splash` files; cycle detection; `expose` list)
 - `splash deploy` with capability manifest diffing (lockfile-level capability tracking)
 
-Deliverable: `@approve` works in production without killing the process. One denied approval propagates as an error to one request; other requests in flight are unaffected. An organization can swap authorization strategies per environment without changing application code.
+Deliverable: `approve fn` works in production without killing the process. One denied approval propagates as an error to one request; other requests in flight are unaffected. An organization can swap authorization strategies per environment without changing application code.
 
 ### Contributing
 
@@ -615,7 +617,7 @@ AI labs invest heavily in model-level safety: RLHF, constitutional AI, red-teami
 
 A model trained to avoid harmful outputs can still be called with harmful arguments. A model with strong refusal behavior can still be granted excessive database permissions. A model that declines to leak PII can still produce PII that a badly-written tool logs to stdout.
 
-Splash operates at the systems layer, below the model. `@redline`, `@containment`, `@approve`, and the effect system don't interact with the model's behavior — they constrain the environment the model operates in. The model cannot call a `@redline` function because the function is not in its callable set. The model cannot access `DB.write` if the sandbox denies it. These guarantees hold regardless of what the model decides.
+Splash operates at the systems layer, below the model. `redline fn`, `@containment`, `approve fn`, and the effect system don't interact with the model's behavior — they constrain the environment the model operates in. The model cannot call a `redline fn` function because the function is not in its callable set. The model cannot access `DB.write` if the sandbox denies it. These guarantees hold regardless of what the model decides.
 
 Think of model-level alignment as a seatbelt: it reduces harm when things go wrong. Splash is the guardrail: it structurally prevents certain wrong turns. Both are necessary. The gap between "we made the model safer" and "we made the system safe" is where most production AI incidents happen.
 
@@ -631,18 +633,17 @@ constraint AIAdapter {
 }
 ```
 
-Anthropic, OpenAI, xAI, and local models are all adapters. An application built on Splash can switch model providers with a one-line change in `main()`. The safety properties — `@redline`, `@approve`, data classification — are enforced by the Splash runtime regardless of which model is behind the `AIAdapter`.
+Anthropic, OpenAI, xAI, and local models are all adapters. An application built on Splash can switch model providers with a one-line change in `main()`. The safety properties — `redline fn`, `approve fn`, data classification — are enforced by the Splash runtime regardless of which model is behind the `AIAdapter`.
 
 This is not incidental. It means Splash's safety infrastructure is available to every model, not tied to any provider's SDK.
 
-### `@tool` as Distribution
+### `tool fn` as Distribution
 
-Every function annotated `@tool` becomes callable by any AI agent running in a Splash runtime:
+Every function annotated `tool fn` becomes callable by any AI agent running in a Splash runtime:
 
 ```splash
 /// Search documents by topic, author, or keyword.
-@tool
-fn search_documents(query: String, limit: Int = 10) -> List<DocumentResult>
+tool fn search_documents(query: String, limit: Int = 10) -> List<DocumentResult>
   needs DB { ... }
 ```
 
@@ -650,9 +651,9 @@ The doc comment is the tool description. The type signature is the schema. The f
 
 OpenAI's function calling and Anthropic's tool use share a structural problem: developers hand-write JSON schemas that describe their functions, then maintain those schemas separately from the implementations. The schemas drift. Arguments get renamed. Required fields go optional. The model calls a function with arguments that no longer match, and the error surfaces at runtime, in production, after the agent has already started a task.
 
-Splash eliminates that class of bugs. The `@tool` decorator generates the schema from the type signature at compile time. If the function signature changes, the schema changes with it. If the schema change breaks the model's calling pattern, that's a design decision the developer makes explicitly — not a drift that accumulates silently.
+Splash eliminates that class of bugs. The `tool fn` decorator generates the schema from the type signature at compile time. If the function signature changes, the schema changes with it. If the schema change breaks the model's calling pattern, that's a design decision the developer makes explicitly — not a drift that accumulates silently.
 
-An ecosystem of Splash applications is an ecosystem of `@tool`-decorated functions with accurate, compiler-generated schemas, typed return values, declared effect bounds, and budget tracking. That's not a convenience — it's infrastructure that doesn't exist anywhere else.
+An ecosystem of Splash applications is an ecosystem of `tool fn`-decorated functions with accurate, compiler-generated schemas, typed return values, declared effect bounds, and budget tracking. That's not a convenience — it's infrastructure that doesn't exist anywhere else.
 
 Today's tool ecosystem is a collection of hand-maintained JSON schemas that drift from implementations, with no shared model for what effects a tool can perform, what data classifications it touches, or what it will cost to call. There is no structural way for a model provider to know, before invocation, whether a tool will make network calls, write to a database, or consume $0.05 of AI compute. A model can be given a tool and have no way to know it's dangerous.
 
@@ -666,7 +667,7 @@ Tool schemas in Splash are not developer-authored. They are compiler projections
 $ splash tools agent_tools.splash
 ```
 
-This command does not enumerate all `@tool` functions. It includes only those that are agent-reachable and not excluded by `@redline` or `@containment`. The output is the set of actions the agent is structurally permitted to take — filtered by the same call graph analysis that enforces the rest of the safety model. A function absent from the output is not merely undocumented; it is structurally unreachable from agent context.
+This command does not enumerate all `tool fn` functions. It includes only those that are agent-reachable and not excluded by `redline fn` or `@containment`. The output is the set of actions the agent is structurally permitted to take — filtered by the same call graph analysis that enforces the rest of the safety model. A function absent from the output is not merely undocumented; it is structurally unreachable from agent context.
 
 **The absence is the guarantee.**
 
@@ -690,17 +691,17 @@ An organization running a Splash runtime can show, for any production incident, 
 
 The safety primitives in Splash were designed for LLM agents calling tool functions. None of them are specific to LLMs.
 
-`@redline` doesn't know what an agent is. It knows what a call graph is. `needs Vehicle.braking` and `needs DB.write` are the same type system mechanism — a declared capability that the compiler verifies at every call site. `@containment(agent: .none)` works identically whether the agent is a language model or a PID controller. The underlying primitive is not "safety for AI." It is **compiler-verified autonomy boundaries**: the proof that an autonomous component cannot reach capabilities it was not granted, regardless of what that component is.
+`redline fn` doesn't know what an agent is. It knows what a call graph is. `needs Vehicle.braking` and `needs DB.write` are the same type system mechanism — a declared capability that the compiler verifies at every call site. `@containment(agent: .none)` works identically whether the agent is a language model or a PID controller. The underlying primitive is not "safety for AI." It is **compiler-verified autonomy boundaries**: the proof that an autonomous component cannot reach capabilities it was not granted, regardless of what that component is.
 
 The pattern applies wherever an autonomous component makes decisions that trigger real-world consequences.
 
 **Vehicle autonomy.** A neural network planner that needs `Vehicle.steering` and `Vehicle.throttle` cannot call a function that needs `Vehicle.safety_override` — the compiler proves it. Emergency brake functions in a `@containment(agent: .none)` module are structurally invisible to the planner. A software update to the navigation subsystem that suddenly requests `Vehicle.braking` fails the build. These are compile-time proofs, not runtime checks that might fail under the conditions that matter most.
 
-**Medical devices.** A dosing algorithm's effect declarations enumerate exactly which hardware registers it can write. `@redline` on the manual override function means no code path from the autonomous dosing agent can reach it — provable from the binary, not inferred from test coverage. FDA increasingly asks for evidence that autonomous components cannot reach safety-critical functions through any code path; a compiler proof is stronger evidence than a test suite.
+**Medical devices.** A dosing algorithm's effect declarations enumerate exactly which hardware registers it can write. `redline fn` on the manual override function means no code path from the autonomous dosing agent can reach it — provable from the binary, not inferred from test coverage. FDA increasingly asks for evidence that autonomous components cannot reach safety-critical functions through any code path; a compiler proof is stronger evidence than a test suite.
 
 **Industrial control.** The autonomous optimizer for a chemical plant declares `needs Process.read, Process.throttle`. The emergency shutdown controls live in a `@containment(agent: .none)` module. The compiler guarantees the optimizer's call graph does not connect to them — not a process boundary that could be bridged, not a permission check that could be bypassed at 3am during an incident.
 
-**Drone operations.** A navigation agent that needs `Drone.motors, Drone.navigation` cannot call `Drone.payload_release`. `@approve` on high-consequence maneuvers routes through a deterministic safety validator with a hard timeout — the same language primitive that routes human approval for financial transactions, applied to a 200ms pre-release check.
+**Drone operations.** A navigation agent that needs `Drone.motors, Drone.navigation` cannot call `Drone.payload_release`. `approve fn` on high-consequence maneuvers routes through a deterministic safety validator with a hard timeout — the same language primitive that routes human approval for financial transactions, applied to a 200ms pre-release check.
 
 The v0.1 compiler produces Go binaries for backend services. The domains above are the roadmap, not the current deliverable. But the primitives are already general — the same type system, the same call graph analysis, the same compiler. The agent doesn't have to be an LLM. It just has to be something that acts autonomously in a system where acting wrong is expensive.
 
@@ -708,7 +709,7 @@ The v0.1 compiler produces Go binaries for backend services. The domains above a
 
 ## Section 8: Compiler Performance
 
-Splash's safety model requires whole-program analysis: the call graph must be complete before `@redline`, `@approve`, `@sandbox`, and `@containment` can be verified. This raises a practical question: does the analysis cost show up in developer feedback loops?
+Splash's safety model requires whole-program analysis: the call graph must be complete before `redline fn`, `approve fn`, `@sandbox`, and `@containment` can be verified. This raises a practical question: does the analysis cost show up in developer feedback loops?
 
 The answer, measured on real hardware, is no.
 
@@ -720,7 +721,7 @@ Benchmarks use synthetic Splash programs at three sizes — 100, 500, and 2000 f
 - **Effects chain:** linear call chain with `DB.read` declared at every site, exercising effect propagation checking at every call site
 - **Mixed types:** named record types with struct literal construction, exercising type resolution
 
-The end-to-end `splash check` benchmark runs the full pipeline — parse, type check, call graph construction, and all safety passes — on programs that include `@approve`, `@redline`, and `@sensitive` types, as a realistic representation of production code.
+The end-to-end `splash check` benchmark runs the full pipeline — parse, type check, call graph construction, and all safety passes — on programs that include `approve fn`, `redline fn`, and `@sensitive` types, as a realistic representation of production code.
 
 All measurements on Apple M2.
 
@@ -756,7 +757,7 @@ A 500-function Splash program clears `splash check` in 1 millisecond. A 2,000-fu
 
 Scaling is linear in program size, as expected for O(V+E) analysis. The whole-program call graph requirement that gives Splash its soundness guarantees does not create a quadratic blowup — the graph is built in a single pass over the same data structure the type checker already constructs.
 
-The safety checks themselves (all five passes: `@redline`, `@approve`, `@containment`, `@sandbox`, data classification) add negligible overhead on top of type checking. They are additional predicates evaluated over the same graph, not separate traversals.
+The safety checks themselves (all five passes: `redline fn`, `approve fn`, `@containment`, `@sandbox`, data classification) add negligible overhead on top of type checking. They are additional predicates evaluated over the same graph, not separate traversals.
 
 Incremental caching — invalidating only the subgraph reachable from changed functions — is on the roadmap and would reduce hot-reload times further. The current single-shot analysis is already fast enough that caching is an optimization, not a requirement.
 
@@ -766,7 +767,7 @@ The safety model has no runtime cost for the common case. Effect checking, call 
 
 The only explicit runtime costs are:
 
-- **`@approve` gate:** one `ApprovalAdapter.Request(name)` call before the function body executes. Cost is determined by the adapter implementation (stdin prompt, Slack message, webhook). The compiler overhead is zero.
+- **`approve fn` gate:** one `ApprovalAdapter.Request(name)` call before the function body executes. Cost is determined by the adapter implementation (stdin prompt, Slack message, webhook). The compiler overhead is zero.
 - **`std/safety` provenance chains:** structured logging of agent decisions. Opt-in, disabled by default, cost proportional to chain depth.
 
 For everything else, Splash programs have Go-equivalent performance at runtime.
@@ -810,7 +811,7 @@ fn main() {
 
 ## Appendix: Example — Health API
 
-A Whoop-like health data backend that proxies AI queries with access to user biometrics. Demonstrates `@sensitive`, `@restricted`, `@tool`, `@sandbox`, `@budget`, `@redline`, and `ai.prompt<T>`. Passes `splash check` and `splash tools`.
+A Whoop-like health data backend that proxies AI queries with access to user biometrics. Demonstrates `@sensitive`, `@restricted`, `tool fn`, `@sandbox`, `@budget`, `redline fn`, and `ai.prompt<T>`. Passes `splash check` and `splash tools`.
 
 ```splash
 module main
@@ -893,12 +894,11 @@ fn get_latest_biometrics(user_id: Int) needs DB.read -> BiometricSnapshot {
 
 // ─── AI Tools ─────────────────────────────────────────
 // The compiler generates JSON Schema from these signatures.
-// @sensitive fields on User are blocked from @tool return types.
+// @sensitive fields on User are blocked from tool fn return types.
 
 /// Look up a user by their ID. Returns biometrics only.
 /// The LLM never sees email or SSN — those fields are classified.
-@tool
-fn get_user_biometrics(
+tool fn get_user_biometrics(
   /// The user's numeric ID
   user_id: Int,
 ) needs DB.read -> BiometricSnapshot {
@@ -907,8 +907,7 @@ fn get_user_biometrics(
 }
 
 /// Get recovery status based on today's biometrics.
-@tool
-fn get_recovery_status(
+tool fn get_recovery_status(
   /// The user's numeric ID
   user_id: Int,
 ) needs DB.read -> RecoveryStatus {
@@ -947,13 +946,11 @@ fn ask_health_coach(
 // These exist in the codebase but are permanently
 // unreachable from the agent. The compiler proves it.
 
-@redline(reason: "User deletion requires manual admin action and legal review")
-fn delete_user(user_id: Int) needs DB.write {
+redline(reason: "User deletion requires manual admin action and legal review") fn delete_user(user_id: Int) needs DB.write {
   // ...
 }
 
-@redline(reason: "Biometric data export requires HIPAA compliance review")
-fn export_all_biometrics(user_id: Int) needs DB.read, FS {
+redline(reason: "Biometric data export requires HIPAA compliance review") fn export_all_biometrics(user_id: Int) needs DB.read, FS {
   // ...
 }
 
@@ -1000,7 +997,7 @@ type Account {
 
 // AccountSummary is the agent-safe projection of Account.
 // It contains only public fields — no email, no account identifiers.
-// Returning Account directly from a @tool is a compile error:
+// Returning Account directly from a tool fn is a compile error:
 // @restricted fields cannot flow to the agent's context window.
 type AccountSummary {
   id:            Int
@@ -1010,7 +1007,7 @@ type AccountSummary {
 }
 
 // Uncommenting this will fail to compile:
-// @tool
+// tool fn
 // fn unsafe_account(id: Int) needs DB.read -> Account {
 //   return lookup_account(id)
 // }
@@ -1066,8 +1063,7 @@ fn lookup_account(id: Int) needs DB.read -> Account {
 
 /// Get current balance and account summary.
 /// Never returns account numbers, routing numbers, or email.
-@tool
-fn check_balance(
+tool fn check_balance(
   /// The account ID to look up
   account_id: Int,
 ) needs DB.read -> AccountSummary {
@@ -1081,14 +1077,13 @@ fn check_balance(
 }
 
 // ─── Gated Operations ────────────────────────────────
-// The @approve gate fires inside the function body before any logic runs.
+// The approve fn gate fires inside the function body before any logic runs.
 // The ApprovalAdapter decides how to resolve it: Slack to the compliance
 // team, an automated policy engine, or a rule ("under $100,000 from a
 // verified account — auto-approve with audit log entry"). The call site
 // writes normal code. The gate is the function's responsibility.
 
-@approve
-fn transfer_funds(
+approve fn transfer_funds(
   from_id:      Int,
   to_id:        Int,
   amount_cents: Int,
@@ -1107,34 +1102,31 @@ fn transfer_funds(
 // ─── Redlines ─────────────────────────────────────────
 // No agent context can reach these — ever.
 // The compiler traces every path from every needs Agent function.
-// A path that reaches a @redline fails the build with the full call chain.
+// A path that reaches a redline fn fails the build with the full call chain.
 //
 // Try adding `wire_transfer(from_id, "021000021", 500000)` to
 // run_fraud_agent below. The build will fail:
 //
-//   error: @redline fn "wire_transfer" is reachable from agent context
+//   error: redline fn "wire_transfer" is reachable from agent context
 //     run_fraud_agent → wire_transfer
 //     reason: Wire transfers require dual authorization and SWIFT compliance review
 
-@redline(reason: "Wire transfers require dual authorization and SWIFT compliance review")
-fn wire_transfer(from_id: Int, to_routing: String, amount_cents: Int) needs DB.write, Net {
+redline(reason: "Wire transfers require dual authorization and SWIFT compliance review") fn wire_transfer(from_id: Int, to_routing: String, amount_cents: Int) needs DB.write, Net {
   // ...
 }
 
-@redline(reason: "Account closure requires legal review and 30-day notice period")
-fn close_account(account_id: Int) needs DB.admin {
+redline(reason: "Account closure requires legal review and 30-day notice period") fn close_account(account_id: Int) needs DB.admin {
   // ...
 }
 
-@redline(reason: "Transaction records are an immutable audit trail — deletion is prohibited by regulation")
-fn delete_transaction(transaction_id: Int) needs DB.admin {
+redline(reason: "Transaction records are an immutable audit trail — deletion is prohibited by regulation") fn delete_transaction(transaction_id: Int) needs DB.admin {
   // ...
 }
 
 // ─── Agent Entry Points ───────────────────────────────
 // needs Agent marks the boundary where AI execution begins. The compiler
 // traces every reachable function from here: enforcing sandbox effects,
-// checking redlines, and verifying that no @restricted data reaches a @tool.
+// checking redlines, and verifying that no @restricted data reaches a tool fn.
 // Failures — approval denials, AI errors, budget exceeded — surface here.
 // Read-only + AI. No writes, no network, no admin ops.
 // @sandbox makes this a compile-time proof: DB.write and Net are denied,
@@ -1160,16 +1152,15 @@ fn run_fraud_agent(
 
 // ─── Billing Agent ────────────────────────────────────
 // A different agent with a different capability surface.
-// @approve on the entry point gates the entire workflow — the adapter
+// approve fn on the entry point gates the entire workflow — the adapter
 // clears the billing run before any logic executes. transfer_funds also
-// carries its own @approve gate (defense in depth).
+// carries its own approve fn gate (defense in depth).
 // DB.admin is still denied: wire_transfer, close_account, and
 // delete_transaction remain unreachable from this agent too.
 
 @sandbox(allow: [DB.read, DB.write, Net], deny: [DB.admin, FS, AI])
 @budget(max_cost: 0.01, max_calls: 5)
-@approve
-fn run_billing_agent(
+approve fn run_billing_agent(
   from_id:      Int,
   to_id:        Int,
   amount_cents: Int,

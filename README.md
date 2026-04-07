@@ -1,12 +1,17 @@
 # 🏄‍♂️ Splash
 
-Splash is a compiled, statically-typed backend language with a built-in effect system, call graph analysis, and AI agent safety enforcement. It transpiles to Go. Safety properties — effect constraints, data classification, agent reachability — are enforced before codegen. The Go backend sees a verified, effect-annotated AST with no security-relevant decisions remaining.
+Splash is a compiled, statically-typed control-plane language with a built-in effect system, call graph analysis, and AI agent safety enforcement. It transpiles to Go. Safety properties — effect constraints, data classification, agent reachability, approval boundaries, and tool exposure — are enforced before codegen. The Go backend sees a verified, effect-annotated AST with no security-relevant decisions remaining.
+
+Core authority concepts now have first-class syntax:
+
+- `tool fn` for AI-callable tools
+- `approve fn` for human-gated operations
+- `agent fn` for agent entrypoints
 
 ```splash
 @sandbox(allow: [DB.read])
-@tool
 /// Search the catalog for items matching a query.
-fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> {
+tool fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> {
     return db.query(query, limit)
 }
 ```
@@ -27,6 +32,9 @@ go build ./cmd/splash/...          # build the compiler
 ./splash build examples/hello/hello.splash -o hello && ./hello
 ./splash emit  examples/approval/approval.splash   # print generated Go
 ./splash tools examples/agent_tools/agent_tools.splash  # print JSON Schema
+./splash graph examples/finance/finance.splash     # print agent roots + call edges
+./splash effects examples/finance/finance.splash   # print function effect surfaces
+./splash approvals examples/approval/approval.splash  # print approval-gated paths
 ```
 
 All tests:
@@ -40,7 +48,7 @@ go test ./...
 ## Repository Layout
 
 ```
-cmd/splash/main.go          CLI: check / build / emit / tools
+cmd/splash/main.go          CLI: check / build / emit / tools / graph / effects / approvals
 internal/
   lexer/                    tokenizer
   parser/                   Pratt parser → AST
@@ -48,9 +56,9 @@ internal/
   effects/                  EffectSet bitmask, Parse(), String()
   typechecker/              type inference, constraint checking, use-imports
   callgraph/                call graph, Reachable(), Callers(), Parents(), PathTo()
-  safety/                   @redline, @approve, @containment, @sandbox, @budget, @sensitive
+  safety/                   redline fn, approve fn, @containment, @sandbox, @budget, @sensitive
   codegen/                  Backend interface, GoBackend, Emitter
-  toolschema/               @tool → JSON Schema extraction
+  toolschema/               tool fn → JSON Schema extraction
   diagnostic/               Diagnostic type (Error/Warning + position)
   types/                    data classification lattice
 examples/                   nine checked, buildable Splash programs
@@ -68,7 +76,7 @@ source (.splash)
   → Parser       produce *ast.File
   → TypeChecker  type inference, effect propagation, constraint satisfaction
   → CallGraph    build directed call graph, compute agent roots + reachability
-  → SafetyChecker  @redline, @approve, @containment, @sandbox, @budget, @sensitive/@restricted
+  → SafetyChecker  redline fn, approve fn, @containment, @sandbox, @budget, @sensitive/@restricted
   → Emitter      verified AST → Go source
   → go build     Go source → native binary
 ```
@@ -112,14 +120,14 @@ fn summarize(id: Int) needs DB.read, AI -> String { return fetch(id) }
 
 | Annotation | Applies To | Effect |
 |---|---|---|
-| `@tool` | function | marks as AI-callable; `splash tools` emits JSON Schema |
-| `@redline` | function | build fails if any agent-reachable path reaches this function |
-| `@approve` | function | injects human approval gate; emits `(T, error)` Go signature |
+| `tool fn` | function | marks as AI-callable; `splash tools` emits JSON Schema |
+| `redline fn` | function | build fails if any agent-reachable path reaches this function |
+| `approve fn` | function | injects human approval gate; emits `(T, error)` Go signature |
 | `@agent_allowed` | function | exempts from `@containment(agent: "approved_only")` check |
 | `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | module-level agent access policy |
 | `@sandbox(allow: [...], deny: [...])` | function | constrains effects of the entire reachable call graph |
 | `@budget(max_cost: Float, max_calls: Int)` | function | declares resource limits; types validated at compile time |
-| `@sensitive` | field | field is PII; containing type cannot satisfy `Loggable`; `@tool` cannot return it |
+| `@sensitive` | field | field is PII; containing type cannot satisfy `Loggable`; `tool fn` cannot return it |
 | `@restricted` | field | field is process-local; no storage adapter accepts it |
 | `@internal` | field | field is internal-only; affects classification lattice |
 
@@ -135,14 +143,14 @@ public < @internal < @sensitive < @restricted
 
 The classification of a composite type is the max classification of its fields. The compiler enforces two rules today:
 
-1. `@tool` functions cannot return a type whose classification exceeds `@internal` — PII would flow into the agent's context.
+1. `tool fn` functions cannot return a type whose classification exceeds `@internal` — PII would flow into the agent's context.
 2. `println` (and any function requiring `Loggable`) cannot accept a `@sensitive`-classified argument.
 
 ---
 
 ## `splash tools` Output
 
-JSON Schema for every `@tool` function in a file:
+JSON Schema for every `tool fn` function in a file:
 
 ```json
 [
@@ -189,16 +197,16 @@ fn run_billing_agent() needs Agent, Net -> Charge {
 
 ---
 
-## `@approve` Runtime
+## `approve fn` Runtime
 
-`@approve` on a function does three things at compile time:
+`approve fn` on a function does three things at compile time:
 
 1. The function's Go return type is widened to `(T, error)`.
 2. `splashApprove("fn_name")` is injected as the first statement of the body.
 3. Every transitive caller also gets `(T, error)` signatures — denial propagates as an error, not a panic.
 
 ```go
-// Generated Go for @approve fn charge_card(...) needs Net -> Charge
+// Generated Go for approve fn charge_card(...) needs Net -> Charge
 func chargeCard(customerID int, amountCents int) (Charge, error) {
     if err := splashApprove("charge_card"); err != nil {
         return Charge{}, err
@@ -219,9 +227,9 @@ SetApprovalAdapter(&WebhookApproval{URL: secrets.ApprovalWebhook})
 
 **`internal/callgraph`**
 - `Build(f *ast.File) *Graph` — constructs the call graph
-- `g.AgentRoots() []string` — functions with `needs Agent` or `@tool`
+- `g.AgentRoots() []string` — functions with `needs Agent` or `tool fn`
 - `g.Reachable(roots []string) map[string]bool` — forward BFS
-- `g.Callers(targets map[string]bool) map[string]bool` — reverse BFS (used for `@approve` cascade)
+- `g.Callers(targets map[string]bool) map[string]bool` — reverse BFS (used for `approve fn` cascade)
 - `g.Parents(roots []string) map[string]string` — BFS parent map for path reconstruction
 - `callgraph.PathTo(parents, target)` — reconstruct call path for error messages
 
@@ -232,7 +240,7 @@ SetApprovalAdapter(&WebhookApproval{URL: secrets.ApprovalWebhook})
 **`internal/codegen`**
 - `Backend` interface: `Emit(f *ast.File, opts Options) string`
 - `NewGoBackend() Backend` — returns the Go emitter
-- `Options.ApprovalCallers map[string]bool` — transitive callers of `@approve` functions (set by CLI after callgraph analysis)
+- `Options.ApprovalCallers map[string]bool` — transitive callers of `approve fn` functions (set by CLI after callgraph analysis)
 - To add a new backend: implement `Backend`, add a factory function, wire in CLI
 
 **`internal/typechecker`**
@@ -257,12 +265,12 @@ The `check` helper parses, builds the call graph, and runs all safety passes. Wr
 | Example | Demonstrates |
 |---|---|
 | `hello/` | types, optionals, null coalescing, struct literals |
-| `effects/` | `needs` declarations, effect propagation, `@redline`, `@approve` |
+| `effects/` | `needs` declarations, effect propagation, `redline fn`, `approve fn` |
 | `data_safety/` | `@sensitive`, `@restricted`, data classification |
 | `containment/` | `@containment` module policy |
-| `agent_tools/` | `@tool`, `@redline` on dangerous operations, agent entry point |
+| `agent_tools/` | `tool fn`, `redline fn` on dangerous operations, agent entry point |
 | `ai_prompt/` | `use std/ai`, `ai.prompt<T>`, `Result<T, E>` |
-| `approval/` | `@approve` runtime, `ApprovalAdapter` |
+| `approval/` | `approve fn` runtime, `ApprovalAdapter` |
 | `multi_file/` | `use module`, cross-file types, `splash emit` merging |
 | `sandbox/` | `@sandbox` effect constraints, `@budget` resource limits |
 
@@ -278,7 +286,7 @@ The `check` helper parses, builds the call graph, and runs all safety passes. Wr
 | 500 functions | 1.06 ms |
 | 2,000 functions | 6.24 ms |
 
-Whole-program call graph analysis is O(V+E). All safety passes (`@redline`, `@approve`, `@containment`, `@sandbox`, data classification) run as additional predicates over the same graph — no separate traversals. Runtime overhead is zero for all compile-time enforcement; the only runtime cost is the `@approve` adapter dispatch.
+Whole-program call graph analysis is O(V+E). All safety passes (`redline fn`, `approve fn`, `@containment`, `@sandbox`, data classification) run as additional predicates over the same graph — no separate traversals. Runtime overhead is zero for all compile-time enforcement; the only runtime cost is the `approve fn` adapter dispatch.
 
 Run benchmarks: `go test -bench=. ./internal/callgraph/... ./internal/typechecker/... ./cmd/splash/...`
 
@@ -298,4 +306,3 @@ Run benchmarks: `go test -bench=. ./internal/callgraph/... ./internal/typechecke
 Splash is licensed under the [MIT License](LICENSE).
 
 The Go toolchain and standard library are licensed under the [BSD 3-Clause License](https://github.com/golang/go/blob/master/LICENSE).
-

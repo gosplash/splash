@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"path/filepath"
+	"strings"
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/diagnostic"
@@ -21,10 +22,10 @@ type TypedFile struct {
 // It prevents loading the same module twice and detects circular dependencies.
 type moduleState struct {
 	fileLoader  func(path string) ([]byte, error) // nil = no filesystem loading
-	baseDir     string                             // directory of the main file
-	loadedFiles []*ast.File                        // files in load order (imports before importers)
-	cache       map[string]*ast.File               // path → file (dedup)
-	loading     map[string]bool                    // currently-loading paths (cycle detection)
+	baseDir     string                            // directory of the main file
+	loadedFiles []*ast.File                       // files in load order (imports before importers)
+	cache       map[string]*ast.File              // path → file (dedup)
+	loading     map[string]bool                   // currently-loading paths (cycle detection)
 }
 
 type TypeChecker struct {
@@ -71,10 +72,10 @@ func New() *TypeChecker {
 // loader reads a file by path; in tests, an in-memory map works.
 func (tc *TypeChecker) SetFileLoader(baseDir string, loader func(path string) ([]byte, error)) {
 	tc.modules = &moduleState{
-		fileLoader:  loader,
-		baseDir:     baseDir,
-		cache:       make(map[string]*ast.File),
-		loading:     make(map[string]bool),
+		fileLoader: loader,
+		baseDir:    baseDir,
+		cache:      make(map[string]*ast.File),
+		loading:    make(map[string]bool),
 	}
 }
 
@@ -154,7 +155,7 @@ func (tc *TypeChecker) loadUserModule(u *ast.UseDecl) {
 
 	// Cache hit
 	if cached, ok := tc.modules.cache[filePath]; ok {
-		tc.injectModule(cached)
+		tc.injectModule(cached, u)
 		return
 	}
 
@@ -196,31 +197,36 @@ func (tc *TypeChecker) loadUserModule(u *ast.UseDecl) {
 	tc.modules.loadedFiles = append(tc.modules.loadedFiles, imported)
 
 	// Inject symbols
-	tc.injectModule(imported)
+	tc.injectModule(imported, u)
 }
 
 // injectModule copies exported types, functions, and constraints from an
 // imported file into this checker's namespace.
 // If the file has an expose list, only listed names are injected.
 // Otherwise all declarations are injected.
-func (tc *TypeChecker) injectModule(f *ast.File) {
+func (tc *TypeChecker) injectModule(f *ast.File, u *ast.UseDecl) {
 	exposed := make(map[string]bool)
 	for _, name := range f.Exposes {
 		exposed[name] = true
 	}
 	exportAll := len(f.Exposes) == 0
+	namespaceExports := make(map[string]types.Type)
 
 	for _, decl := range f.Declarations {
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
 			if exportAll || exposed[d.Name] {
+				nt := tc.buildNamedType(d)
 				tc.typeDecls[d.Name] = d
-				tc.globals.Set(d.Name, tc.buildNamedType(d))
+				tc.globals.Set(d.Name, nt)
+				namespaceExports[d.Name] = nt
 			}
 		case *ast.FunctionDecl:
 			if exportAll || exposed[d.Name] {
+				ft := tc.buildFunctionType(d)
 				tc.fnDecls[d.Name] = d
-				tc.globals.Set(d.Name, tc.buildFunctionType(d))
+				tc.globals.Set(d.Name, ft)
+				namespaceExports[d.Name] = ft
 			}
 		case *ast.ConstraintDecl:
 			if exportAll || exposed[d.Name] {
@@ -228,6 +234,24 @@ func (tc *TypeChecker) injectModule(f *ast.File) {
 			}
 		}
 	}
+
+	if ns := namespaceName(u, f); ns != "" {
+		tc.globals.Set(ns, &types.ModuleType{Name: ns, Exports: namespaceExports})
+	}
+}
+
+func namespaceName(u *ast.UseDecl, f *ast.File) string {
+	if u.Alias != "" {
+		return u.Alias
+	}
+	if f != nil && f.Module != nil && f.Module.Name != "" {
+		return f.Module.Name
+	}
+	parts := strings.Split(u.Path, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
 }
 
 func (tc *TypeChecker) buildNamedType(d *ast.TypeDecl) *types.NamedType {
@@ -255,6 +279,13 @@ func (tc *TypeChecker) buildFunctionType(d *ast.FunctionDecl) *types.FunctionTyp
 // objType is the type of the object being accessed; member is the field name;
 // optional indicates the ?. operator was used (result is wrapped in OptionalType).
 func (tc *TypeChecker) resolveMemberType(objType types.Type, member string, optional bool, pos token.Position) types.Type {
+	if mod, ok := objType.(*types.ModuleType); ok {
+		if exported, found := mod.Exports[member]; found {
+			return exported
+		}
+		tc.errorf(pos, "module %s has no exported member %q", mod.Name, member)
+		return types.Unknown
+	}
 	// Unwrap optional: Person? → Person for field lookup
 	inner := objType
 	if opt, ok := objType.(*types.OptionalType); ok {
@@ -460,7 +491,7 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 		}
 	case *ast.StructLiteral:
 		// Look up the named type if it exists
-		if t, ok := tc.globals.Get(e.TypeName); ok {
+		if t := tc.resolveQualifiedTypeName(e.TypeName); t != nil {
 			result = t
 		} else {
 			result = types.Unknown
@@ -615,6 +646,9 @@ func (tc *TypeChecker) resolveTypeExprWithParams(expr ast.TypeExpr, typeParams m
 		if t, ok := tc.globals.Get(e.Name); ok {
 			return t
 		}
+		if t := tc.resolveQualifiedTypeName(e.Name); t != nil {
+			return t
+		}
 		return types.Unknown
 	case *ast.OptionalTypeExpr:
 		inner := tc.resolveTypeExprWithParams(e.Inner, typeParams)
@@ -632,6 +666,26 @@ func (tc *TypeChecker) resolveTypeExprWithParams(expr ast.TypeExpr, typeParams m
 		return ft
 	}
 	return types.Unknown
+}
+
+func (tc *TypeChecker) resolveQualifiedTypeName(name string) types.Type {
+	parts := strings.Split(name, ".")
+	if len(parts) != 2 {
+		return nil
+	}
+	obj, ok := tc.globals.Get(parts[0])
+	if !ok {
+		return nil
+	}
+	mod, ok := obj.(*types.ModuleType)
+	if !ok {
+		return nil
+	}
+	exported, ok := mod.Exports[parts[1]]
+	if !ok {
+		return nil
+	}
+	return exported
 }
 
 func (tc *TypeChecker) errorf(pos token.Position, format string, args ...any) {
