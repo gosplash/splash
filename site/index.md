@@ -9,9 +9,9 @@ title: Splash
 
 *White Paper — v0.1*
 
-*Authors: Zach Graves <zach@zachgraves.com>*
+*Authors: Zach Graves <a href="mailto:zach@zachgraves.com" aria-label="Email Zach Graves" style="display:inline-flex;vertical-align:text-bottom;color:inherit;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><path d="m3 7 9 6 9-6"></path></svg></a>*
 
-*Agents: Claude Opus 4.6, Claude Sonnet 4.6 (Anthropic)*
+*Agents: Claude Opus 4.6, Claude Sonnet 4.6 (Anthropic), GPT-5 (OpenAI)*
 
 ---
 

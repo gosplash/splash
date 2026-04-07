@@ -6,7 +6,7 @@
 
 *Authors: Zach Graves <zach@zachgraves.com>*
 
-*Agents: Claude Opus 4.6, Claude Sonnet 4.6 (Anthropic)*
+*Agents: Claude Opus 4.6, Claude Sonnet 4.6 (Anthropic), GPT-5 (OpenAI)*
 
 ---
 

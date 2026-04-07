@@ -95,6 +95,17 @@ body {
   gap: 1.25rem;
 }
 
+.header-icon-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.header-icon-link:hover {
+  color: var(--text);
+}
+
 .site-domain {
   font-size: 0.8125rem;
   color: var(--text-muted);
@@ -158,6 +169,35 @@ body {
   text-transform: uppercase;
   color: var(--text-muted);
   margin: 1.75rem 0 0.4rem;
+}
+
+.content h2,
+.content h3,
+.content h4 {
+  scroll-margin-top: 5rem;
+}
+
+.heading-anchor {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.45rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 160ms ease, color 160ms ease;
+}
+
+.heading-anchor:hover {
+  color: var(--link);
+}
+
+.content h2:hover .heading-anchor,
+.content h3:hover .heading-anchor,
+.content h4:hover .heading-anchor,
+.content h2:focus-within .heading-anchor,
+.content h3:focus-within .heading-anchor,
+.content h4:focus-within .heading-anchor {
+  opacity: 1;
 }
 
 .content p {
