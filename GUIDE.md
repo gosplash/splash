@@ -148,7 +148,8 @@ Two annotations protect dangerous functions. They are not interchangeable.
 Use `redline fn` for operations that should never be automated under any circumstances: dropping tables, rebuilding indices, deleting production data, revoking credentials.
 
 ```splash
-redline(reason: "Schema changes require DBA sign-off") fn drop_table(table_name: String) needs DB.admin { ... }
+@reason "Schema changes require DBA sign-off"
+redline fn drop_table(table_name: String) needs DB.admin { ... }
 ```
 
 **`approve fn` — human gate.** The function can run, but only after the `ApprovalAdapter` approves it. In development, this prompts stdin. In production, swap in a webhook or Slack adapter.
@@ -380,7 +381,8 @@ approve fn refund_order(order_id: Int, reason: String) needs DB.write, Net -> Or
 }
 
 // Blocks any agent from calling this — too destructive to automate
-redline(reason: "Account deletion requires CX team sign-off") fn delete_account(customer_id: Int) needs DB.admin { ... }
+@reason "Account deletion requires CX team sign-off"
+redline fn delete_account(customer_id: Int) needs DB.admin { ... }
 
 // Agent entry point. @sandbox pins the effect surface to DB.read only for
 // the search path; the refund path adds Net and DB.write (via approve fn).

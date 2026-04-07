@@ -27,7 +27,7 @@ func genCheckSrc(n int) string {
 	b.WriteString("approve fn sensitive_op() needs DB.write -> Int { return 0 }\n\n")
 
 	// redline function — must not be agent-reachable
-	b.WriteString("redline(reason: \"admin only\") fn admin_op() needs DB.admin -> Int { return 0 }\n\n")
+	b.WriteString("@reason \"admin only\"\nredline fn admin_op() needs DB.admin -> Int { return 0 }\n\n")
 
 	// Call chain with DB.read effect
 	b.WriteString("fn f0() needs DB.read -> Int { return 0 }\n")

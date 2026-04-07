@@ -9,7 +9,9 @@ title: Splash
 
 *White Paper — v0.1*
 
-*Zach Graves <zach@zachgraves.com>, Claude Opus 4.6, Claude Sonnet 4.6*
+*Authors: Zach Graves <zach@zachgraves.com>*
+
+*Agents: Claude Opus 4.6, Claude Sonnet 4.6 (Anthropic)*
 
 ---
 
@@ -252,9 +254,11 @@ Three annotations form the compiler-enforced AI safety layer. They are not libra
 **`redline fn` — absolute prohibitions.**
 
 ```splash
-redline(reason: "Schema mutations require human DBA review") fn drop_table(table: String) needs DB.admin { ... }
+@reason "Schema mutations require human DBA review"
+redline fn drop_table(table: String) needs DB.admin { ... }
 
-redline(reason: "User deletion has legal and compliance implications") fn hard_delete_user(id: UserId) needs DB.write { ... }
+@reason "User deletion has legal and compliance implications"
+redline fn hard_delete_user(id: UserId) needs DB.write { ... }
 ```
 
 `redline fn` marks a function as unreachable from any Agent context. The compiler traces every call path from `agent.execute()` and `needs Agent` functions. If any path reaches a `redline fn` function, the build fails. No policy file can relax this. No flag can suppress it.
@@ -930,11 +934,13 @@ fn ask_health_coach(
 // These exist in the codebase but are permanently
 // unreachable from the agent. The compiler proves it.
 
-redline(reason: "User deletion requires manual admin action and legal review") fn delete_user(user_id: Int) needs DB.write {
+@reason "User deletion requires manual admin action and legal review"
+redline fn delete_user(user_id: Int) needs DB.write {
   // ...
 }
 
-redline(reason: "Biometric data export requires HIPAA compliance review") fn export_all_biometrics(user_id: Int) needs DB.read, FS {
+@reason "Biometric data export requires HIPAA compliance review"
+redline fn export_all_biometrics(user_id: Int) needs DB.read, FS {
   // ...
 }
 
@@ -1088,15 +1094,18 @@ approve fn transfer_funds(
 //     run_fraud_agent → wire_transfer
 //     reason: Wire transfers require dual authorization and SWIFT compliance review
 
-redline(reason: "Wire transfers require dual authorization and SWIFT compliance review") fn wire_transfer(from_id: Int, to_routing: String, amount_cents: Int) needs DB.write, Net {
+@reason "Wire transfers require dual authorization and SWIFT compliance review"
+redline fn wire_transfer(from_id: Int, to_routing: String, amount_cents: Int) needs DB.write, Net {
   // ...
 }
 
-redline(reason: "Account closure requires legal review and 30-day notice period") fn close_account(account_id: Int) needs DB.admin {
+@reason "Account closure requires legal review and 30-day notice period"
+redline fn close_account(account_id: Int) needs DB.admin {
   // ...
 }
 
-redline(reason: "Transaction records are an immutable audit trail — deletion is prohibited by regulation") fn delete_transaction(transaction_id: Int) needs DB.admin {
+@reason "Transaction records are an immutable audit trail — deletion is prohibited by regulation"
+redline fn delete_transaction(transaction_id: Int) needs DB.admin {
   // ...
 }
 

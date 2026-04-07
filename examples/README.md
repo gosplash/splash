@@ -51,7 +51,8 @@ Every function declares the capabilities it requires in its signature. The compi
 - `approve fn` — requires human sign-off (emits structured audit log in v0.1)
 
 ```splash
-redline(reason: "Schema mutations require human DBA review") fn drop_report_table() needs DB.admin { ... }
+@reason "Schema mutations require human DBA review"
+redline fn drop_report_table() needs DB.admin { ... }
 
 approve fn archive_reports(before_date: String) needs DB.write { ... }
 
@@ -124,7 +125,8 @@ approve fn charge_customer(customer_id: Int, amount_cents: Int) needs DB.write, 
 ```splash
 tool fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> { ... }
 
-redline(reason: "Index rebuilds require human operator sign-off") fn rebuild_search_index() needs DB.write { ... }
+@reason "Index rebuilds require human operator sign-off"
+redline fn rebuild_search_index() needs DB.write { ... }
 
 agent fn run_search_agent(goal: String) needs DB.read -> String { ... }
 ```

@@ -319,6 +319,10 @@ func (p *Parser) parseAnnotation() ast.Annotation {
 	}
 
 	args := p.parseAnnotationArgs()
+	if kind == ast.AnnotReason && len(args) == 0 && p.check(token.STRING) {
+		lit := p.advance()
+		args["value"] = &ast.StringLiteral{Value: lit.Literal, Position: lit.Pos}
+	}
 
 	return ast.Annotation{
 		Kind: kind,
@@ -346,6 +350,21 @@ func (p *Parser) parseAnnotationArgs() map[string]ast.Expr {
 	return args
 }
 
+func popReasonAnnotation(annots []ast.Annotation) (string, []ast.Annotation) {
+	for i := len(annots) - 1; i >= 0; i-- {
+		if annots[i].Kind != ast.AnnotReason {
+			continue
+		}
+		if lit, ok := annots[i].Args["value"].(*ast.StringLiteral); ok {
+			out := append([]ast.Annotation{}, annots[:i]...)
+			out = append(out, annots[i+1:]...)
+			return lit.Value, out
+		}
+		break
+	}
+	return "", annots
+}
+
 func (p *Parser) parseFunctionModifiers(annots []ast.Annotation) (bool, bool, []ast.Annotation) {
 	isAsync := false
 	isAgent := false
@@ -357,7 +376,17 @@ func (p *Parser) parseFunctionModifiers(annots []ast.Annotation) (bool, bool, []
 		case token.REDLINE:
 			pos := p.current().Pos
 			p.advance()
-			annots = append(annots, ast.Annotation{Kind: ast.AnnotRedline, Args: p.parseAnnotationArgs(), Pos: pos})
+			args := p.parseAnnotationArgs()
+			if reason, rest := popReasonAnnotation(annots); reason != "" {
+				annots = rest
+				if len(args) == 0 {
+					args = map[string]ast.Expr{}
+				}
+				if _, ok := args["reason"]; !ok {
+					args["reason"] = &ast.StringLiteral{Value: reason, Position: pos}
+				}
+			}
+			annots = append(annots, ast.Annotation{Kind: ast.AnnotRedline, Args: args, Pos: pos})
 		case token.TOOL:
 			annots = append(annots, ast.Annotation{Kind: ast.AnnotTool, Args: map[string]ast.Expr{}, Pos: p.current().Pos})
 			p.advance()

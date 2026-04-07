@@ -107,7 +107,8 @@ type User {
 func TestParseRedlineKeywordFunction(t *testing.T) {
 	src := `
 module foo
-redline(reason: "dangerous") fn drop() needs DB.admin { }`
+@reason "dangerous"
+redline fn drop() needs DB.admin { }`
 	file := parse(t, src)
 	fn := file.Declarations[0].(*ast.FunctionDecl)
 	if len(fn.Annotations) != 1 {
@@ -118,6 +119,17 @@ redline(reason: "dangerous") fn drop() needs DB.admin { }`
 	}
 	if got := fn.Annotations[0].Args["reason"]; got == nil {
 		t.Fatalf("expected redline reason arg to be preserved")
+	}
+}
+
+func TestParseReasonAnnotationValue(t *testing.T) {
+	_, diags := parseWithDiags(t, `
+module foo
+@reason "dangerous"
+redline fn drop() needs DB.admin { }
+`)
+	if len(diags) != 0 {
+		t.Fatalf("expected @reason shorthand to parse cleanly, got %v", diags)
 	}
 }
 

@@ -10,7 +10,8 @@ module reports
 // redline fn: permanently unreachable from any Agent context.
 // The compiler traces the full call graph from every agent entry point.
 // Any path to a redline function fails the build — no policy can override.
-redline(reason: "Schema mutations require human DBA review") fn drop_report_table() needs DB.admin {
+@reason "Schema mutations require human DBA review"
+redline fn drop_report_table() needs DB.admin {
     let op = "drop"
 }
 

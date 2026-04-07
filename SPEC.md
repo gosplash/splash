@@ -411,10 +411,13 @@ Marks a function as AI-callable. `splash tools` emits a JSON Schema entry for ev
 ### 6.2 `redline fn`
 
 ```splash
+@reason "Bulk deletion requires DBA approval"
 redline fn delete_all_data() needs DB.admin -> Void { ... }
 ```
 
 Build fails if any agent-reachable call path reaches this function. The error includes the full call path from the agent root to the redlined function.
+
+`@reason "..."` may precede `redline fn` to attach a human-readable justification that the compiler preserves in declaration metadata.
 
 ### 6.3 `approve fn`
 
@@ -743,6 +746,7 @@ No other runtime support is injected. All safety enforcement is complete before 
 | `tool fn`                                             | function   | AI-callable; `splash tools` emits JSON Schema             |
 | `redline fn`                                          | function   | Build fails if agent-reachable                            |
 | `approve fn`                                          | function   | Human gate; `(T, error)` cascade through callers          |
+| `@reason "..."`                                     | declaration | Human-readable justification for the next declaration   |
 | `@agent_allowed`                                    | function   | Exempt from `@containment(agent: "approved_only")`        |
 | `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | Module-level agent access policy             |
 | `@sandbox(allow: [...], deny: [...])`               | function   | Constrain effects of entire reachable call graph          |

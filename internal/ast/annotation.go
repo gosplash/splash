@@ -20,6 +20,7 @@ const (
 	AnnotTrace
 	AnnotDeadline
 	AnnotRoute
+	AnnotReason
 	AnnotTest
 	AnnotDeploy
 )
@@ -37,6 +38,7 @@ var annotationNames = map[string]AnnotationKind{
 	"trace":            AnnotTrace,
 	"deadline":         AnnotDeadline,
 	"route":            AnnotRoute,
+	"reason":           AnnotReason,
 	"test":             AnnotTest,
 	"deploy":           AnnotDeploy,
 }

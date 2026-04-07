@@ -123,6 +123,7 @@ fn summarize(id: Int) needs DB.read, AI -> String { return fetch(id) }
 | `tool fn` | function | marks as AI-callable; `splash tools` emits JSON Schema |
 | `redline fn` | function | build fails if any agent-reachable path reaches this function |
 | `approve fn` | function | injects human approval gate; emits `(T, error)` Go signature |
+| `@reason "..."` | declaration | attaches human-readable justification metadata to the next declaration |
 | `@agent_allowed` | function | exempts from `@containment(agent: "approved_only")` check |
 | `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | module-level agent access policy |
 | `@sandbox(allow: [...], deny: [...])` | function | constrains effects of the entire reachable call graph |

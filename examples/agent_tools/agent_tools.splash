@@ -27,7 +27,8 @@ tool fn get_item(item_id: Int, category: String?) needs DB.read -> SearchResult 
 // redline fn: the compiler traces every path from every agent entry point.
 // If any path reaches this function, the build fails.
 // Index rebuilds require a human operator, not an automated agent.
-redline(reason: "Index rebuilds require human operator sign-off") fn rebuild_search_index() needs DB.write {
+@reason "Index rebuilds require human operator sign-off"
+redline fn rebuild_search_index() needs DB.write {
     let op = "rebuild"
 }
 
