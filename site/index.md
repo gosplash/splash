@@ -11,8 +11,6 @@ title: Splash
 
 *Authors: Zach Graves <a href="mailto:zach@zachgraves.com" aria-label="Email Zach Graves" style="display:inline-flex;vertical-align:text-bottom;color:inherit;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><path d="m3 7 9 6 9-6"></path></svg></a>*
 
-*Agents: Claude Opus 4.6, Claude Sonnet 4.6 (Anthropic), GPT-5 (OpenAI)*
-
 ---
 
 Splash is a capability-secure backend language with first-class agent semantics — an integrated, production-oriented compiler-enforced safety layer for AI agent systems. It statically governs authority, capability, reachability, approval boundaries, tool exposure, and key data-flow constraints before the binary is produced. These are type-system and compiler properties, not runtime policies. It doesn't matter whether a human or an AI wrote the code. The compiler enforces the same constraints on both.
