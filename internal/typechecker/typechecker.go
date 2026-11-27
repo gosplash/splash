@@ -649,7 +649,7 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile, typeParamEnv map[string]types.Type) types.Type {
 	// Model the compiler-provided adapter by binding identity. A user value
 	// with an AIAdapter type or the name ai carries no trusted effect contract.
-	if mem, ok := e.Callee.(*ast.MemberExpr); ok && mem.Member == "prompt" && !mem.Optional {
+	if mem, ok := e.Callee.(*ast.MemberExpr); ok && mem.Member == "prompt" {
 		if ident, ok := mem.Object.(*ast.Ident); ok {
 			if adapter, ok := env.lookup(ident.Name); ok && adapter.stdlibAI && !adapter.ambiguous {
 				tc.currentFacts.Operations = append(tc.currentFacts.Operations, effects.Operation{

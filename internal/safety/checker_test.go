@@ -62,7 +62,7 @@ func check(src string) []diagnostic.Diagnostic {
 	file, _ := p.ParseFile()
 	g := callgraph.Build(file)
 	c := safety.New()
-	return c.Check(file, g)
+	return c.Check(file, g, nil)
 }
 
 func hasError(diags []diagnostic.Diagnostic) bool {

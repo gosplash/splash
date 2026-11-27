@@ -37,11 +37,12 @@ type CoverageGap struct {
 // Summary distinguishes the known lower bound of the conservative effect
 // summary from the coverage needed to use it as an upper bound.
 type Summary struct {
-	Function *ast.FunctionDecl
-	Declared EffectSet
-	Inferred EffectSet
-	Gap      *CoverageGap
-	witness  map[EffectSet]effectStep
+	Function        *ast.FunctionDecl
+	Declared        EffectSet
+	Inferred        EffectSet
+	Gap             *CoverageGap
+	requiredByCalls EffectSet
+	witness         map[EffectSet]effectStep
 }
 
 type effectStep struct {
@@ -77,6 +78,7 @@ func Infer(facts []FunctionFacts) []*Summary {
 		summary := summaries[i]
 		for _, call := range fact.Calls {
 			if target := byFunction[call.Target]; target != nil {
+				summary.requiredByCalls |= target.Declared
 				callers[target] = append(callers[target], callerEdge{summary, call.Position})
 			} else if summary.Gap == nil {
 				summary.Gap = &CoverageGap{"resolved target has no effect summary", call.Position}
@@ -113,6 +115,15 @@ func Infer(facts []FunctionFacts) []*Summary {
 		}
 	}
 	return summaries
+}
+
+// UnusedGrants returns candidates for review only when coverage is complete.
+// Resolved callees can still require a grant their implementation leaves unused.
+func (s *Summary) UnusedGrants() EffectSet {
+	if s.Gap != nil {
+		return None
+	}
+	return s.Declared &^ (s.Inferred | s.requiredByCalls | Agent)
 }
 
 func (s *Summary) add(effect EffectSet, step effectStep) {

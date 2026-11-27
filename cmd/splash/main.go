@@ -192,11 +192,7 @@ func runCheck(path string) error {
 }
 
 func (p *analyzedProgram) safetyDiagnostics() []diagnostic.Diagnostic {
-	diags := safety.New().Check(p.merged, p.graph)
-	for _, summary := range p.effects {
-		diags = append(diags, summary.Diagnostics()...)
-	}
-	return diags
+	return safety.New().Check(p.merged, p.graph, p.effects)
 }
 
 func (p *analyzedProgram) reportSafetyErrors() bool {
@@ -414,7 +410,7 @@ func runEffects(path string) error {
 			continue
 		}
 		fmt.Printf("  inferred: %s\n  coverage: complete\n", summary.Inferred)
-		if unused := summary.Declared &^ (summary.Inferred | effects.Agent); unused != effects.None {
+		if unused := summary.UnusedGrants(); unused != effects.None {
 			fmt.Printf("  unused grants: %s\n", unused)
 		}
 	}

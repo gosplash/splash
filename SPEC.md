@@ -398,9 +398,9 @@ fn bad() -> String {
 }
 ```
 
-The checker also requires every known inferred effect to be covered by its function's declared capabilities. Inference starts from modeled operations and propagates along resolved calls to a fixed point, including recursive groups. A missing grant diagnostic identifies the modeled operation and one deterministic path to it. The compiler models calls to the imported `std/ai` adapter's `prompt` operation as `AI`. The adapter contract describes the language-level operation. The provider implementation remains a trusted boundary. Built-in `println` adds no capability in this vocabulary.
+The checker also requires every known inferred effect to be covered by its function's declared capabilities. Inference starts from modeled operations and propagates along resolved calls to a fixed point, including recursive groups. A missing grant diagnostic identifies the modeled operation and one deterministic path to it. The frontend models calls to the imported `std/ai` adapter's `prompt` operation as `AI`. Provider execution is a separate runtime concern. Built-in `println` adds no capability in this vocabulary.
 
-Unresolved calls, unsupported source forms, and unmodeled adapter operations leave effect coverage incomplete for the affected function and its callers. Incomplete summaries retain known inferred effects. `splash effects` reports them separately from the unknown remainder and lists unused grants only for functions with complete coverage under the current model. Incompleteness alone creates no additional artifact gate in this slice.
+Unresolved calls, unsupported source forms, and unmodeled adapter operations leave effect coverage incomplete for the affected function and its callers. Incomplete summaries retain known inferred effects. `splash effects` reports them separately from the unknown remainder. This inspection command can report an inferred effect even when `splash check` or artifact creation rejects the source. For functions with complete coverage, the report lists grants that neither the inferred effects nor the resolved callee contracts require. Narrowing a declaration remains a contract change. Incompleteness alone creates no additional artifact gate in this slice.
 
 ### 5.4 Effect Propagation Through `approve fn`
 
@@ -613,7 +613,7 @@ fn run() needs Agent, Net -> Charge {
 use std/ai
 ```
 
-Provides:
+The compiler recognizes this source interface. Provider execution and backend error propagation are proposed runtime behavior.
 
 | Symbol           | Type                                         | Description                        |
 |------------------|----------------------------------------------|------------------------------------|
@@ -622,7 +622,7 @@ Provides:
 
 `ai.prompt<T>` is a generic function call: `ai.prompt<Report>("Summarize this")`.
 
-`ai.prompt<T>` returns `T` directly in Splash — there is no `Result` wrapper in the language surface. Failures propagate as Go errors to the nearest `needs Agent` boundary, where they surface as the agent entry point's error return. See [Section 11.8](#118-fn-main-and-the-agent-error-boundary).
+`ai.prompt<T>` has type `T` in source analysis. The proposed Go runtime propagates failures to the nearest `needs Agent` boundary as the agent entry point's error return. See [Section 11.8](#118-fn-main-and-the-agent-error-boundary).
 
 The `AI` effect is required in `needs` to call `ai.prompt`.
 
