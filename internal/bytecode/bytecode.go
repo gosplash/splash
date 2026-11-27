@@ -290,7 +290,7 @@ func (s *flowState) apply(fn Function, functions []Function, instruction Instruc
 		}
 		s.initialized[instruction.Index] = true
 	case Add, Sub, Mul, Div, Mod, Lt, Le, Gt, Ge:
-		if !s.pop(ir.Int) || !s.pop(ir.Int) {
+		if !s.popPair(ir.Int) {
 			return badStack
 		}
 		kind := ir.Int
@@ -303,7 +303,7 @@ func (s *flowState) apply(fn Function, functions []Function, instruction Instruc
 			return badStack
 		}
 		kind := s.stack[len(s.stack)-1]
-		if (kind != ir.Int && kind != ir.Bool) || !s.pop(kind) || !s.pop(kind) {
+		if (kind != ir.Int && kind != ir.Bool) || !s.popPair(kind) {
 			return badStack
 		}
 		s.stack = append(s.stack, ir.Bool)
@@ -352,5 +352,14 @@ func (s *flowState) pop(kind ir.Kind) bool {
 		return false
 	}
 	s.stack = s.stack[:v]
+	return true
+}
+
+func (s *flowState) popPair(kind ir.Kind) bool {
+	base := len(s.stack) - 2
+	if base < 0 || s.stack[base] != kind || s.stack[base+1] != kind {
+		return false
+	}
+	s.stack = s.stack[:base]
 	return true
 }
