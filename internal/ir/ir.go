@@ -4,6 +4,7 @@ package ir
 import (
 	"fmt"
 	"slices"
+	"unicode/utf8"
 
 	"gosplash.dev/splash/internal/token"
 )
@@ -203,6 +204,9 @@ func validateInstruction(program Program, function Function, inst Instruction, o
 	case Const:
 		if !isValue(inst.Type) || len(operands) != 0 {
 			return invalid(inst.Source, "constant requires a value type and no operands")
+		}
+		if inst.Type == String && !utf8.ValidString(inst.Text) {
+			return invalid(inst.Source, "string constant must be valid UTF-8")
 		}
 		return nil
 	case Load, Store:

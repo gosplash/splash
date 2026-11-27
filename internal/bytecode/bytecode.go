@@ -5,6 +5,7 @@ package bytecode
 import (
 	"fmt"
 	"slices"
+	"unicode/utf8"
 
 	"gosplash.dev/splash/internal/ir"
 	"gosplash.dev/splash/internal/token"
@@ -192,6 +193,9 @@ func validateFunctionEncoding(fn Function, functionCount int) error {
 			if !valueKind(instruction.Kind) || instruction.Index != 0 {
 				return &ValidationError{Source: instruction.Source, Detail: "invalid constant operands"}
 			}
+			if instruction.Kind == ir.String && !utf8.ValidString(instruction.Text) {
+				return &ValidationError{Source: instruction.Source, Detail: "string constant must be valid UTF-8"}
+			}
 			continue
 		case Load, Store:
 			limit = len(fn.Locals)
@@ -217,22 +221,46 @@ type flowState struct {
 }
 
 func validateFlow(fn Function, functions []Function) error {
+	// Encoding validation has already checked every branch target. A block
+	// starts at the entry, a branch target, or just after a control transfer.
+	leaders := make([]bool, len(fn.Code))
+	leaders[0] = true
+	for pc, instruction := range fn.Code {
+		switch instruction.Op {
+		case Jump, JumpIfFalse:
+			leaders[instruction.Index] = true
+		case Return:
+		default:
+			continue
+		}
+		if pc+1 < len(fn.Code) {
+			leaders[pc+1] = true
+		}
+	}
+
 	initial := flowState{initialized: make([]bool, len(fn.Locals))}
 	for index := range fn.Params {
 		initial.initialized[index] = true
 	}
-	states := make([]*flowState, len(fn.Code))
-	states[0] = &initial
+	states := map[int]*flowState{0: &initial}
 	queue := []int{0}
 	for len(queue) > 0 {
 		pc := queue[0]
 		queue = queue[1:]
-		instruction := fn.Code[pc]
 		prev := states[pc]
 		next := flowState{stack: slices.Clone(prev.stack), initialized: slices.Clone(prev.initialized)}
-		if err := next.apply(fn, functions, instruction); err != nil {
-			return err
+		// Advance one working state through the block. Only entries need
+		// snapshots for joins and the fixed-point worklist.
+		for {
+			if err := next.apply(fn, functions, fn.Code[pc]); err != nil {
+				return err
+			}
+			if pc+1 == len(fn.Code) || leaders[pc+1] {
+				break
+			}
+			pc++
 		}
+		instruction := fn.Code[pc]
 		if instruction.Op == Return {
 			continue
 		}

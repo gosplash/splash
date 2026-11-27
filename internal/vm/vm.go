@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"unicode/utf8"
 
 	"gosplash.dev/splash/internal/bytecode"
 	"gosplash.dev/splash/internal/ir"
@@ -117,6 +118,9 @@ func (runtime *Runtime) Invoke(functionID int, args []Value) (Value, error) {
 	for index, argument := range args {
 		if argument.Kind != fn.Params[index] {
 			return Value{}, &Error{Code: InvalidInvocation, Source: fn.Source, Detail: "argument type does not match function signature"}
+		}
+		if argument.Kind == ir.String && !utf8.ValidString(argument.Text) {
+			return Value{}, &Error{Code: InvalidInvocation, Source: fn.Source, Detail: "string argument must be valid UTF-8"}
 		}
 	}
 	if runtime.limits.Frames < 1 {

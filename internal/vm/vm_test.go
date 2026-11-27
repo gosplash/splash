@@ -43,6 +43,25 @@ func TestRecursiveCallIsolatesFrames(t *testing.T) {
 	requireError(t, err, InvalidInvocation, 0, 0, token.Position{})
 }
 
+func TestInvokeRequiresUTF8InStringArguments(t *testing.T) {
+	pos := token.Position{File: "strings.splash", Line: 1, Column: 1}
+	program := bytecode.Program{Entry: -1, Functions: []bytecode.Function{{
+		Params: []ir.Kind{ir.String}, Locals: []ir.Kind{ir.String}, Result: ir.String, Source: pos,
+		Code: []bytecode.Instruction{{Op: bytecode.Load}, {Op: bytecode.Return}},
+	}}}
+	runtime, err := New(program, nil, Limits{Instructions: 2, Frames: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := Value{Kind: ir.String, Text: "水🌊"}
+	if got, err := runtime.Invoke(0, []Value{value}); err != nil || got != value {
+		t.Fatalf("want Unicode roundtrip, got %v, %v", got, err)
+	}
+	value.Text = "\xff"
+	_, err = runtime.Invoke(0, []Value{value})
+	requireError(t, err, InvalidInvocation, 0, 0, pos)
+}
+
 func TestDispatchBudgetIsGlobalAcrossFrames(t *testing.T) {
 	callSite := token.Position{File: "recursion.splash", Line: 3, Column: 5}
 	program := bytecode.Program{Functions: []bytecode.Function{

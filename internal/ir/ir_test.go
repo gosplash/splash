@@ -8,6 +8,20 @@ import (
 	"gosplash.dev/splash/internal/token"
 )
 
+func TestValidateRequiresUTF8InStringConstants(t *testing.T) {
+	pos := token.Position{File: "strings.splash", Line: 2, Column: 5}
+	ops := []Instruction{{Op: Const, Type: String, Text: "水🌊", Source: pos}}
+	program := Program{Functions: []Function{{Result: Void, Blocks: []Block{{Ops: ops, End: Terminator{Op: Return, Value: -1}}}}}}
+	if err := Validate(program); err != nil {
+		t.Fatal(err)
+	}
+	ops[0].Text = "\xff"
+	var invalid *ValidationError
+	if err := Validate(program); !errors.As(err, &invalid) || invalid.Source != pos {
+		t.Fatalf("want invalid string constant at %s, got %v", pos, err)
+	}
+}
+
 func TestValidateTypedRecursiveCalls(t *testing.T) {
 	program := Program{Functions: []Function{
 		{

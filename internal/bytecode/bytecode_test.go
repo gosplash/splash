@@ -2,6 +2,8 @@ package bytecode
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 
 	"gosplash.dev/splash/internal/ir"
@@ -25,6 +27,9 @@ func TestValidateRejectsMalformedFlow(t *testing.T) {
 		{"mismatched stack height on join", nil, []Instruction{
 			boolConst, {Op: JumpIfFalse, Index: 4}, intConst, {Op: Jump, Index: 4}, {Op: Return, Source: pos},
 		}},
+		{"mismatched stack on loop back edge", nil, []Instruction{
+			{Op: Const, Kind: ir.Int, Source: pos}, {Op: Jump},
+		}},
 		{"local assigned on only one branch", []ir.Kind{ir.Int}, []Instruction{
 			boolConst, {Op: JumpIfFalse, Index: 5}, intConst, {Op: Store}, {Op: Jump, Index: 5},
 			{Op: Load, Source: pos}, {Op: Print}, {Op: Return},
@@ -44,6 +49,63 @@ func TestValidateRejectsMalformedFlow(t *testing.T) {
 			err := Validate(program)
 			if !errors.As(err, &validation) || validation.Source != pos {
 				t.Fatalf("want validation error at %s, got %v", pos, err)
+			}
+		})
+	}
+}
+
+func TestValidateRevisitsLoopHeaderAfterJoin(t *testing.T) {
+	load := token.Position{File: "loop.splash", Line: 2, Column: 5}
+	code := []Instruction{
+		{Op: Const, Kind: ir.Bool}, {Op: JumpIfFalse, Index: 5},
+		{Op: Const, Kind: ir.Int}, {Op: Store}, {Op: Jump, Index: 8},
+		{Op: Jump, Index: 6}, {Op: Jump, Index: 7}, {Op: Jump, Index: 8},
+		{Op: Load, Source: load}, {Op: Print}, {Op: Jump, Index: 8},
+	}
+	program := Program{Entry: -1, Functions: []Function{{Result: ir.Void, Locals: []ir.Kind{ir.Int}, Code: code}}}
+	var invalid *ValidationError
+	if err := Validate(program); !errors.As(err, &invalid) || invalid.Source != load {
+		t.Fatalf("want uninitialized load at %s, got %v", load, err)
+	}
+	program.Functions[0].Params = []ir.Kind{ir.Int}
+	if err := Validate(program); err != nil {
+		t.Fatalf("parameter remains initialized around the loop: %v", err)
+	}
+}
+
+func TestValidateRequiresUTF8InStringConstants(t *testing.T) {
+	pos := token.Position{File: "strings.splash", Line: 2, Column: 5}
+	code := []Instruction{{Op: Return}, {Op: Const, Kind: ir.String, Text: "水🌊", Source: pos}}
+	program := Program{Functions: []Function{{Result: ir.Void, Code: code}}}
+	if err := Validate(program); err != nil {
+		t.Fatal(err)
+	}
+	code[1].Text = "\xff"
+	var invalid *ValidationError
+	if err := Validate(program); !errors.As(err, &invalid) || invalid.Source != pos {
+		t.Fatalf("want invalid string constant at %s, got %v", pos, err)
+	}
+}
+
+func BenchmarkValidateStraightLine(b *testing.B) {
+	for _, size := range []struct{ operations, locals int }{
+		{32, 32}, {128, 128}, {512, 512}, {1024, 1024}, {1024, 32}, {32, 1024},
+	} {
+		b.Run(fmt.Sprintf("instructions=%d/locals=%d", 4*size.operations+1, size.locals), func(b *testing.B) {
+			locals := slices.Repeat([]ir.Kind{ir.Int}, size.locals)
+			code := make([]Instruction, 0, 4*size.operations+1)
+			for i := 0; i < size.operations; i++ {
+				slot := i % len(locals)
+				code = append(code, Instruction{Op: Const, Kind: ir.Int}, Instruction{Op: Store, Index: slot},
+					Instruction{Op: Load, Index: slot}, Instruction{Op: Print})
+			}
+			code = append(code, Instruction{Op: Return})
+			program := Program{Functions: []Function{{Result: ir.Void, Locals: locals, Code: code}}}
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := Validate(program); err != nil {
+					b.Fatal(err)
+				}
 			}
 		})
 	}
