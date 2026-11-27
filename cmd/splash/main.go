@@ -192,7 +192,7 @@ func runCheck(path string) error {
 }
 
 func (p *analyzedProgram) safetyDiagnostics() []diagnostic.Diagnostic {
-	return safety.New().Check(p.merged, p.graph, p.effects)
+	return safety.New().Check(p.modules, p.graph, p.effects)
 }
 
 func (p *analyzedProgram) reportSafetyErrors() bool {
