@@ -4,30 +4,30 @@ What's shipped, what's next, and why things are ordered the way they are.
 
 ---
 
-## v0.1 — Launch Ready
+## v0.1 — Implementation baseline
 
-The launch surface is the compiler, the examples, and the whitepaper. The goal is not "build your production app on Splash today." It is: here's what Splash is, here's why it matters, here's a working compiler that proves the ideas.
+The [implementation status](README.md#implementation-status) describes current coverage. The compiler, examples and April whitepaper show the original design and the subset available today. The [current engineering plan](docs/design/engineering-plan.md) runs compiler soundness and conventional authoring research in parallel.
 
 **Language core**
-- Lexer, parser, type checker, effect system
-- Call graph construction and agent-reachability analysis
+- Lexer, parser, type checker and declared effect metadata
+- Call graph construction and agent-reachability analysis for modeled calls
 - Go codegen, `Backend` interface abstraction
 - `splash check`, `splash build`, `splash emit`, `splash tools`
 
-**Safety enforcement (all compile-time)**
-- `@redline` — absolute agent lockout with full call path in error
-- `@approve` — human gate; `(T, error)` cascade through all transitive callers
-- `@containment` — module-level agent access policy (`none`, `read_only`, `approved_only`)
-- `@sandbox` — configurable effect allow/deny against the agent-reachable call graph
+**Supported safety checks and lowering**
+- `redline fn` — compile-time rejection of modeled agent paths, with a witness
+- `approve fn` — generated approval adapter dispatch and error propagation for supported calls
+- `@containment` — entry-module policy evaluated over the modeled graph
+- `@sandbox` — configurable allow/deny checks over declared effects on modeled reachable functions
 - `@budget` — compile-time argument type validation
-- `@sensitive` / `@restricted` — data classification; `@tool` return type enforcement; `Loggable` constraint
+- `@sensitive` / `@restricted` — checks for selected tool result and logging type shapes
 - `Loggable` built-in; unknown constraint names are compile errors
 
 **Tooling**
-- `splash tools` — JSON Schema from `@tool` signatures, filtered to agent-reachable set; `--format anthropic|openai` for API-compatible output
+- `splash tools` — argument schemas from `tool fn` declarations after current safety checks, with `--format anthropic|openai`
 - Multi-file modules (`use path` loads sibling `.splash` files; cycle detection; `expose` list)
-- `std/ai` — `@tool`, `ai.prompt<T>` (returns `T`; errors propagate to `needs Agent` boundary)
-- Nine documented examples covering every safety primitive
+- `std/ai` frontend bindings and prompt type handling
+- Native and illustrative examples with different levels of support
 
 ---
 

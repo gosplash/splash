@@ -1,7 +1,7 @@
 # Splash Language Specification
 
 **Version:** 0.1  
-**Status:** Working draft — authoritative for the current compiler implementation
+**Status:** Working draft of the intended language. See [implementation status](README.md#implementation-status) for current conformance and known gaps.
 
 ---
 
@@ -27,7 +27,7 @@ Splash is a statically-typed, compiled control-plane language that transpiles to
 
 Its distinguishing feature is a compile-time safety model: an effect system, call graph analysis, data classification, and a suite of annotations (`redline fn`, `approve fn`, `@containment`, `@sandbox`, `@budget`, `@sensitive`, `@restricted`) that enforce authority and safety properties before codegen.
 
-The Go backend receives a verified, effect-annotated AST with no security-relevant decisions remaining.
+The compiler design requires checking applicable safety properties before Go lowering. The current implementation's coverage is documented separately.
 
 This specification describes the current v0.1 language. It does not imply that Splash is a general-purpose replacement for Go or a universal software-security mechanism. The design center is statically-governed control software.
 

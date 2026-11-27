@@ -1,6 +1,21 @@
 # 🏄‍♂️ Splash
 
-Splash is a compiled, statically-typed control-plane language with a built-in effect system, call graph analysis, and AI agent safety enforcement. It transpiles to Go. Safety properties — effect constraints, data classification, agent reachability, approval boundaries, and tool exposure — are enforced before codegen. The Go backend sees a verified, effect-annotated AST with no security-relevant decisions remaining.
+**Designed for machines to write and humans to trust.**
+
+Splash is an early statically typed language for backend and control-plane software. It compiles to Go and is designed around explicit contracts, fast deterministic feedback and verifiable authority boundaries. Coding agents can write conventional Splash software. Software that runs agents can also declare tool, reachability and approval boundaries.
+
+## Implementation status
+
+| Behavior | Evidence |
+| --- | --- |
+| Native Go backend for the documented pilot subset | Implemented and integration-tested on the reference examples. [Supported subset](docs/design/supported-subset.md) |
+| Direct-call redline checking and CLI artifact rejection | Implemented and conformance-tested for modeled direct calls, including an imported redline. Qualified and indirect call coverage remains incomplete. |
+| Declared caller–callee effect compatibility | Specified. The current compiler records and reports declared effects. General call-site effect checking and conservative inference are planned. |
+| Approval and classification | Implemented for selected checks and lowering forms. Request-bound approval and general classified-data flow enforcement are proposed. |
+| Semantic queries, verified artifact types and authority comparisons | Proposed. The CLI currently shares its initial analysis representation and existing safety checks on artifact paths. |
+| TTCS and cost evaluation | Experimental methodology. Comparative authoring results are pending. |
+
+See the [repository assessment](docs/design/repository-assessment.md) for scoped evidence and the [status vocabulary](docs/design/product-and-roadmap.md#public-implementation-status) for how to read these labels.
 
 Core authority concepts now have first-class syntax:
 
@@ -8,15 +23,7 @@ Core authority concepts now have first-class syntax:
 - `approve fn` for human-gated operations
 - `agent fn` for agent entrypoints
 
-```splash
-@sandbox(allow: [DB.read])
-/// Search the catalog for items matching a query.
-tool fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> {
-    return db.query(query, limit)
-}
-```
-
-`splash tools search_catalog.splash` emits JSON Schema. `splash check` enforces the sandbox at compile time. `splash build` produces a native binary.
+`splash tools` emits argument JSON Schema for tool declarations. `splash check` evaluates the current static checks. Use `splash build` and run the program to verify native behavior.
 
 ---
 
@@ -61,7 +68,7 @@ internal/
   toolschema/               tool fn → JSON Schema extraction
   diagnostic/               Diagnostic type (Error/Warning + position)
   types/                    data classification lattice
-examples/                   nine checked, buildable Splash programs
+examples/                   native and illustrative Splash examples
 docs/superpowers/plans/     implementation plans (historical)
 WHITEPAPER.md               design rationale and formal model
 ```
@@ -74,25 +81,25 @@ WHITEPAPER.md               design rationale and formal model
 source (.splash)
   → Lexer        tokenize
   → Parser       produce *ast.File
-  → TypeChecker  type inference, effect propagation, constraint satisfaction
+  → TypeChecker  type inference and selected constraint checks
   → CallGraph    build directed call graph, compute agent roots + reachability
   → SafetyChecker  redline fn, approve fn, @containment, @sandbox, @budget, @sensitive/@restricted
-  → Emitter      verified AST → Go source
+  → Emitter      checked source projection → Go source
   → go build     Go source → native binary
 ```
 
-Each stage is independent. The CLI in `cmd/splash/main.go` wires them. `splash check` runs through SafetyChecker and stops. `splash build` runs the full pipeline including `go build`.
+The CLI shares one analysis entry point. `splash check`, `splash emit`, `splash build`, and `splash tools` run the implemented safety checks. `splash build` additionally invokes `go build`.
 
 ---
 
 ## Effect System
 
-Effects are declared in function signatures with `needs`. The compiler verifies every call site provides a superset of the callee's required effects.
+Effects are declared in function signatures with `needs`. The specification requires callers to cover the callee's declared effects. The current compiler uses declared labels for graph-based policy checks, with general call-site enforcement still pending.
 
 ```splash
 fn fetch(id: Int) needs DB.read -> Report { ... }
 fn summarize(id: Int) needs DB.read, AI -> String { return fetch(id) }
-// fn bad() -> String { return summarize(1) }  // error: missing DB.read, AI
+// Under the specified rule a caller of summarize must declare DB.read and AI.
 ```
 
 **Effect vocabulary:**
@@ -120,16 +127,16 @@ fn summarize(id: Int) needs DB.read, AI -> String { return fetch(id) }
 
 | Annotation | Applies To | Effect |
 |---|---|---|
-| `tool fn` | function | marks as AI-callable; `splash tools` emits JSON Schema |
-| `redline fn` | function | build fails if any agent-reachable path reaches this function |
+| `tool fn` | function | marks a tool candidate for argument schema export |
+| `redline fn` | function | safety check rejects a modeled agent path to this function |
 | `approve fn` | function | injects human approval gate; emits `(T, error)` Go signature |
 | `@reason "..."` | declaration | attaches human-readable justification metadata to the next declaration |
 | `@agent_allowed` | function | exempts from `@containment(agent: "approved_only")` check |
-| `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | module-level agent access policy |
-| `@sandbox(allow: [...], deny: [...])` | function | constrains effects of the entire reachable call graph |
+| `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | evaluates entry-module policy over the modeled graph |
+| `@sandbox(allow: [...], deny: [...])` | function | checks declared effects on modeled reachable functions |
 | `@budget(max_cost: Float, max_calls: Int)` | function | declares resource limits; types validated at compile time |
 | `@sensitive` | field | field is PII; containing type cannot satisfy `Loggable`; `tool fn` cannot return it |
-| `@restricted` | field | field is process-local; no storage adapter accepts it |
+| `@restricted` | field | highest classification level for supported checks |
 | `@internal` | field | field is internal-only; affects classification lattice |
 
 ---
@@ -142,23 +149,23 @@ Classification is a property of types, not values. Four levels form a lattice:
 public < @internal < @sensitive < @restricted
 ```
 
-The classification of a composite type is the max classification of its fields. The compiler enforces two rules today:
+The current checks cover selected type and sink shapes:
 
-1. `tool fn` functions cannot return a type whose classification exceeds `@internal` — PII would flow into the agent's context.
-2. `println` (and any function requiring `Loggable`) cannot accept a `@sensitive`-classified argument.
+1. Tool results with supported named and optional-named record types are checked for directly annotated fields above `@internal`.
+2. `println` and supported `Loggable` calls check argument type classification. Projected fields currently use the underlying field type.
 
 ---
 
 ## `splash tools` Output
 
-JSON Schema for every `tool fn` function in a file:
+Example argument schema from `splash tools <file.splash> --format anthropic`:
 
 ```json
 [
   {
     "name": "search_catalog",
     "description": "Search the catalog for items matching a query.",
-    "parameters": {
+    "input_schema": {
       "type": "object",
       "properties": {
         "query": { "type": "string" },
@@ -204,7 +211,7 @@ fn run_billing_agent() needs Agent, Net -> Charge {
 
 1. The function's Go return type is widened to `(T, error)`.
 2. `splashApprove("fn_name")` is injected as the first statement of the body.
-3. Every transitive caller also gets `(T, error)` signatures — denial propagates as an error, not a panic.
+3. Modeled transitive callers gain error propagation for supported direct call forms.
 
 ```go
 // Generated Go for approve fn charge_card(...) needs Net -> Charge
@@ -216,11 +223,7 @@ func chargeCard(customerID int, amountCents int) (Charge, error) {
 }
 ```
 
-The default `ApprovalAdapter` prompts stdin. Swap it before agent startup:
-
-```go
-SetApprovalAdapter(&WebhookApproval{URL: secrets.ApprovalWebhook})
-```
+The default `ApprovalAdapter` prompts on stdin. Generated Go accepts a custom adapter through `SetApprovalAdapter`. A production webhook adapter and request-bound approval remain proposed.
 
 ---
 
@@ -246,8 +249,8 @@ SetApprovalAdapter(&WebhookApproval{URL: secrets.ApprovalWebhook})
 
 **`internal/typechecker`**
 - `tc.SetFileLoader(baseDir, readFileFn)` — enables `use` import resolution
-- `tc.LoadedFiles() []*ast.File` — imported files for `mergeFiles` in the CLI
-- `tc.Check(f) (TypeMap, []diagnostic.Diagnostic)`
+- `tc.LoadedTypedFiles() []*TypedFile` — typed imported modules in dependency order
+- `tc.Check(f) (*TypedFile, []diagnostic.Diagnostic)`
 
 ---
 
@@ -270,7 +273,7 @@ The `check` helper parses, builds the call graph, and runs all safety passes. Wr
 | `data_safety/` | `@sensitive`, `@restricted`, data classification |
 | `containment/` | `@containment` module policy |
 | `agent_tools/` | `tool fn`, `redline fn` on dangerous operations, agent entry point |
-| `ai_prompt/` | `use std/ai`, `ai.prompt<T>`, `Result<T, E>` |
+| `ai_prompt/` | Frontend `std/ai` and `ai.prompt<T>` examples |
 | `approval/` | `approve fn` runtime, `ApprovalAdapter` |
 | `multi_file/` | `use module`, cross-file types, `splash emit` merging |
 | `sandbox/` | `@sandbox` effect constraints, `@budget` resource limits |
@@ -279,15 +282,15 @@ The `check` helper parses, builds the call graph, and runs all safety passes. Wr
 
 ## Performance
 
-`splash check` is the tight feedback loop — parse + type check + call graph + all safety passes. Measured on Apple M2:
+`splash check` runs parsing, type checking, call graph construction and the implemented safety passes. The April whitepaper reported these Apple M2 timings for an in-process synthetic chain fixture:
 
-| Program size | `splash check` |
+| Chain size | Reported in-process check |
 |---|---|
 | 100 functions | 218 µs |
 | 500 functions | 1.06 ms |
 | 2,000 functions | 6.24 ms |
 
-Whole-program call graph analysis is O(V+E). All safety passes (`redline fn`, `approve fn`, `@containment`, `@sandbox`, data classification) run as additional predicates over the same graph — no separate traversals. Runtime overhead is zero for all compile-time enforcement; the only runtime cost is the `approve fn` adapter dispatch.
+The fixture includes file reads and excludes CLI startup, native compilation and functional tests. The [assessment](docs/design/repository-assessment.md#validation-and-performance) records later Apple M5 measurements and the limits of both methods.
 
 Run benchmarks: `go test -bench=. ./internal/callgraph/... ./internal/typechecker/... ./cmd/splash/...`
 
