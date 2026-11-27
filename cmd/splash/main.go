@@ -136,17 +136,19 @@ func runCheck(path string) error {
 	}
 
 	g := callgraph.Build(merged)
-	sc := safety.New()
-	safetyErrs := sc.Check(merged, g)
-	for _, d := range safetyErrs {
-		fmt.Fprintln(os.Stderr, d)
-	}
-
-	if len(safetyErrs) > 0 {
+	if reportSafetyErrors(merged, g) {
 		return fmt.Errorf("check failed")
 	}
 	fmt.Printf("%s: ok\n", path)
 	return nil
+}
+
+func reportSafetyErrors(file *ast.File, graph *callgraph.Graph) bool {
+	diagnostics := safety.New().Check(file, graph)
+	for _, d := range diagnostics {
+		fmt.Fprintln(os.Stderr, d)
+	}
+	return len(diagnostics) > 0
 }
 
 // collectApproveFns returns the set of approval-gated function names in f.
@@ -173,6 +175,9 @@ func runEmit(path string) error {
 	}
 
 	g := callgraph.Build(merged)
+	if reportSafetyErrors(merged, g) {
+		return fmt.Errorf("safety errors")
+	}
 	fmt.Print(codegen.NewGoBackend().Emit(merged, codegen.Options{
 		ApprovalCallers: g.Callers(collectApproveFns(merged)),
 	}))
@@ -214,12 +219,7 @@ func runBuild(path, out string) error {
 	}
 
 	g := callgraph.Build(merged)
-	sc := safety.New()
-	safetyErrs := sc.Check(merged, g)
-	for _, d := range safetyErrs {
-		fmt.Fprintln(os.Stderr, d)
-	}
-	if len(safetyErrs) > 0 {
+	if reportSafetyErrors(merged, g) {
 		return fmt.Errorf("safety errors")
 	}
 
@@ -260,11 +260,7 @@ func runTools(path string, format toolschema.Format) error {
 	}
 
 	g := callgraph.Build(merged)
-	safetyErrs := safety.New().Check(merged, g)
-	for _, d := range safetyErrs {
-		fmt.Fprintln(os.Stderr, d)
-	}
-	if len(safetyErrs) > 0 {
+	if reportSafetyErrors(merged, g) {
 		return fmt.Errorf("safety errors: tool surface is unsafe")
 	}
 

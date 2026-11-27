@@ -47,13 +47,14 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	return buf.String(), runErr
 }
 
-func TestRunCheck_ImportedRedlineFails(t *testing.T) {
+func TestCommandsRejectImportedRedline(t *testing.T) {
 	dir := t.TempDir()
 	mainPath := writeSplashFile(t, dir, "main.splash", `
 module main
 use lib
 
 fn run_agent() needs Agent -> String { return dangerous() }
+fn main() { println(run_agent()) }
 `)
 	writeSplashFile(t, dir, "lib.splash", `
 module lib
@@ -61,8 +62,25 @@ module lib
 redline fn dangerous() -> String { return "boom" }
 `)
 
-	if err := runCheck(mainPath); err == nil {
-		t.Fatal("expected imported redline violation to fail check")
+	binary := filepath.Join(dir, "program")
+	for _, command := range []struct {
+		name string
+		run  func() error
+	}{
+		{"check", func() error { return runCheck(mainPath) }},
+		{"emit", func() error { return runEmit(mainPath) }},
+		{"build", func() error { return runBuild(mainPath, binary) }},
+		{"tools", func() error { return runTools(mainPath, toolschema.FormatOpenAI) }},
+	} {
+		t.Run(command.name, func(t *testing.T) {
+			out, err := captureStdout(t, command.run)
+			if err == nil || out != "" {
+				t.Fatalf("expected rejection without output; got error %v and stdout %q", err, out)
+			}
+		})
+	}
+	if _, err := os.Stat(binary); !os.IsNotExist(err) {
+		t.Fatalf("expected no binary on rejection; got stat error %v", err)
 	}
 }
 
