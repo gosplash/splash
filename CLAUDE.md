@@ -156,4 +156,6 @@ Do not implement any of the above without a plan in `docs/superpowers/plans/`.
 - `docs:` whitepaper, README, CLAUDE.md, examples
 - `refactor:` internal restructuring with no behavior change
 
-Before opening a pull request that substantially changes the compiler or VM, pin the diff and run three independent, read-only reviews in parallel. Assign one reviewer to language semantics and compatibility, one to compiler and runtime boundaries, and one to conformance tests and repository standards. Address blocking findings, rerun the relevant tests, and send corrective changes back to the reviewer who found the issue. Summarize the review and validation in the pull request using `.github/PULL_REQUEST_TEMPLATE.md`.
+Before opening a pull request that substantially changes the compiler or VM, pin the diff and run three independent, read-only reviews in parallel. Assign one reviewer to language semantics and compatibility, one to compiler and runtime boundaries, and one to conformance tests and repository standards. Address blocking findings, rerun the relevant tests, and send corrective changes back to the reviewer who found the issue. Summarize the review and validation in the pull request.
+
+When creating any pull request, use the template in `.github/PULL_REQUEST_TEMPLATE.md`.
