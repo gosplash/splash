@@ -373,6 +373,11 @@ pre[class*="language-"]       { background: none; text-shadow: none; }
 .research-table table {
   display: table;
   margin-bottom: 0;
+  min-width: 33rem;
+}
+
+.research-table th {
+  white-space: normal;
 }
 
 /* --- Reader's Guide callout --- */
