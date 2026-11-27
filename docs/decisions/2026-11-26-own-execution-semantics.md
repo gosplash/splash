@@ -23,7 +23,7 @@ Design for portable shared business logic and contracts. Keep local execution bi
 ### Consequences
 
 - VM-001 covers only the admitted literal-output entry program. It adds in-memory execution and validators while leaving the current CLI unchanged.
-- Recursion and invoice conformance are later milestones. The signed 64-bit checked integer contract is proposed pending language review and consistent backend implementation.
+- VM-002 introduces recursive execution and targets the [accepted checked integer contract](2026-11-27-checked-integer-semantics.md). Go lowering remains the comparison target within its parity domain. Records and invoice conformance remain the VM-003 milestone.
 - A serialized bytecode format, host grants, deterministic adapters, target bindings, native code generation and self-hosting remain future work. Isolated execution is still required for untrusted authoring trials.
 
 ## More Information
