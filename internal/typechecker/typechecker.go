@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gosplash.dev/splash/internal/ast"
@@ -23,7 +24,7 @@ type TypedFile struct {
 type moduleState struct {
 	fileLoader  func(path string) ([]byte, error) // nil = no filesystem loading
 	baseDir     string                            // directory of the main file
-	loadedFiles []*ast.File                       // files in load order (imports before importers)
+	loadedFiles []*TypedFile                      // files in load order (imports before importers)
 	cache       map[string]*ast.File              // path → file (dedup)
 	loading     map[string]bool                   // currently-loading paths (cycle detection)
 }
@@ -79,14 +80,13 @@ func (tc *TypeChecker) SetFileLoader(baseDir string, loader func(path string) ([
 	}
 }
 
-// LoadedFiles returns all files loaded transitively during Check(), in load
-// order (imports before importers). The main file is NOT included.
-// Used by the CLI to merge imported declarations into codegen.
-func (tc *TypeChecker) LoadedFiles() []*ast.File {
+// LoadedTypedFiles returns the successfully checked dependencies in load
+// order (imports before importers). It excludes the entry file.
+func (tc *TypeChecker) LoadedTypedFiles() []*TypedFile {
 	if tc.modules == nil {
 		return nil
 	}
-	return tc.modules.loadedFiles
+	return slices.Clone(tc.modules.loadedFiles)
 }
 
 func (tc *TypeChecker) Check(file *ast.File) (*TypedFile, []diagnostic.Diagnostic) {
@@ -180,7 +180,7 @@ func (tc *TypeChecker) loadUserModule(u *ast.UseDecl) {
 	tc.modules.loading[filePath] = true
 	sub := New()
 	sub.modules = tc.modules // share state for transitive imports
-	_, subDiags := sub.Check(imported)
+	typed, subDiags := sub.Check(imported)
 	tc.diags = append(tc.diags, subDiags...)
 	delete(tc.modules.loading, filePath)
 
@@ -194,7 +194,7 @@ func (tc *TypeChecker) loadUserModule(u *ast.UseDecl) {
 
 	// Cache and record
 	tc.modules.cache[filePath] = imported
-	tc.modules.loadedFiles = append(tc.modules.loadedFiles, imported)
+	tc.modules.loadedFiles = append(tc.modules.loadedFiles, typed)
 
 	// Inject symbols
 	tc.injectModule(imported, u)

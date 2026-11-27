@@ -11,6 +11,7 @@ import (
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/codegen"
+	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/effects"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
@@ -93,8 +94,30 @@ func main() {
 	}
 }
 
-func parseFile(path string) (*ast.File, error) {
-	src, err := os.ReadFile(path)
+// analyzedProgram owns the captured source and typed modules. Existing graph
+// and lowering consumers still use the flattened projection.
+type analyzedProgram struct {
+	sources map[string]string
+	modules []*typechecker.TypedFile
+	merged  *ast.File
+	graph   *callgraph.Graph
+}
+
+func analyzeProgram(path string) (*analyzedProgram, error) {
+	program := &analyzedProgram{sources: make(map[string]string)}
+	read := func(path string) ([]byte, error) {
+		if source, ok := program.sources[path]; ok {
+			return []byte(source), nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		program.sources[path] = string(data)
+		return data, nil
+	}
+
+	src, err := read(path)
 	if err != nil {
 		return nil, err
 	}
@@ -107,44 +130,42 @@ func parseFile(path string) (*ast.File, error) {
 	if len(diags) > 0 {
 		return nil, fmt.Errorf("parse errors in %s", path)
 	}
-	return f, nil
-}
-
-func loadProgram(path string) (*ast.File, *ast.File, error) {
-	f, err := parseFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
 
 	tc := typechecker.New()
-	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
-	_, typeErrs := tc.Check(f)
+	tc.SetFileLoader(filepath.Dir(path), read)
+	entry, typeErrs := tc.Check(f)
 	for _, d := range typeErrs {
 		fmt.Fprintln(os.Stderr, d)
 	}
 	if len(typeErrs) > 0 {
-		return nil, nil, fmt.Errorf("type errors")
+		return nil, fmt.Errorf("type errors")
 	}
 
-	return f, mergeFiles(tc.LoadedFiles(), f), nil
+	program.modules = append(tc.LoadedTypedFiles(), entry)
+	program.merged = mergeFiles(program.modules)
+	program.graph = callgraph.Build(program.merged)
+	return program, nil
 }
 
 func runCheck(path string) error {
-	_, merged, err := loadProgram(path)
+	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
 
-	g := callgraph.Build(merged)
-	if reportSafetyErrors(merged, g) {
+	if program.reportSafetyErrors() {
 		return fmt.Errorf("check failed")
 	}
 	fmt.Printf("%s: ok\n", path)
 	return nil
 }
 
-func reportSafetyErrors(file *ast.File, graph *callgraph.Graph) bool {
-	diagnostics := safety.New().Check(file, graph)
+func (p *analyzedProgram) safetyDiagnostics() []diagnostic.Diagnostic {
+	return safety.New().Check(p.merged, p.graph)
+}
+
+func (p *analyzedProgram) reportSafetyErrors() bool {
+	diagnostics := p.safetyDiagnostics()
 	for _, d := range diagnostics {
 		fmt.Fprintln(os.Stderr, d)
 	}
@@ -169,17 +190,16 @@ func collectApproveFns(f *ast.File) map[string]bool {
 }
 
 func runEmit(path string) error {
-	_, merged, err := loadProgram(path)
+	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
 
-	g := callgraph.Build(merged)
-	if reportSafetyErrors(merged, g) {
+	if program.reportSafetyErrors() {
 		return fmt.Errorf("safety errors")
 	}
-	fmt.Print(codegen.NewGoBackend().Emit(merged, codegen.Options{
-		ApprovalCallers: g.Callers(collectApproveFns(merged)),
+	fmt.Print(codegen.NewGoBackend().Emit(program.merged, codegen.Options{
+		ApprovalCallers: program.graph.Callers(collectApproveFns(program.merged)),
 	}))
 	return nil
 }
@@ -189,8 +209,9 @@ func runEmit(path string) error {
 // The main file's module declaration and package name are preserved.
 // This ensures imported types are defined before the main file references them
 // in the generated Go output.
-func mergeFiles(imported []*ast.File, main *ast.File) *ast.File {
-	if len(imported) == 0 {
+func mergeFiles(modules []*typechecker.TypedFile) *ast.File {
+	main := modules[len(modules)-1].File
+	if len(modules) == 1 {
 		return main
 	}
 	merged := &ast.File{
@@ -198,12 +219,11 @@ func mergeFiles(imported []*ast.File, main *ast.File) *ast.File {
 		Exposes:  main.Exposes,
 		Position: main.Position,
 	}
-	for _, f := range imported {
+	for _, module := range modules {
+		f := module.File
 		merged.Uses = append(merged.Uses, f.Uses...)
 		merged.Declarations = append(merged.Declarations, f.Declarations...)
 	}
-	merged.Uses = append(merged.Uses, main.Uses...)
-	merged.Declarations = append(merged.Declarations, main.Declarations...)
 	return merged
 }
 
@@ -213,23 +233,22 @@ func runBuild(path, out string) error {
 		return err
 	}
 
-	f, merged, err := loadProgram(path)
+	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
 
-	g := callgraph.Build(merged)
-	if reportSafetyErrors(merged, g) {
+	if program.reportSafetyErrors() {
 		return fmt.Errorf("safety errors")
 	}
 
-	goSrc := codegen.NewGoBackend().Emit(merged, codegen.Options{
-		ApprovalCallers: g.Callers(collectApproveFns(merged)),
+	goSrc := codegen.NewGoBackend().Emit(program.merged, codegen.Options{
+		ApprovalCallers: program.graph.Callers(collectApproveFns(program.merged)),
 	})
 
 	// splash build always produces an executable — package must be main
-	if f.Module != nil && f.Module.Name != "main" {
-		goSrc = strings.Replace(goSrc, "package "+f.Module.Name+"\n", "package main\n", 1)
+	if module := program.merged.Module; module != nil && module.Name != "main" {
+		goSrc = strings.Replace(goSrc, "package "+module.Name+"\n", "package main\n", 1)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "splash-build-*")
@@ -254,22 +273,20 @@ func runBuild(path, out string) error {
 }
 
 func runTools(path string, format toolschema.Format) error {
-	_, merged, err := loadProgram(path)
+	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
 
-	g := callgraph.Build(merged)
-	if reportSafetyErrors(merged, g) {
+	if program.reportSafetyErrors() {
 		return fmt.Errorf("safety errors: tool surface is unsafe")
 	}
 
-	// Only emit tools for agent-reachable functions. Tool declarations are
-	// agent roots, so all are reachable — but this filters any that were
-	// excluded by @containment or flagged by redline.
-	agentReachable := g.Reachable(g.AgentRoots())
+	// Tool declarations are agent roots. The safety check above rejects the
+	// entire export when the modeled graph violates policy.
+	agentReachable := program.graph.Reachable(program.graph.AgentRoots())
 
-	schemas := toolschema.ExtractReachable(merged, agentReachable)
+	schemas := toolschema.ExtractReachable(program.merged, agentReachable)
 	if schemas == nil {
 		schemas = []toolschema.ToolSchema{}
 	}
@@ -282,12 +299,12 @@ func runTools(path string, format toolschema.Format) error {
 }
 
 func runGraph(path string) error {
-	_, merged, err := loadProgram(path)
+	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
 
-	g := callgraph.Build(merged)
+	g := program.graph
 	roots := g.AgentRoots()
 
 	fmt.Println("agent roots:")
@@ -318,28 +335,26 @@ func runGraph(path string) error {
 }
 
 func runEffects(path string) error {
-	_, merged, err := loadProgram(path)
+	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
 
-	g := callgraph.Build(merged)
 	fmt.Println("effects:")
-	for _, node := range g.Nodes() {
+	for _, node := range program.graph.Nodes() {
 		fmt.Printf("- %s: %s\n", node.Name, node.Effects.String())
 	}
 	return nil
 }
 
 func runApprovals(path string) error {
-	_, merged, err := loadProgram(path)
+	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
 
-	g := callgraph.Build(merged)
-	approveFns := collectApproveFns(merged)
-	callers := g.Callers(approveFns)
+	approveFns := collectApproveFns(program.merged)
+	callers := program.graph.Callers(approveFns)
 
 	fmt.Println("approval-gated functions:")
 	if len(approveFns) == 0 {

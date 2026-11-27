@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/toolschema"
 )
 
@@ -81,6 +82,38 @@ redline fn dangerous() -> String { return "boom" }
 	}
 	if _, err := os.Stat(binary); !os.IsNotExist(err) {
 		t.Fatalf("expected no binary on rejection; got stat error %v", err)
+	}
+}
+
+func TestAnalyzeProgramRetainsTypedModulesAndSource(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeSplashFile(t, dir, "main.splash", `
+module main
+use lib as local
+fn main() { println(local.answer()) }
+`)
+	const original = "module lib\nfn answer() -> Int { return 42 }\n"
+	lib := writeSplashFile(t, dir, "lib.splash", original)
+
+	program, err := analyzeProgram(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(program.modules) != 2 {
+		t.Fatalf("expected one imported module and one entry module, got %d", len(program.modules))
+	}
+	imported, root := program.modules[0], program.modules[1]
+	if imported.File.Module.Name != "lib" || root.File.Module.Name != "main" {
+		t.Fatal("expected imports before the entry module, with original module ownership")
+	}
+	fn := imported.File.Declarations[0].(*ast.FunctionDecl)
+	value := fn.Body.Stmts[0].(*ast.ReturnStmt).Value
+	if typ := imported.Types[value]; typ == nil || typ.TypeName() != "Int" {
+		t.Fatalf("expected the imported return expression to retain type Int, got %v", typ)
+	}
+	writeSplashFile(t, dir, "lib.splash", "module lib\nfn answer() -> Int { return 99 }\n")
+	if program.sources[lib] != original || !strings.Contains(program.sources[entry], "use lib as local") {
+		t.Fatal("expected captured source from both modules, including the original imported bytes")
 	}
 }
 
