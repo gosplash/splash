@@ -6,10 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"gosplash.dev/splash/internal/callgraph"
-	"gosplash.dev/splash/internal/safety"
-	"gosplash.dev/splash/internal/typechecker"
 )
 
 // genCheckSrc generates a Splash program suitable for end-to-end splash check
@@ -43,19 +39,11 @@ func genCheckSrc(n int) string {
 // checkPipeline runs the full splash check pipeline without printing output.
 // This is the benchmarkable equivalent of runCheck.
 func checkPipeline(path string) error {
-	f, err := parseFile(path)
+	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
-	tc := typechecker.New()
-	tc.SetFileLoader(filepath.Dir(path), os.ReadFile)
-	_, typeErrs := tc.Check(f)
-	if len(typeErrs) > 0 {
-		return fmt.Errorf("type errors")
-	}
-	g := callgraph.Build(f)
-	safetyErrs := safety.New().Check(f, g)
-	if len(safetyErrs) > 0 {
+	if len(program.safetyDiagnostics()) > 0 {
 		return fmt.Errorf("safety errors")
 	}
 	return nil
