@@ -113,7 +113,7 @@ The core premise is that many of the highest-consequence failure modes in AI age
 
 Four design decisions carry most of the weight:
 
-**Effects as function signatures.** Every function declares the capabilities it requires: `needs DB, Net, Clock`. The compiler verifies that every call site provides the declared effects. A function declared with `needs DB.read` cannot call a function that `needs DB.write`. An agent cannot invoke a function that `needs FS` unless the agent was explicitly granted filesystem access. Violations fail to compile.
+**Effects as function signatures.** A function declares the capabilities it requires with `needs`, for example `needs DB.read, Net`. For a resolved direct or qualified call, the compiler verifies that the caller declares the callee's capabilities. A function declared with `needs DB.read` cannot call a resolved function that `needs DB.write`. See the [current effect specification](https://github.com/gosplash/splash/blob/master/SPEC.md#5-effect-system) for vocabulary and coverage.
 
 Effects are also design pressure. A function's capability surface is visible in its signature — five effects on one function is the same signal as a constructor with ten parameters. The compiler doesn't just enforce safety; it rewards decomposition. The natural Splash architecture becomes small, focused functions with tight effect declarations, composed by a thin orchestration layer that declares the union. The agent entry point's `needs` clause is the capability manifest: readable by humans, auditable by tools, enforced by the compiler.
 
@@ -379,6 +379,8 @@ The compiler-enforced primitives will not change without a major version. The `s
 
 #### Effect System
 
+*Historical design vocabulary and goals. See the [current language specification](https://github.com/gosplash/splash/blob/master/SPEC.md#52-effect-vocabulary) for implemented labels, `DB` shorthand, and resolved-call coverage.*
+
 Every Splash function has an associated effect set drawn from a fixed vocabulary:
 
 ```
@@ -567,7 +569,7 @@ Deliverable: a type-checker that accepts or rejects Splash programs and produces
 
 ### Phase 2: Effect System and Go Codegen
 
-- Effect declaration and propagation (`needs` checking at every call site)
+- Declared effect compatibility (`needs` checking on resolved direct and qualified calls)
 - Call graph construction and agent-context reachability analysis
 - `redline fn` enforcement via call graph tracing
 - `@containment` module boundary enforcement

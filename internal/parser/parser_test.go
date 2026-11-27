@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"gosplash.dev/splash/internal/ast"
@@ -9,6 +10,23 @@ import (
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/token"
 )
+
+func TestSandboxRejectsRepeatedPolicyArgument(t *testing.T) {
+	for _, name := range []string{"allow", "deny"} {
+		_, diags := parseWithDiags(t, "module sample\n@sandbox("+name+": [Misspelled], "+name+": [Net])\nfn run() {}\n")
+		if len(diags) != 1 || diags[0].Pos.Line != 2 ||
+			!strings.Contains(diags[0].Message, "duplicate @sandbox argument") {
+			t.Fatalf("want duplicate %s diagnostic, got %v", name, diags)
+		}
+	}
+}
+
+func TestSandboxRejectsUnknownPolicyArgument(t *testing.T) {
+	_, diags := parseWithDiags(t, "module sample\n@sandbox(denny: [Net])\nfn run() {}\n")
+	if len(diags) != 1 || diags[0].Pos.Line != 2 || diags[0].Message != `unknown @sandbox argument "denny"` {
+		t.Fatalf("want diagnostic at the unknown sandbox argument, got %v", diags)
+	}
+}
 
 func parse(t *testing.T, src string) *ast.File {
 	t.Helper()

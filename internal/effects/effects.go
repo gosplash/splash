@@ -12,15 +12,44 @@ import (
 type EffectSet uint32
 
 const (
-	None    EffectSet = 0
-	DBRead  EffectSet = 1 << iota
+	None   EffectSet = 0
+	DBRead EffectSet = 1 << iota
 	DBWrite
 	Net
 	AI
 	Agent
+	DBAdmin
+	FS
+	Exec
+	Cache
+	Secrets
+	Queue
+	Metric
 	// DB is the parent of DBRead and DBWrite — used only in Parse expansion.
 	DB EffectSet = DBRead | DBWrite
 )
+
+var atomicEffects = [...]struct {
+	name string
+	flag EffectSet
+}{
+	{"DB.read", DBRead}, {"DB.write", DBWrite}, {"DB.admin", DBAdmin},
+	{"Net", Net}, {"AI", AI}, {"Agent", Agent}, {"FS", FS}, {"Exec", Exec},
+	{"Cache", Cache}, {"Secrets", Secrets}, {"Queue", Queue}, {"Metric", Metric},
+}
+
+// Lookup resolves a label in the declared effect vocabulary.
+func Lookup(name string) (EffectSet, bool) {
+	if name == "DB" {
+		return DB, true
+	}
+	for _, effect := range atomicEffects {
+		if name == effect.name {
+			return effect.flag, true
+		}
+	}
+	return None, false
+}
 
 // Has reports whether e contains the flag f.
 func (e EffectSet) Has(f EffectSet) bool {
@@ -33,20 +62,10 @@ func (e EffectSet) String() string {
 		return "none"
 	}
 	var parts []string
-	if e.Has(DBRead) {
-		parts = append(parts, "DB.read")
-	}
-	if e.Has(DBWrite) {
-		parts = append(parts, "DB.write")
-	}
-	if e.Has(Net) {
-		parts = append(parts, "Net")
-	}
-	if e.Has(AI) {
-		parts = append(parts, "AI")
-	}
-	if e.Has(Agent) {
-		parts = append(parts, "Agent")
+	for _, effect := range atomicEffects {
+		if e.Has(effect.flag) {
+			parts = append(parts, effect.name)
+		}
 	}
 	return strings.Join(parts, "|")
 }
@@ -56,20 +75,8 @@ func (e EffectSet) String() string {
 func Parse(exprs []ast.EffectExpr) EffectSet {
 	var result EffectSet
 	for _, e := range exprs {
-		switch e.Name {
-		case "DB":
-			result |= DB
-		case "DB.read":
-			result |= DBRead
-		case "DB.write":
-			result |= DBWrite
-		case "Net":
-			result |= Net
-		case "AI":
-			result |= AI
-		case "Agent":
-			result |= Agent
-		}
+		flag, _ := Lookup(e.Name)
+		result |= flag
 	}
 	return result
 }

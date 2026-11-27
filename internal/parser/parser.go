@@ -318,7 +318,7 @@ func (p *Parser) parseAnnotation() ast.Annotation {
 		p.errorf(nameTok.Pos, "unknown annotation %q", nameTok.Literal)
 	}
 
-	args := p.parseAnnotationArgs()
+	args := p.parseAnnotationArgs(kind)
 	if kind == ast.AnnotReason && len(args) == 0 && p.check(token.STRING) {
 		lit := p.advance()
 		args["value"] = &ast.StringLiteral{Value: lit.Literal, Position: lit.Pos}
@@ -331,7 +331,7 @@ func (p *Parser) parseAnnotation() ast.Annotation {
 	}
 }
 
-func (p *Parser) parseAnnotationArgs() map[string]ast.Expr {
+func (p *Parser) parseAnnotationArgs(kind ast.AnnotationKind) map[string]ast.Expr {
 	args := map[string]ast.Expr{}
 	if p.check(token.LPAREN) {
 		p.advance() // consume (
@@ -339,6 +339,13 @@ func (p *Parser) parseAnnotationArgs() map[string]ast.Expr {
 			keyTok := p.eatName()
 			p.eat(token.COLON)
 			val := p.parseExpr(precLowest)
+			if kind == ast.AnnotSandbox {
+				if keyTok.Literal != "allow" && keyTok.Literal != "deny" {
+					p.errorf(keyTok.Pos, "unknown @sandbox argument %q", keyTok.Literal)
+				} else if _, duplicate := args[keyTok.Literal]; duplicate {
+					p.errorf(keyTok.Pos, "duplicate @sandbox argument %q", keyTok.Literal)
+				}
+			}
 			args[keyTok.Literal] = val
 			if !p.check(token.COMMA) {
 				break
@@ -376,7 +383,7 @@ func (p *Parser) parseFunctionModifiers(annots []ast.Annotation) (bool, bool, []
 		case token.REDLINE:
 			pos := p.current().Pos
 			p.advance()
-			args := p.parseAnnotationArgs()
+			args := p.parseAnnotationArgs(ast.AnnotRedline)
 			if reason, rest := popReasonAnnotation(annots); reason != "" {
 				annots = rest
 				if len(args) == 0 {

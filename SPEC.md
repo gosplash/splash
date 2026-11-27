@@ -352,7 +352,7 @@ The type checker infers types for `let` bindings when no annotation is given. Ex
 
 ### 4.5 Effect Propagation
 
-Function effect requirements flow transitively: a function's effective effects are the union of its declared `needs` and the `needs` of every function it calls. The type checker enforces that every call site provides a superset of the callee's required effects.
+For resolved named calls, the declared compatibility rule in [§5.3](#53-effect-checking) carries capability requirements along a call chain. Conservative inference from operations and checking unresolved targets are separate from this rule.
 
 ---
 
@@ -386,9 +386,11 @@ Effects after `needs` are comma-separated. A function with no `needs` clause req
 
 `Agent` is structural: it marks an entry point for call graph analysis and is not subject to `@sandbox` allow/deny constraints.
 
+`DB` is shorthand for `DB.read, DB.write`. `DB.admin` is a separate effect. Unknown labels in `needs` and `@sandbox` effect lists are errors.
+
 ### 5.3 Effect Checking
 
-The type checker errors if a call site's declared effects do not cover the callee's required effects:
+For a resolved direct or qualified call, the type checker requires the caller's declared capabilities to cover the callee's declared capabilities. This also applies to grants the callee's current body leaves unused. The structural `Agent` marker is excluded from this comparison.
 
 ```splash
 fn bad() -> String {
@@ -461,7 +463,7 @@ Three policies:
 | Value           | Meaning                                                    |
 |-----------------|------------------------------------------------------------|
 | `"none"`        | No agent may call any function in this module              |
-| `"read_only"`   | Agents may only call functions with `DB.read` effects      |
+| `"read_only"`   | Agent-reachable functions may declare at most `DB.read` capability |
 | `"approved_only"` | Agents may only call `@agent_allowed` functions          |
 
 ### 6.6 `@sandbox`

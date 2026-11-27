@@ -263,11 +263,11 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 				fn.Name,
 			))
 		case containmentReadOnly:
-			if node.Effects.Has(effects.DBWrite) {
+			if disallowed := node.Effects &^ (effects.DBRead | effects.Agent); disallowed != effects.None {
 				diags = append(diags, diagnostic.Errorf(
 					fn.Position,
-					"function %q has DB.write but module has @containment(agent: \"read_only\")",
-					fn.Name,
+					"function %q has %s but module has @containment(agent: \"read_only\")",
+					fn.Name, disallowed,
 				))
 			}
 		case containmentApprovedOnly:
@@ -296,7 +296,7 @@ func exprToEffectName(expr ast.Expr) string {
 	case *ast.Ident:
 		return e.Name
 	case *ast.MemberExpr:
-		if id, ok := e.Object.(*ast.Ident); ok {
+		if id, ok := e.Object.(*ast.Ident); ok && !e.Optional {
 			return id.Name + "." + e.Member
 		}
 	}
@@ -304,18 +304,24 @@ func exprToEffectName(expr ast.Expr) string {
 }
 
 // parseEffectListArg converts a @sandbox allow/deny list argument to an EffectSet.
-func parseEffectListArg(expr ast.Expr) effects.EffectSet {
+func parseEffectListArg(expr ast.Expr) (effects.EffectSet, []diagnostic.Diagnostic) {
 	list, ok := expr.(*ast.ListLiteral)
 	if !ok {
-		return effects.None
+		return effects.None, []diagnostic.Diagnostic{diagnostic.Errorf(expr.Pos(), "@sandbox requires a list of effect labels")}
 	}
-	var effectExprs []ast.EffectExpr
+	var set effects.EffectSet
+	var diags []diagnostic.Diagnostic
 	for _, elem := range list.Elements {
-		if name := exprToEffectName(elem); name != "" {
-			effectExprs = append(effectExprs, ast.EffectExpr{Name: name})
+		name := exprToEffectName(elem)
+		if name == "" {
+			diags = append(diags, diagnostic.Errorf(elem.Pos(), "@sandbox requires an effect label"))
+		} else if flag, known := effects.Lookup(name); known {
+			set |= flag
+		} else {
+			diags = append(diags, diagnostic.Errorf(elem.Pos(), "unknown effect %q in @sandbox", name))
 		}
 	}
-	return effects.Parse(effectExprs)
+	return set, diags
 }
 
 // checkSandbox enforces @sandbox allow/deny constraints on annotated functions.
@@ -333,8 +339,11 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.
 		var sandboxAnn *ast.Annotation
 		for i := range fn.Annotations {
 			if fn.Annotations[i].Kind == ast.AnnotSandbox {
+				if sandboxAnn != nil {
+					diags = append(diags, diagnostic.Errorf(fn.Annotations[i].Pos, "duplicate @sandbox annotation"))
+					continue
+				}
 				sandboxAnn = &fn.Annotations[i]
-				break
 			}
 		}
 		if sandboxAnn == nil {
@@ -342,14 +351,17 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.
 		}
 
 		var allowSet effects.EffectSet
-		hasAllow := false
-		if allowExpr, ok := sandboxAnn.Args["allow"]; ok {
-			allowSet = parseEffectListArg(allowExpr)
-			hasAllow = true
+		allowExpr, hasAllow := sandboxAnn.Args["allow"]
+		if hasAllow {
+			set, errors := parseEffectListArg(allowExpr)
+			allowSet = set
+			diags = append(diags, errors...)
 		}
 		var denySet effects.EffectSet
 		if denyExpr, ok := sandboxAnn.Args["deny"]; ok {
-			denySet = parseEffectListArg(denyExpr)
+			set, errors := parseEffectListArg(denyExpr)
+			denySet = set
+			diags = append(diags, errors...)
 		}
 
 		reachable := g.Reachable([]string{g.FunctionKey(fn)})

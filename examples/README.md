@@ -43,7 +43,7 @@ fn greet(p: Person) -> String {
 
 **`effects/effects.splash`** — the effect system.
 
-Every function declares the capabilities it requires in its signature. The compiler verifies this at every call site. A function with `needs DB.read` cannot call a function that `needs DB.write`. Violations fail the build.
+Functions declare their capabilities in their signature. For resolved direct and qualified calls, the caller must cover the callee's declared capabilities. A function with `needs DB.read` cannot call a function that `needs DB.write`. Violations fail the build.
 
 - `needs` clause on function declarations
 - Effect propagation through the call graph
@@ -56,11 +56,11 @@ redline fn drop_report_table() needs DB.admin { ... }
 
 approve fn archive_reports(before_date: String) needs DB.write { ... }
 
-// generate_summary inherits both effects it transitively needs
+// generate_summary explicitly declares the effects required by its calls
 fn generate_summary(id: Int) needs DB.read, AI -> String { ... }
 ```
 
-**Try breaking it.** Add a function with `needs Agent` that calls `drop_report_table()`. `splash check` will fail with a `redline fn` violation.
+**Try breaking it.** Add a function with `needs Agent` that calls `drop_report_table()`. `splash check` reports the missing `DB.admin` grant. If the test function declares `DB.admin`, `splash check` reports the independent `redline fn` violation.
 
 ---
 

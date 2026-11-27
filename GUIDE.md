@@ -26,7 +26,7 @@ Splash is intentionally narrow. That narrowness is part of the value proposition
 
 Splash programs have two concerns: **what they do** and **what they're allowed to do**. Most languages only let you express the first. Splash lets you express both, and the compiler enforces the contract.
 
-Effects are declarations, not implementations. When you write `needs DB.read`, you are not causing a database read — you are declaring that this function requires the database-read capability to be in scope. The compiler enforces this requirement across the entire call graph. The effect tells readers exactly what this code touches.
+Effects are declarations, not implementations. When you write `needs DB.read`, you are not causing a database read — you are declaring that this function requires the database-read capability to be in scope. The type checker enforces the declared requirement at resolved direct and qualified calls. The effect tells readers which capability this function is permitted to use.
 
 Safety annotations (`redline fn`, `approve fn`, `@sandbox`, `@containment`) are also declarations. They describe invariants the compiler enforces over the call graph. You write them once; the compiler checks them forever, on every build.
 
@@ -91,7 +91,7 @@ The `needs DB.read` is not documentation — it is a constraint the compiler enf
 
 **Declare the minimum required effects.** A read helper should not declare `DB.write`. If it does, every caller inherits that requirement. Tight `needs` clauses are self-documenting and prevent accidental capability creep.
 
-**Effects propagate up the call graph — they do not get hidden or collapsed.** If `f` calls `g` which calls `h`, and `h` needs `Net`, then `g` needs `Net`, and `f` needs `Net`. The compiler enforces this at every call site. You cannot hide effects by burying them in a helper.
+**Resolved calls carry declared capability requirements.** If `f` calls `g`, which calls `h`, and `h` declares `Net`, then both `g` and `f` must declare `Net`. The type checker enforces the rule for resolved direct and qualified calls.
 
 ---
 

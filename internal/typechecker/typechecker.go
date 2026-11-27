@@ -7,6 +7,7 @@ import (
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/diagnostic"
+	"gosplash.dev/splash/internal/effects"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/token"
@@ -42,6 +43,7 @@ type TypeChecker struct {
 	constraintDecls map[string]*ast.ConstraintDecl
 	moduleFunctions map[*types.ModuleType]map[string]*ast.FunctionDecl
 	diags           []diagnostic.Diagnostic
+	currentEffects  effects.EffectSet
 	modules         *moduleState // nil if no loader configured
 }
 
@@ -399,6 +401,15 @@ func (tc *TypeChecker) checkTypeDecl(d *ast.TypeDecl, typed *TypedFile) {
 }
 
 func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
+	tc.currentEffects = effects.None
+	for _, effect := range d.Effects {
+		flag, known := effects.Lookup(effect.Name)
+		if !known {
+			tc.errorf(effect.Pos, "unknown effect %q", effect.Name)
+			continue
+		}
+		tc.currentEffects |= flag
+	}
 	env := NewEnv(tc.globals)
 	typeParamEnv := make(map[string]types.Type)
 	for _, tp := range d.TypeParams {
@@ -638,6 +649,12 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 		println = b.println
 	}
 	fnDecl := typed.FunctionReferences[e.Callee]
+	if fnDecl != nil {
+		missing := effects.Parse(fnDecl.Effects) &^ (tc.currentEffects | effects.Agent)
+		if missing != effects.None {
+			tc.errorf(e.Pos(), "missing declared effect %s for call to %q (declared at %s)", missing, fnDecl.Name, fnDecl.Pos())
+		}
+	}
 	if fnDecl == nil && !println {
 		typed.UnresolvedCalls[e] = true
 	}

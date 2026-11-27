@@ -2,6 +2,7 @@
 package safety_test
 
 import (
+	"strings"
 	"testing"
 
 	"gosplash.dev/splash/internal/callgraph"
@@ -10,6 +11,50 @@ import (
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/safety"
 )
+
+func TestSandboxRejectsUnknownEffectLabels(t *testing.T) {
+	for _, policy := range []string{"allow", "deny"} {
+		diags := check("module sample\n@sandbox(" + policy + ": [DB.admn])\nfn entry() {}\n")
+		if len(diags) != 1 || diags[0].Pos.Line != 2 || !strings.Contains(diags[0].Message, `unknown effect "DB.admn"`) {
+			t.Fatalf("want unknown %s effect at the annotation, got %v", policy, diags)
+		}
+	}
+}
+
+func TestSandboxDeniesDeclaredAdminEffect(t *testing.T) {
+	diags := check("module sample\n@sandbox(deny: [DB.admin])\nfn entry() needs DB.admin {}\n")
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "denied effect DB.admin") {
+		t.Fatalf("want denied DB.admin, got %v", diags)
+	}
+	if diags := check("module sample\n@sandbox(allow: [DB.admin])\nfn entry() needs DB.admin {}\n"); hasError(diags) {
+		t.Fatalf("want explicit admin allowance accepted, got %v", diags)
+	}
+}
+
+func TestSandboxRequiresLiteralPolicyLists(t *testing.T) {
+	for _, policy := range []string{"allow: Net", "deny: [1]", "deny: [DB?.read]"} {
+		diags := check("module sample\n@sandbox(" + policy + ")\nfn entry() {}\n")
+		if len(diags) != 1 || diags[0].Pos.Line != 2 || !strings.Contains(diags[0].Message, "@sandbox requires") {
+			t.Fatalf("want malformed sandbox diagnostic for %q, got %v", policy, diags)
+		}
+	}
+}
+
+func TestSandboxRejectsDuplicateAnnotations(t *testing.T) {
+	diags := check("module sample\n@sandbox(deny: [Net])\n@sandbox(allow: [AI])\nfn entry() {}\n")
+	if len(diags) != 1 || diags[0].Pos.Line != 3 || diags[0].Message != "duplicate @sandbox annotation" {
+		t.Fatalf("want duplicate sandbox diagnostic, got %v", diags)
+	}
+}
+
+func TestReadOnlyContainmentDeniesOtherCapabilities(t *testing.T) {
+	for _, effect := range []string{"DB.admin", "FS", "Net"} {
+		diags := check("@containment(agent: \"read_only\")\nmodule sample\nagent fn entry() needs DB.read, " + effect + " {}\n")
+		if len(diags) != 1 || !strings.Contains(diags[0].Message, "has "+effect) {
+			t.Fatalf("want %s rejection under read-only containment, got %v", effect, diags)
+		}
+	}
+}
 
 func check(src string) []diagnostic.Diagnostic {
 	toks := lexer.New("test.splash", src).Tokenize()
@@ -126,7 +171,7 @@ fn exfil() needs DB.write, Net -> String { return "leaked" }
 func TestApprove_WithApproveAnnotation_NoError(t *testing.T) {
 	src := `
 module foo
-fn run_agent() needs Agent -> String { return exfil() }
+approve fn run_agent() needs Agent, DB.write, Net -> String { return exfil() }
 approve fn exfil() needs DB.write, Net -> String { return "ok" }
 `
 	diags := check(src)
@@ -138,7 +183,8 @@ approve fn exfil() needs DB.write, Net -> String { return "ok" }
 func TestApprove_WithAgentAllowed_NoError(t *testing.T) {
 	src := `
 module foo
-fn run_agent() needs Agent -> String { return exfil() }
+@agent_allowed
+fn run_agent() needs Agent, DB.write, Net -> String { return exfil() }
 @agent_allowed
 fn exfil() needs DB.write, Net -> String { return "ok" }
 `
@@ -152,7 +198,7 @@ func TestApprove_DBWriteOnlyNoRequirement(t *testing.T) {
 	// DB.write alone (no Net) does not trigger the rule
 	src := `
 module foo
-fn run_agent() needs Agent -> String { return writer() }
+fn run_agent() needs Agent, DB.write -> String { return writer() }
 fn writer() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
@@ -203,7 +249,7 @@ func TestContainment_ReadOnly_AllowsRead(t *testing.T) {
 	src := `
 @containment(agent: "read_only")
 module payments
-fn run_agent() needs Agent -> String { return query() }
+fn run_agent() needs Agent, DB.read -> String { return query() }
 fn query() needs DB.read -> String { return "ok" }
 `
 	diags := check(src)
@@ -229,7 +275,7 @@ func TestContainment_ApprovedOnly_WithApprove_NoError(t *testing.T) {
 	src := `
 @containment(agent: "approved_only")
 module payments
-fn run_agent() needs Agent -> String { return process() }
+fn run_agent() needs Agent, DB.write -> String { return process() }
 approve fn process() needs DB.write -> String { return "ok" }
 `
 	diags := check(src)
