@@ -1,0 +1,4 @@
+[
+  {"name": "exact-cent discount", "inputs": [3, 200, 10], "expected": [600, 60, 540]},
+  {"name": "no discount", "inputs": [3, 199, 0], "expected": [597, 0, 597]}
+]

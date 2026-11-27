@@ -1,6 +1,6 @@
 # TTCS pilot harness
 
-Implementation design for the first conventional Splash-versus-Go pilot. The [TTCS protocol](time-to-correct-software.md) defines the metrics and comparison rules. This document defines the harness inputs, isolation, task adapters and acceptance before launching trials. The harness can accept another language by supplying a starter, toolchain adapter, native driver and equivalence evidence. This iteration prepares the design and [Splash subset reference](supported-subset.md). The pilot fixtures, grader and agent runs are future work.
+Implementation design for the first conventional Splash-versus-Go pilot. The [TTCS protocol](time-to-correct-software.md) defines the metrics and comparison rules. This document defines the harness inputs, isolation, task adapters and acceptance before launching trials. The harness can accept another language by supplying a starter, toolchain adapter, native driver and equivalence evidence. The [invoice fixture](../../benchmarks/ttcs/invoice/README.md) is the first native smoke path for both language adapters. Its public oracle controls exercise the design. Protected trial orchestration, additional tasks and agent runs remain future work.
 
 ## Trial inputs and adapter
 

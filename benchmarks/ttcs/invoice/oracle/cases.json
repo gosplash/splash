@@ -1,0 +1,11 @@
+[
+  {"name": "exact-cent discount", "inputs": [3, 200, 10], "expected": [600, 60, 540]},
+  {"name": "no discount", "inputs": [3, 199, 0], "expected": [597, 0, 597]},
+  {"name": "half-cent rounds up", "inputs": [1, 1, 50], "expected": [1, 1, 0]},
+  {"name": "below half-cent rounds down", "inputs": [1, 1, 49], "expected": [1, 0, 1]},
+  {"name": "above half-cent rounds up", "inputs": [1, 1, 51], "expected": [1, 1, 0]},
+  {"name": "aggregate before rounding", "inputs": [2, 3, 25], "expected": [6, 2, 4]},
+  {"name": "zero quantity", "inputs": [0, 2000, 100], "expected": [0, 0, 0]},
+  {"name": "zero unit price", "inputs": [10000, 0, 75], "expected": [0, 0, 0]},
+  {"name": "maximum inputs with full discount", "inputs": [10000, 2000, 100], "expected": [20000000, 20000000, 0]}
+]
