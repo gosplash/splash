@@ -2,13 +2,14 @@
 
 **Designed for machines to write and humans to trust.**
 
-Splash is an early statically typed language for backend and control-plane software. It compiles to Go and is designed around explicit contracts, fast deterministic feedback and verifiable authority boundaries. Coding agents can write conventional Splash software. Software that runs agents can also declare tool, reachability and approval boundaries.
+Splash is an early statically typed language for backend and control-plane software. It compiles to Go, and an experimental VM executes a subset directly. Splash is designed around explicit contracts, fast deterministic feedback and verifiable authority boundaries. Coding agents can write conventional Splash software. Software that runs agents can also declare tool, reachability and approval boundaries.
 
 ## Implementation status
 
 | Behavior | Evidence |
 | --- | --- |
 | Native Go backend for the documented pilot subset | Implemented and integration-tested on the reference examples. [Supported subset](docs/design/supported-subset.md) |
+| Experimental VM execution | `splash run <file.splash> --backend vm` runs typed business logic from a standalone Splash binary. [VM subset and limits](docs/design/splash-ir-and-vm.md#public-vm-execution) |
 | Named-call redline checking and CLI artifact rejection | Uses resolved direct and qualified named calls. Unresolved indirect calls are rejected in agent- and sandbox-reachable code and in programs with approval gates. |
 | Declared caller–callee effect compatibility | Specified. The current compiler records and reports declared effects. General call-site effect checking and conservative inference are planned. |
 | Approval and classification | Implemented for selected checks and lowering forms. Request-bound approval and general classified-data flow enforcement are proposed. |
@@ -44,6 +45,24 @@ go build ./cmd/splash/...          # build the compiler
 ./splash approvals examples/approval/approval.splash  # print approval-gated paths
 ```
 
+For the experimental VM, save this program as `main.splash`.
+
+```splash
+module invoice
+
+fn total(quantity: Int, unit_cents: Int) -> Int {
+    return quantity * unit_cents
+}
+
+fn main() {
+    println(total(4, 2500))
+}
+```
+
+Run `./splash run main.splash --backend vm` to print `10000`. Running with an existing Splash binary requires no Go installation. The default limits are 1,000,000 dispatched instructions and 256 active frames. Run `splash run --help` for the limit flags.
+
+Use OS-level process isolation for untrusted source. The VM limits bound instruction dispatch and active frames within the Splash process. [Public VM execution](docs/design/splash-ir-and-vm.md#public-vm-execution)
+
 All tests:
 
 ```bash
@@ -55,7 +74,7 @@ go test ./...
 ## Repository Layout
 
 ```
-cmd/splash/main.go          CLI: check / build / emit / tools / graph / effects / approvals
+cmd/splash/                 CLI: check / run / build / emit / tools / graph / effects / approvals
 internal/
   lexer/                    tokenizer
   parser/                   Pratt parser → AST
@@ -88,7 +107,7 @@ source (.splash)
   → go build     Go source → native binary
 ```
 
-The CLI shares one analysis entry point. `splash check`, `splash emit`, `splash build`, and `splash tools` run the implemented safety checks. `splash build` additionally invokes `go build`.
+The CLI shares one analysis entry point. `splash check`, `splash run`, `splash emit`, `splash build`, and `splash tools` run the implemented safety checks. `splash build` invokes `go build`. `splash run --backend vm` lowers the admitted program to typed IR and validated bytecode, then executes it in-process.
 
 ---
 

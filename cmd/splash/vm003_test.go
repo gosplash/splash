@@ -18,6 +18,8 @@ import (
 )
 
 func TestVM003InvoiceOracle(t *testing.T) {
+	binary := buildSplashCLI(t)
+	emptyPath := t.TempDir()
 	fixture := filepath.Join("..", "..", "benchmarks", "ttcs", "invoice")
 	var cases []struct {
 		Name     string
@@ -90,6 +92,16 @@ func TestVM003InvoiceOracle(t *testing.T) {
 			}
 			t.Run("VM", func(t *testing.T) {
 				assertOracle(t, runVM003(t, program), test.wantMismatch)
+			})
+			t.Run("VM CLI without Go", func(t *testing.T) {
+				command := exec.Command(binary, "run", "probe.splash", "--backend", "vm")
+				command.Dir = dir
+				command.Env = append(os.Environ(), "PATH="+emptyPath)
+				output, err := command.CombinedOutput()
+				if err != nil {
+					t.Fatalf("run VM CLI: %v\n%s", err, output)
+				}
+				assertOracle(t, string(output), test.wantMismatch)
 			})
 			t.Run("Go backend", func(t *testing.T) {
 				assertOracle(t, runVM003GeneratedGo(t, program), test.wantMismatch)

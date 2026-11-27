@@ -1,0 +1,204 @@
+{
+  "revision": "5a5f075fac7f0fbe723c2a64f2eccf73f44e108b",
+  "hardware": "Apple M5",
+  "python_version": "Python 3.9.6",
+  "cache_conditions": "Fresh processes and native output files per sample. One excluded warm-up per condition. The Go build cache and OS file caches were inherited and left warm.",
+  "reproduction_commands": [
+    "scratch=$(mktemp -d)",
+    "git archive 5a5f075fac7f0fbe723c2a64f2eccf73f44e108b | tar -x -C \"$scratch\"",
+    "cd \"$scratch\"",
+    "go build -o \"$scratch/splash\" ./cmd/splash",
+    "python3 -B benchmarks/ttcs/invoice/benchmark.py --splash \"$scratch/splash\" --samples 12"
+  ],
+  "oracle": {
+    "path": "benchmarks/ttcs/invoice/oracle/cases.json",
+    "sha256": "f588ea650c4aca6952b4687ff4ff3ee41cf9a411b19b11471e51db7ac31dd743",
+    "all_samples_accepted": true
+  },
+  "host": "macOS-27.0.1-arm64-arm-64bit",
+  "go_version": "go version go1.26.3 darwin/arm64",
+  "cases": 9,
+  "conditions": {
+    "go": {
+      "samples_ms": [
+        {
+          "build": 102.074541,
+          "execute": 140.638792,
+          "total": 242.713333
+        },
+        {
+          "build": 99.313083,
+          "execute": 143.877792,
+          "total": 243.190875
+        },
+        {
+          "build": 101.564708,
+          "execute": 150.934084,
+          "total": 252.498792
+        },
+        {
+          "build": 99.871833,
+          "execute": 149.675417,
+          "total": 249.54725
+        },
+        {
+          "build": 99.019875,
+          "execute": 148.888708,
+          "total": 247.908583
+        },
+        {
+          "build": 99.161833,
+          "execute": 143.32075,
+          "total": 242.482583
+        },
+        {
+          "build": 103.759458,
+          "execute": 147.186667,
+          "total": 250.946125
+        },
+        {
+          "build": 102.829292,
+          "execute": 141.12975,
+          "total": 243.959042
+        },
+        {
+          "build": 93.970375,
+          "execute": 151.509917,
+          "total": 245.480292
+        },
+        {
+          "build": 102.579625,
+          "execute": 151.65125,
+          "total": 254.230875
+        },
+        {
+          "build": 101.5745,
+          "execute": 150.521875,
+          "total": 252.096375
+        },
+        {
+          "build": 97.826375,
+          "execute": 152.173125,
+          "total": 249.9995
+        }
+      ],
+      "median_ms": {
+        "build": 100.71827049999999,
+        "execute": 149.2820625,
+        "total": 248.7279165
+      }
+    },
+    "splash-go": {
+      "samples_ms": [
+        {
+          "build": 97.805042,
+          "execute": 144.305916,
+          "total": 242.110958
+        },
+        {
+          "build": 104.78625,
+          "execute": 151.663083,
+          "total": 256.449333
+        },
+        {
+          "build": 107.488791,
+          "execute": 145.172542,
+          "total": 252.661333
+        },
+        {
+          "build": 105.264292,
+          "execute": 144.598792,
+          "total": 249.863084
+        },
+        {
+          "build": 100.363708,
+          "execute": 151.468583,
+          "total": 251.832291
+        },
+        {
+          "build": 104.044625,
+          "execute": 146.631583,
+          "total": 250.676208
+        },
+        {
+          "build": 105.810875,
+          "execute": 149.304417,
+          "total": 255.115292
+        },
+        {
+          "build": 101.541,
+          "execute": 161.660542,
+          "total": 263.201542
+        },
+        {
+          "build": 108.7895,
+          "execute": 144.327333,
+          "total": 253.116833
+        },
+        {
+          "build": 108.733959,
+          "execute": 154.310416,
+          "total": 263.044375
+        },
+        {
+          "build": 97.556666,
+          "execute": 167.366875,
+          "total": 264.923541
+        },
+        {
+          "build": 105.98225,
+          "execute": 151.448708,
+          "total": 257.430958
+        }
+      ],
+      "median_ms": {
+        "build": 105.025271,
+        "execute": 150.3765625,
+        "total": 254.1160625
+      }
+    },
+    "splash-vm": {
+      "samples_ms": [
+        {
+          "total": 6.300375
+        },
+        {
+          "total": 5.965583
+        },
+        {
+          "total": 6.082584
+        },
+        {
+          "total": 5.8275
+        },
+        {
+          "total": 6.503208
+        },
+        {
+          "total": 6.395125
+        },
+        {
+          "total": 6.422958
+        },
+        {
+          "total": 6.852917
+        },
+        {
+          "total": 3.692709
+        },
+        {
+          "total": 3.082625
+        },
+        {
+          "total": 7.26725
+        },
+        {
+          "total": 6.611041
+        }
+      ],
+      "median_ms": {
+        "total": 6.34775
+      }
+    }
+  }
+}

@@ -26,8 +26,15 @@ import (
 )
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "run" {
+		if err := runVMCommand(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: splash <check|build|emit|tools|graph|effects|approvals> <file.splash>")
+		fmt.Fprintln(os.Stderr, "usage: splash <check|run|build|emit|tools|graph|effects|approvals> <file.splash>")
 		os.Exit(1)
 	}
 	cmd, file := os.Args[1], os.Args[2]
@@ -220,7 +227,7 @@ func (p *analyzedProgram) emitGo() (string, error) {
 	}), nil
 }
 
-// runVM is the experimental internal path. Public commands still use Go lowering.
+// runVM executes the captured program through the experimental VM backend.
 func (p *analyzedProgram) runVM(output io.Writer, limits vm.Limits) error {
 	if p.reportSafetyErrors() {
 		return fmt.Errorf("safety errors")
