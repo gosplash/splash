@@ -192,7 +192,11 @@ func runCheck(path string) error {
 }
 
 func (p *analyzedProgram) safetyDiagnostics() []diagnostic.Diagnostic {
-	return safety.New().Check(p.modules, p.graph, p.effects)
+	modules := make([]safety.Module, 0, len(p.modules))
+	for _, module := range p.modules {
+		modules = append(modules, safety.Module{File: module.File, Types: module.Types})
+	}
+	return safety.New().Check(modules, p.graph, p.effects)
 }
 
 func (p *analyzedProgram) reportSafetyErrors() bool {

@@ -10,7 +10,6 @@ import (
 	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/effects"
-	"gosplash.dev/splash/internal/typechecker"
 	"gosplash.dev/splash/internal/types"
 )
 
@@ -20,8 +19,14 @@ type Checker struct{}
 // New creates a new Checker.
 func New() *Checker { return &Checker{} }
 
+// Module carries owned syntax and types resolved by shared analysis.
+type Module struct {
+	File  *ast.File
+	Types map[ast.Node]types.Type
+}
+
 // Check runs all enforcement passes and returns any violations as diagnostics.
-func (c *Checker) Check(modules []*typechecker.TypedFile, g *callgraph.Graph, inferred []*effects.Summary) []diagnostic.Diagnostic {
+func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effects.Summary) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 
 	roots := g.AgentRoots()
@@ -113,7 +118,7 @@ func sensitiveFields(decl *ast.TypeDecl) []string {
 // checkToolDataClassification emits an error for every tool function whose
 // return type contains @sensitive or @restricted fields.
 // PII in a tool's return value flows directly into the AI agent's context window.
-func (c *Checker) checkToolDataClassification(module *typechecker.TypedFile) []diagnostic.Diagnostic {
+func (c *Checker) checkToolDataClassification(module Module) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 	for _, declaration := range module.File.Declarations {
 		fn, ok := declaration.(*ast.FunctionDecl)
