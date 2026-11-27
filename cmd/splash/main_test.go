@@ -74,6 +74,7 @@ redline fn dangerous() -> String { return "boom" }
 		run  func() error
 	}{
 		{"check", func() error { return runCheck(mainPath) }},
+		{"run --backend vm", func() error { return runVMCommand([]string{mainPath, "--backend", "vm"}, os.Stdout) }},
 		{"emit", func() error { return runEmit(mainPath) }},
 		{"build", func() error { return runBuild(mainPath, binary) }},
 		{"tools", func() error { return runTools(mainPath, toolschema.FormatOpenAI) }},
