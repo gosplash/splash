@@ -113,7 +113,7 @@ The core premise is that many of the highest-consequence failure modes in AI age
 
 Four design decisions carry most of the weight:
 
-**Effects as function signatures.** Every function declares the capabilities it requires: `needs DB, Net, Clock`. The compiler verifies that every call site provides the declared effects. A function declared with `needs DB.read` cannot call a function that `needs DB.write`. An agent cannot invoke a function that `needs FS` unless the agent was explicitly granted filesystem access. Violations fail to compile.
+**Effects as function signatures.** A function declares the capabilities it requires with `needs`, for example `needs DB.read, Net`. For a resolved direct or qualified call, the compiler verifies that the caller declares the callee's capabilities. A function declared with `needs DB.read` cannot call a resolved function that `needs DB.write`. See the [current effect specification](https://github.com/gosplash/splash/blob/master/SPEC.md#5-effect-system) for vocabulary and coverage.
 
 Effects are also design pressure. A function's capability surface is visible in its signature — five effects on one function is the same signal as a constructor with ten parameters. The compiler doesn't just enforce safety; it rewards decomposition. The natural Splash architecture becomes small, focused functions with tight effect declarations, composed by a thin orchestration layer that declares the union. The agent entry point's `needs` clause is the capability manifest: readable by humans, auditable by tools, enforced by the compiler.
 
@@ -378,6 +378,8 @@ The compiler-enforced primitives will not change without a major version. The `s
 **Prior art.** Splash's effect system draws from Koka and Frank; its capability model from Pony and Capsicum; its data classification from information flow type systems in the tradition of Jif and FlowCaml. The contribution is not any individual mechanism — it's their unification into a single language designed for AI agent deployment, with agent reachability as a first-class static property checked at compile time. What is new is not the mechanisms, but their integration into a single, compile-time enforced system where agent reachability is a first-class property — the call graph is not an implementation detail but the primary artifact the safety model reasons over.
 
 #### Effect System
+
+*Historical design vocabulary and goals. See the [current language specification](https://github.com/gosplash/splash/blob/master/SPEC.md#52-effect-vocabulary) for implemented labels, `DB` shorthand, and resolved-call coverage.*
 
 Every Splash function has an associated effect set drawn from a fixed vocabulary:
 

@@ -91,7 +91,7 @@ The `needs DB.read` is not documentation — it is a constraint the compiler enf
 
 **Declare the minimum required effects.** A read helper should not declare `DB.write`. If it does, every caller inherits that requirement. Tight `needs` clauses are self-documenting and prevent accidental capability creep.
 
-**Effects propagate up the call graph — they do not get hidden or collapsed.** If `f` calls `g` which calls `h`, and `h` needs `Net`, then `g` needs `Net`, and `f` needs `Net`. The compiler enforces this at every call site. You cannot hide effects by burying them in a helper.
+**Resolved calls carry declared capability requirements.** If `f` calls `g`, which calls `h`, and `h` declares `Net`, then both `g` and `f` must declare `Net`. The type checker enforces the rule for resolved direct and qualified calls.
 
 ---
 

@@ -146,12 +146,9 @@ approve fn transfer_funds(
 // The compiler traces every path from every needs Agent function.
 // A path that reaches a redline fn fails the build with the full call chain.
 //
-// Try adding `wire_transfer(from_id, "021000021", 500000)` to
-// run_fraud_agent below. The build will fail:
-//
-//   error: redline fn "wire_transfer" is reachable from agent context
-//     run_fraud_agent → wire_transfer
-//     reason: Wire transfers require dual authorization and SWIFT compliance review
+// Calling wire_transfer from run_fraud_agent first fails its declared
+// effect contract. Agent reachability to the redline remains prohibited
+// even if the caller has the required grants.
 
 @reason "Wire transfers require dual authorization and SWIFT compliance review"
 redline fn wire_transfer(from_id: Int, to_routing: String, amount_cents: Int) needs DB.write, Net {

@@ -352,7 +352,7 @@ The type checker infers types for `let` bindings when no annotation is given. Ex
 
 ### 4.5 Effect Propagation
 
-Function effect requirements flow transitively: a function's effective effects are the union of its declared `needs` and the `needs` of every function it calls. The type checker enforces that every call site provides a superset of the callee's required effects.
+For resolved named calls, the declared compatibility rule in [§5.3](#53-effect-checking) carries capability requirements along a call chain. Conservative inference from operations and checking unresolved targets are separate from this rule.
 
 ---
 
@@ -463,7 +463,7 @@ Three policies:
 | Value           | Meaning                                                    |
 |-----------------|------------------------------------------------------------|
 | `"none"`        | No agent may call any function in this module              |
-| `"read_only"`   | Agents may only call functions with `DB.read` effects      |
+| `"read_only"`   | Agent-reachable functions may declare at most `DB.read` capability |
 | `"approved_only"` | Agents may only call `@agent_allowed` functions          |
 
 ### 6.6 `@sandbox`

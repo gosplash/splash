@@ -32,7 +32,7 @@ Pratt parser. Produces `*ast.File` and validates that integer literals fit the A
 AST node types and annotation kinds. `annotation.go` has `AnnotationKind` constants and the string→kind lookup map. When adding a new annotation, add the constant and the string mapping — that's all. No logic here.
 
 ### `internal/effects`
-`EffectSet` bitmask and `Parse()`. The full effect vocabulary is in `effects.go`. Adding a new effect means adding a constant and a case in `Parse()` and `String()`. Keep effects as a closed set — new effects require language spec changes.
+`EffectSet` bitmask, `Lookup()`, and `Parse()`. The vocabulary table in `effects.go` drives parsing and rendering. When the specification adds an effect, add its constant and vocabulary entry together.
 
 ### `internal/typechecker`
 Type inference, constraint satisfaction, `use` import resolution. The type checker runs before safety checks. It should not enforce `@redline` or `@approve` — those belong in the safety checker. It does enforce `@sensitive` on `println` (logging constraint) because that's a type-system property, not a call graph property.

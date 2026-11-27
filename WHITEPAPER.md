@@ -364,6 +364,8 @@ The compiler-enforced primitives above will not change without a major version. 
 
 #### Effect System
 
+*Historical design vocabulary. See the [current language specification](SPEC.md#52-effect-vocabulary) for implemented labels, the `DB` shorthand, and resolved-call coverage.*
+
 Every Splash function has an associated effect set drawn from a fixed vocabulary:
 
 ```

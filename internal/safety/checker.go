@@ -263,11 +263,11 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 				fn.Name,
 			))
 		case containmentReadOnly:
-			if writes := node.Effects & (effects.DBWrite | effects.DBAdmin); writes != effects.None {
+			if disallowed := node.Effects &^ (effects.DBRead | effects.Agent); disallowed != effects.None {
 				diags = append(diags, diagnostic.Errorf(
 					fn.Position,
 					"function %q has %s but module has @containment(agent: \"read_only\")",
-					fn.Name, writes,
+					fn.Name, disallowed,
 				))
 			}
 		case containmentApprovedOnly:
@@ -296,7 +296,7 @@ func exprToEffectName(expr ast.Expr) string {
 	case *ast.Ident:
 		return e.Name
 	case *ast.MemberExpr:
-		if id, ok := e.Object.(*ast.Ident); ok {
+		if id, ok := e.Object.(*ast.Ident); ok && !e.Optional {
 			return id.Name + "." + e.Member
 		}
 	}
