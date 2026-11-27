@@ -1,0 +1,221 @@
+From f3c9890bac510e607b8e0469342a20901f5cc1e1 Mon Sep 17 00:00:00 2001
+From: Zach Graves <zagraves@gmail.com>
+Date: Fri, 27 Nov 2026 13:11:53 -0700
+Subject: [PATCH] test: benchmark compiler and VM scaling by phase
+
+---
+ cmd/splash/scaling_bench_test.go | 205 +++++++++++++++++++++++++++++++
+ 1 file changed, 205 insertions(+)
+ create mode 100644 cmd/splash/scaling_bench_test.go
+
+diff --git a/cmd/splash/scaling_bench_test.go b/cmd/splash/scaling_bench_test.go
+new file mode 100644
+index 0000000..2c37acf
+--- /dev/null
++++ b/cmd/splash/scaling_bench_test.go
+@@ -0,0 +1,205 @@
++package main
++
++import (
++	"bytes"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"gosplash.dev/splash/internal/bytecode"
++	"gosplash.dev/splash/internal/ir"
++	"gosplash.dev/splash/internal/lowering"
++	"gosplash.dev/splash/internal/vm"
++)
++
++func BenchmarkScalingVM(b *testing.B) {
++	for _, functions := range []int{100, 500, 2000, 10000} {
++		b.Run(fmt.Sprintf("chain/functions=%d", functions), func(b *testing.B) {
++			var source strings.Builder
++			source.WriteString("module chain\nfn f0() -> Int { return 1 }\n")
++			for id := 1; id < functions-1; id++ {
++				fmt.Fprintf(&source, "fn f%d() -> Int { return f%d() + 1 }\n", id, id-1)
++			}
++			fmt.Fprintf(&source, "fn main() { println(f%d()) }\n", functions-2)
++			benchmarkVMStages(b, writeTempSplash(b, source.String()), functions-1)
++		})
++	}
++	for _, modules := range []int{10, 50, 100} {
++		b.Run(fmt.Sprintf("modules/count=%d", modules), func(b *testing.B) {
++			dir := b.TempDir()
++			write := func(name, source string) string {
++				path := filepath.Join(dir, name+".splash")
++				if err := os.WriteFile(path, []byte(source), 0644); err != nil {
++					b.Fatal(err)
++				}
++				return path
++			}
++			write("m0", "module m0\nfn value0() -> Int { return 1 }\n")
++			for id := 1; id < modules-1; id++ {
++				write(fmt.Sprintf("m%d", id), fmt.Sprintf("module m%d\nuse m%d as prior\nfn value%d() -> Int { return prior.value%d() + 1 }\n", id, id-1, id, id-1))
++			}
++			entry := write("entry", fmt.Sprintf("module entry\nuse m%d as prior\nfn main() { println(prior.value%d()) }\n", modules-2, modules-2))
++			benchmarkVMStages(b, entry, modules-1)
++		})
++	}
++	for _, size := range []struct{ records, fields int }{{4, 4}, {16, 16}, {64, 32}} {
++		b.Run(fmt.Sprintf("records/count=%d/fields=%d", size.records, size.fields), func(b *testing.B) {
++			var source strings.Builder
++			source.WriteString("module records\n")
++			for id := range size.records {
++				fmt.Fprintf(&source, "type R%d {\n", id)
++				for field := range size.fields {
++					fmt.Fprintf(&source, "f%d: Int\n", field)
++				}
++				source.WriteString("}\n")
++			}
++			source.WriteString("fn main() {\nlet seed = 0\n")
++			for id := range size.records {
++				fmt.Fprintf(&source, "let r%d = R%d { ", id, id)
++				for field := range size.fields {
++					if field > 0 {
++						source.WriteString(", ")
++					}
++					fmt.Fprintf(&source, "f%d: ", field)
++					if id == 0 {
++						source.WriteString("seed + 1")
++					} else {
++						fmt.Fprintf(&source, "r%d.f%d + 1", id-1, field)
++					}
++				}
++				source.WriteString(" }\n")
++			}
++			fmt.Fprintf(&source, "println(r%d.f%d)\n}\n", size.records-1, size.fields-1)
++			benchmarkVMStages(b, writeTempSplash(b, source.String()), size.records)
++		})
++	}
++}
++
++func benchmarkVMStages(b *testing.B, path string, want int) {
++	b.Helper()
++	program, err := analyzeProgram(path)
++	if err != nil {
++		b.Fatal(err)
++	}
++	if diags := program.safetyDiagnostics(); len(diags) != 0 {
++		b.Fatalf("invalid benchmark fixture: %v", diags)
++	}
++	lowered, err := lowering.LowerVM(program.modules)
++	if err != nil {
++		b.Fatal(err)
++	}
++	executable, err := bytecode.Lower(lowered)
++	if err != nil {
++		b.Fatal(err)
++	}
++	limits := vm.Limits{Instructions: 1_000_000, Frames: 20_000}
++	var out bytes.Buffer
++	verified, err := vm.New(executable, &out, limits)
++	if err != nil {
++		b.Fatal(err)
++	}
++	if err := verified.RunMain(); err != nil || out.String() != fmt.Sprintln(want) {
++		b.Fatalf("benchmark oracle: output %q, want %d, error %v", out.String(), want, err)
++	}
++	runtime, err := vm.New(executable, io.Discard, limits)
++	if err != nil {
++		b.Fatal(err)
++	}
++	for _, phase := range []struct {
++		name string
++		run  func() error
++	}{
++		{"analysis", func() error { _, err := analyzeProgram(path); return err }},
++		{"safety", func() error {
++			if diags := program.safetyDiagnostics(); len(diags) != 0 {
++				return fmt.Errorf("safety diagnostics: %v", diags)
++			}
++			return nil
++		}},
++		{"source-to-ir", func() error { _, err := lowering.LowerVM(program.modules); return err }},
++		{"ir-validation", func() error { return ir.Validate(lowered) }},
++		{"bytecode-lowering-with-ir-validation", func() error { _, err := bytecode.Lower(lowered); return err }},
++		{"bytecode-validation", func() error { return bytecode.Validate(executable) }},
++		{"vm-load-with-bytecode-validation", func() error { _, err := vm.New(executable, io.Discard, limits); return err }},
++		{"vm-execute", runtime.RunMain},
++	} {
++		b.Run(phase.name, func(b *testing.B) {
++			b.ReportAllocs()
++			for b.Loop() {
++				if err := phase.run(); err != nil {
++					b.Fatal(err)
++				}
++			}
++		})
++	}
++}
++
++func BenchmarkScalingPolicy(b *testing.B) {
++	for _, groups := range []int{10, 50, 200, 1000} {
++		b.Run(fmt.Sprintf("recursive-groups=%d", groups), func(b *testing.B) {
++			var source strings.Builder
++			source.WriteString("module policy\n")
++			for group := range groups {
++				for id := range 10 {
++					fmt.Fprintf(&source, "fn g%d_f%d() needs DB.read -> Int { return g%d_f%d() }\n", group, id, group, (id+1)%10)
++				}
++				fmt.Fprintf(&source, "@sandbox(allow: [DB.read])\nagent fn root%d() needs DB.read -> Int { return g%d_f0() }\n", group, group)
++			}
++			path := writeTempSplash(b, source.String())
++			program, err := analyzeProgram(path)
++			if err != nil {
++				b.Fatal(err)
++			}
++			b.Run("analysis", func(b *testing.B) {
++				b.ReportAllocs()
++				for b.Loop() {
++					if _, err := analyzeProgram(path); err != nil {
++						b.Fatal(err)
++					}
++				}
++			})
++			b.Run("safety", func(b *testing.B) {
++				b.ReportAllocs()
++				for b.Loop() {
++					if diags := program.safetyDiagnostics(); len(diags) != 0 {
++						b.Fatalf("safety diagnostics: %v", diags)
++					}
++				}
++			})
++		})
++	}
++}
++
++func BenchmarkScalingRejectedEdit(b *testing.B) {
++	for _, edit := range []struct {
++		name, source, stage string
++	}{
++		{"type", `fn invalid() -> Int { return "string" }`, "type errors"},
++		{"missing-grant", `fn invalid() -> Int { return f0() }`, "type errors"},
++		{"unresolved-target", `fn invalid(callback: fn() -> Int) needs Agent -> Int { return callback() }`, "safety errors"},
++	} {
++		b.Run(edit.name, func(b *testing.B) {
++			path := writeTempSplash(b, genCheckSrc(2000)+"\n"+edit.source+"\n")
++			sink, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
++			if err != nil {
++				b.Fatal(err)
++			}
++			previous := os.Stderr
++			os.Stderr = sink
++			defer func() {
++				os.Stderr = previous
++				sink.Close()
++			}()
++			b.ReportAllocs()
++			for b.Loop() {
++				err := checkPipeline(path)
++				if err == nil || err.Error() != edit.stage {
++					b.Fatalf("want %q, got %v", edit.stage, err)
++				}
++			}
++		})
++	}
++}
