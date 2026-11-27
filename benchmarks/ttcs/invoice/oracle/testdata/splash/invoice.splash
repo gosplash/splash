@@ -1,0 +1,14 @@
+module invoice
+expose Totals, invoice_totals
+
+type Totals {
+    subtotal: Int
+    discount: Int
+    due: Int
+}
+
+fn invoice_totals(quantity: Int, unit_cents: Int, discount_percent: Int) -> Totals {
+    let subtotal = quantity * unit_cents
+    let discount = (subtotal * discount_percent + 50) / 100
+    return Totals { subtotal: subtotal, discount: discount, due: subtotal - discount }
+}
