@@ -12,6 +12,9 @@ func (e *Emitter) emitExprStr(expr ast.Expr) string {
 	if expr == nil {
 		return "nil"
 	}
+	if fn := e.functionReferences[expr]; fn != nil {
+		return e.functionName(fn)
+	}
 	switch ex := expr.(type) {
 	case *ast.IntLiteral:
 		return fmt.Sprintf("%d", ex.Value)
@@ -35,7 +38,7 @@ func (e *Emitter) emitExprStr(expr ast.Expr) string {
 	case *ast.CallExpr:
 		return e.emitCallExpr(ex)
 	case *ast.MemberExpr:
-		if id, ok := ex.Object.(*ast.Ident); ok && e.moduleNamespaces[id.Name] && !ex.Optional {
+		if id, ok := ex.Object.(*ast.Ident); ok && e.functionReferences == nil && e.moduleNamespaces[id.Name] && !ex.Optional {
 			return ex.Member
 		}
 		return fmt.Sprintf("%s.%s", e.emitExprStr(ex.Object), ex.Member)
@@ -96,7 +99,12 @@ func (e *Emitter) emitCallExpr(ex *ast.CallExpr) string {
 	for _, arg := range ex.Args {
 		args = append(args, e.emitExprStr(arg))
 	}
-	if ident, ok := ex.Callee.(*ast.Ident); ok && ident.Name == "println" {
+	println := e.printlnCalls[ex]
+	if e.printlnCalls == nil {
+		ident, ok := ex.Callee.(*ast.Ident)
+		println = ok && ident.Name == "println"
+	}
+	if println {
 		e.imports["fmt"] = true
 		return fmt.Sprintf("fmt.Println(%s)", strings.Join(args, ", "))
 	}

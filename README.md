@@ -9,7 +9,7 @@ Splash is an early statically typed language for backend and control-plane softw
 | Behavior | Evidence |
 | --- | --- |
 | Native Go backend for the documented pilot subset | Implemented and integration-tested on the reference examples. [Supported subset](docs/design/supported-subset.md) |
-| Direct-call redline checking and CLI artifact rejection | Implemented and conformance-tested for modeled direct calls, including an imported redline. Qualified and indirect call coverage remains incomplete. |
+| Named-call redline checking and CLI artifact rejection | Uses resolved direct and qualified named calls. Unresolved indirect calls are rejected in agent- and sandbox-reachable code and in programs with approval gates. |
 | Declared caller–callee effect compatibility | Specified. The current compiler records and reports declared effects. General call-site effect checking and conservative inference are planned. |
 | Approval and classification | Implemented for selected checks and lowering forms. Request-bound approval and general classified-data flow enforcement are proposed. |
 | Semantic queries, verified artifact types and authority comparisons | Proposed. The CLI currently shares its initial analysis representation and existing safety checks on artifact paths. |
@@ -201,7 +201,7 @@ fn run_billing_agent() needs Agent, Net -> Charge {
 }
 ```
 
-`use billing` resolves to `billing.splash` in the same directory. Cycles are detected and rejected. The `expose` list controls what is injected into the importing namespace. `splash emit` and `splash build` merge declarations into a single Go package.
+`use billing` resolves to `billing.splash` in the same directory. Cycles are detected and rejected. The `expose` list controls what is injected into the importing namespace. If two imported modules export the same function name, use qualified calls such as `left.price()` and `right.price()`. A local binding shadows an imported or global function in an unqualified call. The compiler diagnoses ambiguous flat function references. Types still need distinct names in the flattened Go package. An approval-bearing call must be a standalone statement or the whole value of a `let` or `return`. Programs with approval gates reject unresolved indirect calls conservatively, since the compiler cannot establish which ones need the approval error channel. `splash emit` and `splash build` merge declarations into a single Go package.
 
 ---
 

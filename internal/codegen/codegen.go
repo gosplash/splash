@@ -19,6 +19,12 @@ type Options struct {
 	// ApprovalCallers is the set of functions that transitively call any
 	// approval-gated function. The backend widens their return signatures to (T, error).
 	ApprovalCallers map[string]bool
+	// FunctionKey and FunctionReferences are produced by analyzed compilation.
+	FunctionKey        func(*ast.FunctionDecl) string
+	FunctionReferences map[ast.Expr]*ast.FunctionDecl
+	PrintlnCalls       map[*ast.CallExpr]bool
+	LocalNames         map[string]bool
+	Entry              *ast.File
 }
 
 // Backend is the interface a code generation backend must satisfy.
@@ -36,17 +42,28 @@ type goBackend struct{}
 func (b *goBackend) Emit(f *ast.File, opts Options) string {
 	e := New()
 	e.SetApprovalCallers(opts.ApprovalCallers)
+	e.declarationKey = opts.FunctionKey
+	e.functionReferences = opts.FunctionReferences
+	e.printlnCalls = opts.PrintlnCalls
+	if opts.FunctionKey != nil {
+		e.prepareFunctionNames(f, opts.Entry, opts.LocalNames)
+	}
 	return e.EmitFile(f)
 }
 
 // Emitter accumulates Go source for a single Splash file.
 type Emitter struct {
-	body             strings.Builder
-	imports          map[string]bool
-	indent           int
-	needsCoalesce    bool
-	needsApproval    bool
-	moduleNamespaces map[string]bool
+	body               strings.Builder
+	imports            map[string]bool
+	indent             int
+	needsCoalesce      bool
+	needsApproval      bool
+	moduleNamespaces   map[string]bool
+	declarationKey     func(*ast.FunctionDecl) string
+	functionNames      map[*ast.FunctionDecl]string
+	functionReferences map[ast.Expr]*ast.FunctionDecl
+	printlnCalls       map[*ast.CallExpr]bool
+	mainFunction       *ast.FunctionDecl
 
 	// Phase 4b: approval cascade
 	approveFns     map[string]bool              // approval-gated function names (built in EmitFile pre-pass)
@@ -77,6 +94,105 @@ func (e *Emitter) SetApprovalCallers(approveCallers map[string]bool) {
 	e.approveCallers = approveCallers
 }
 
+// prepareFunctionNames keeps unique source names where their Go lookup cannot
+// be shadowed. The merged Go package needs distinct names for module functions
+// with the same spelling.
+func (e *Emitter) prepareFunctionNames(f, entry *ast.File, localNames map[string]bool) {
+	e.functionNames = make(map[*ast.FunctionDecl]string)
+	reserved := map[string]bool{"main": true}
+	counts := make(map[string]int)
+	for _, decl := range f.Declarations {
+		switch d := decl.(type) {
+		case *ast.FunctionDecl:
+			counts[d.Name]++
+			reserved[d.Name] = true
+		case *ast.TypeDecl:
+			counts[d.Name]++
+			reserved[d.Name] = true
+		case *ast.EnumDecl:
+			counts[d.Name]++
+			reserved[d.Name] = true
+			for _, variant := range d.Variants {
+				name := d.Name + variant.Name
+				counts[name]++
+				reserved[name] = true
+			}
+		}
+	}
+	if entry != nil {
+		for _, decl := range entry.Declarations {
+			if fn, ok := decl.(*ast.FunctionDecl); ok && fn.Name == "main" {
+				e.mainFunction = fn
+				break
+			}
+		}
+	}
+	n := 0
+	for _, decl := range f.Declarations {
+		fn, ok := decl.(*ast.FunctionDecl)
+		if !ok {
+			continue
+		}
+		name := fn.Name
+		collision := name == "main" || counts[name] > 1 || localNames[name]
+		if fn == e.mainFunction {
+			name = "run"
+			collision = counts[name] > 0 || localNames[name]
+		}
+		if collision {
+			for {
+				n++
+				name = fmt.Sprintf("_splash_fn_%d", n)
+				if !reserved[name] && !localNames[name] {
+					break
+				}
+			}
+		}
+		reserved[name] = true
+		e.functionNames[fn] = name
+	}
+}
+
+func (e *Emitter) functionKey(fn *ast.FunctionDecl) string {
+	if e.declarationKey != nil {
+		return e.declarationKey(fn)
+	}
+	return fn.Name
+}
+
+func (e *Emitter) functionName(fn *ast.FunctionDecl) string {
+	if name, ok := e.functionNames[fn]; ok {
+		return name
+	}
+	if fn.Name == "main" {
+		return "run"
+	}
+	return fn.Name
+}
+
+func (e *Emitter) isMain(fn *ast.FunctionDecl) bool {
+	if e.declarationKey != nil {
+		return fn == e.mainFunction
+	}
+	return fn.Name == "main"
+}
+
+func (e *Emitter) approvalCallee(call *ast.CallExpr) *ast.FunctionDecl {
+	fn := e.functionReferences[call.Callee]
+	if e.functionReferences == nil {
+		if ident, ok := call.Callee.(*ast.Ident); ok {
+			fn = e.fnDecls[ident.Name]
+		}
+	}
+	if fn != nil {
+		key := e.functionKey(fn)
+		if e.approveFns[key] || e.approveCallers[key] {
+			return fn
+		}
+	}
+	return nil
+}
+
 // EmitFile generates a complete Go source file from a Splash AST.
 func (e *Emitter) EmitFile(f *ast.File) string {
 	for _, u := range f.Uses {
@@ -94,10 +210,11 @@ func (e *Emitter) EmitFile(f *ast.File) string {
 		if !ok {
 			continue
 		}
-		e.fnDecls[fn.Name] = fn
+		key := e.functionKey(fn)
+		e.fnDecls[key] = fn
 		for _, ann := range fn.Annotations {
 			if ann.Kind == ast.AnnotApprove {
-				e.approveFns[fn.Name] = true
+				e.approveFns[key] = true
 			}
 		}
 	}

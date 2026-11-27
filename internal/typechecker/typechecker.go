@@ -15,8 +15,12 @@ import (
 
 // TypedFile is the output of the type checker.
 type TypedFile struct {
-	File  *ast.File
-	Types map[ast.Node]types.Type
+	File               *ast.File
+	Types              map[ast.Node]types.Type
+	FunctionReferences map[ast.Expr]*ast.FunctionDecl
+	PrintlnCalls       map[*ast.CallExpr]bool
+	UnresolvedCalls    map[*ast.CallExpr]bool
+	LocalNames         map[string]bool
 }
 
 // moduleState is shared across the entire import chain (main file + all transitive imports).
@@ -33,7 +37,7 @@ type TypeChecker struct {
 	globals         *Env
 	typeDecls       map[string]*ast.TypeDecl
 	constraintDecls map[string]*ast.ConstraintDecl
-	fnDecls         map[string]*ast.FunctionDecl
+	moduleFunctions map[*types.ModuleType]map[string]*ast.FunctionDecl
 	diags           []diagnostic.Diagnostic
 	modules         *moduleState // nil if no loader configured
 }
@@ -41,10 +45,10 @@ type TypeChecker struct {
 func newGlobals() *Env {
 	globals := NewEnv(nil)
 	// Built-in functions available in all Splash programs.
-	globals.Set("println", &types.FunctionType{
+	globals.symbols["println"] = binding{println: true, typ: &types.FunctionType{
 		Params: []types.Type{types.Unknown},
 		Return: types.Void,
-	})
+	}}
 	return globals
 }
 
@@ -60,7 +64,6 @@ func New() *TypeChecker {
 		globals:         newGlobals(),
 		typeDecls:       make(map[string]*ast.TypeDecl),
 		constraintDecls: make(map[string]*ast.ConstraintDecl),
-		fnDecls:         make(map[string]*ast.FunctionDecl),
 	}
 	for name, decl := range builtinConstraints {
 		tc.constraintDecls[name] = decl
@@ -97,8 +100,15 @@ func (tc *TypeChecker) Check(file *ast.File) (*TypedFile, []diagnostic.Diagnosti
 	for name, decl := range builtinConstraints {
 		tc.constraintDecls[name] = decl
 	}
-	tc.fnDecls = make(map[string]*ast.FunctionDecl)
-	typed := &TypedFile{File: file, Types: make(map[ast.Node]types.Type)}
+	tc.moduleFunctions = make(map[*types.ModuleType]map[string]*ast.FunctionDecl)
+	typed := &TypedFile{
+		File:               file,
+		Types:              make(map[ast.Node]types.Type),
+		FunctionReferences: make(map[ast.Expr]*ast.FunctionDecl),
+		PrintlnCalls:       make(map[*ast.CallExpr]bool),
+		UnresolvedCalls:    make(map[*ast.CallExpr]bool),
+		LocalNames:         make(map[string]bool),
+	}
 	tc.pass1(file)
 	tc.pass2(file, typed)
 	return typed, tc.diags
@@ -109,6 +119,7 @@ func (tc *TypeChecker) pass1(file *ast.File) {
 	for _, u := range file.Uses {
 		tc.processUseDecl(u)
 	}
+	functionNames := make(map[string]bool)
 	for _, decl := range file.Declarations {
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
@@ -117,8 +128,11 @@ func (tc *TypeChecker) pass1(file *ast.File) {
 		case *ast.ConstraintDecl:
 			tc.constraintDecls[d.Name] = d
 		case *ast.FunctionDecl:
-			tc.fnDecls[d.Name] = d
-			tc.globals.Set(d.Name, tc.buildFunctionType(d))
+			if functionNames[d.Name] {
+				tc.errorf(d.Position, "duplicate function %q in module", d.Name)
+			}
+			functionNames[d.Name] = true
+			tc.globals.symbols[d.Name] = binding{typ: tc.buildFunctionType(d), function: d}
 		case *ast.EnumDecl:
 			tc.globals.Set(d.Name, types.Named(d.Name))
 		}
@@ -211,6 +225,7 @@ func (tc *TypeChecker) injectModule(f *ast.File, u *ast.UseDecl) {
 	}
 	exportAll := len(f.Exposes) == 0
 	namespaceExports := make(map[string]types.Type)
+	namespaceFunctions := make(map[string]*ast.FunctionDecl)
 
 	for _, decl := range f.Declarations {
 		switch d := decl.(type) {
@@ -218,15 +233,15 @@ func (tc *TypeChecker) injectModule(f *ast.File, u *ast.UseDecl) {
 			if exportAll || exposed[d.Name] {
 				nt := tc.buildNamedType(d)
 				tc.typeDecls[d.Name] = d
-				tc.globals.Set(d.Name, nt)
+				tc.setImportedBinding(d.Name, binding{typ: nt, imported: d})
 				namespaceExports[d.Name] = nt
 			}
 		case *ast.FunctionDecl:
 			if exportAll || exposed[d.Name] {
 				ft := tc.buildFunctionType(d)
-				tc.fnDecls[d.Name] = d
-				tc.globals.Set(d.Name, ft)
+				tc.setImportedBinding(d.Name, binding{typ: ft, function: d, imported: d})
 				namespaceExports[d.Name] = ft
+				namespaceFunctions[d.Name] = d
 			}
 		case *ast.ConstraintDecl:
 			if exportAll || exposed[d.Name] {
@@ -236,8 +251,18 @@ func (tc *TypeChecker) injectModule(f *ast.File, u *ast.UseDecl) {
 	}
 
 	if ns := namespaceName(u, f); ns != "" {
-		tc.globals.Set(ns, &types.ModuleType{Name: ns, Exports: namespaceExports})
+		moduleType := &types.ModuleType{Name: ns, Exports: namespaceExports}
+		tc.moduleFunctions[moduleType] = namespaceFunctions
+		tc.setImportedBinding(ns, binding{typ: moduleType, imported: f})
 	}
+}
+
+// setImportedBinding detects collisions across function, type, and namespace
+// imports. Importing the same declaration through another alias is harmless.
+func (tc *TypeChecker) setImportedBinding(name string, next binding) {
+	previous := tc.globals.symbols[name]
+	next.ambiguous = previous.ambiguous || previous.imported != nil && previous.imported != next.imported
+	tc.globals.symbols[name] = next
 }
 
 func namespaceName(u *ast.UseDecl, f *ast.File) string {
@@ -354,6 +379,7 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	}
 	for _, p := range d.Params {
 		env.Set(p.Name, tc.resolveTypeExprWithParams(p.Type, typeParamEnv))
+		typed.LocalNames[p.Name] = true
 	}
 	var returnType types.Type = types.Void
 	if d.ReturnType != nil {
@@ -377,6 +403,7 @@ func (tc *TypeChecker) checkBlock(block *ast.BlockStmt, env *Env, typed *TypedFi
 func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, typeParamEnv map[string]*types.TypeParamType, returnType types.Type) {
 	switch s := stmt.(type) {
 	case *ast.LetStmt:
+		typed.LocalNames[s.Name] = true
 		valType := tc.checkExpr(s.Value, env, typed, typeParamEnv)
 		if s.Type != nil {
 			declType := tc.resolveTypeExprWithParams(s.Type, typeParamEnv)
@@ -411,6 +438,7 @@ func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, type
 		tc.checkExpr(s.Cond, env, typed, typeParamEnv)
 		tc.checkBlock(s.Else, NewEnv(env), typed, typeParamEnv, returnType)
 	case *ast.ForStmt:
+		typed.LocalNames[s.Binding] = true
 		iterType := tc.checkExpr(s.Iter, env, typed, typeParamEnv)
 		inner := NewEnv(env)
 		if lt, ok := iterType.(*types.ListType); ok {
@@ -439,8 +467,16 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 	case *ast.NoneLiteral:
 		result = &types.OptionalType{Inner: types.Unknown}
 	case *ast.Ident:
-		if t, ok := env.Get(e.Name); ok {
-			result = t
+		if b, ok := env.lookup(e.Name); ok {
+			if b.ambiguous {
+				tc.errorf(e.Pos(), "ambiguous imported name %q; use a qualified name or distinct import alias", e.Name)
+				result = types.Unknown
+			} else {
+				result = b.typ
+				if b.function != nil {
+					typed.FunctionReferences[e] = b.function
+				}
+			}
 		} else {
 			tc.errorf(e.Pos(), "undefined: %s", e.Name)
 			result = types.Unknown
@@ -450,6 +486,11 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 	case *ast.MemberExpr:
 		objType := tc.checkExpr(e.Object, env, typed, typeParamEnv)
 		result = tc.resolveMemberType(objType, e.Member, e.Optional, e.Pos())
+		if mod, ok := objType.(*types.ModuleType); ok && !e.Optional {
+			if fn := tc.moduleFunctions[mod][e.Member]; fn != nil {
+				typed.FunctionReferences[e] = fn
+			}
+		}
 	case *ast.BinaryExpr:
 		left := tc.checkExpr(e.Left, env, typed, typeParamEnv)
 		tc.checkExpr(e.Right, env, typed, typeParamEnv)
@@ -537,19 +578,24 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 		argTypes[i] = tc.checkExpr(arg, env, typed, typeParamEnv)
 	}
 
+	var println bool
+	if ident, ok := e.Callee.(*ast.Ident); ok {
+		b, _ := env.lookup(ident.Name)
+		println = b.println
+	}
+	fnDecl := typed.FunctionReferences[e.Callee]
+	if fnDecl == nil && !println {
+		typed.UnresolvedCalls[e] = true
+	}
+
 	ft, ok := calleeType.(*types.FunctionType)
 	if !ok {
 		return types.Unknown
 	}
 
-	// Check constraint satisfaction for generic calls.
-	calleeName := ""
-	if ident, ok2 := e.Callee.(*ast.Ident); ok2 {
-		calleeName = ident.Name
-	}
-
-	// Classification check for println: @sensitive types must not be logged.
-	if calleeName == "println" {
+	// Classification checks apply to the builtin rather than a shadowing declaration.
+	if println {
+		typed.PrintlnCalls[e] = true
 		for i, argType := range argTypes {
 			if argType.Classification() > types.LoggableMaxClassification {
 				tc.errorf(e.Args[i].Pos(), "cannot pass %s type %s to println — use a public accessor or a type that satisfies Loggable",
@@ -558,36 +604,34 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 		}
 	}
 
-	if calleeName != "" {
-		if fnDecl, found := tc.fnDecls[calleeName]; found && len(fnDecl.TypeParams) > 0 {
-			// Build a map from type param name -> inferred concrete type from args.
-			// Walk function params to find which arg position each type param is used in.
-			typeParamInferred := make(map[string]types.Type)
-			for i, param := range fnDecl.Params {
-				if i >= len(argTypes) {
-					break
-				}
-				// If param type is a named type expr matching a type param, record the inference.
-				if named, ok2 := param.Type.(*ast.NamedTypeExpr); ok2 {
-					for _, tp := range fnDecl.TypeParams {
-						if named.Name == tp.Name {
-							typeParamInferred[tp.Name] = argTypes[i]
-						}
+	if fnDecl != nil && len(fnDecl.TypeParams) > 0 {
+		// Build a map from type param name -> inferred concrete type from args.
+		// Walk function params to find which arg position each type param is used in.
+		typeParamInferred := make(map[string]types.Type)
+		for i, param := range fnDecl.Params {
+			if i >= len(argTypes) {
+				break
+			}
+			// If param type is a named type expr matching a type param, record the inference.
+			if named, ok2 := param.Type.(*ast.NamedTypeExpr); ok2 {
+				for _, tp := range fnDecl.TypeParams {
+					if named.Name == tp.Name {
+						typeParamInferred[tp.Name] = argTypes[i]
 					}
 				}
 			}
-			// Now check constraints.
-			for _, tp := range fnDecl.TypeParams {
-				inferredType, hasInferred := typeParamInferred[tp.Name]
-				if !hasInferred {
-					continue
-				}
-				for _, constraintName := range tp.Constraints {
-					if constraintName == "Loggable" {
-						if inferredType.Classification() > types.LoggableMaxClassification {
-							tc.errorf(e.Pos(), "type %s has classification %s and cannot satisfy constraint Loggable",
-								inferredType.TypeName(), inferredType.Classification())
-						}
+		}
+		// Now check constraints.
+		for _, tp := range fnDecl.TypeParams {
+			inferredType, hasInferred := typeParamInferred[tp.Name]
+			if !hasInferred {
+				continue
+			}
+			for _, constraintName := range tp.Constraints {
+				if constraintName == "Loggable" {
+					if inferredType.Classification() > types.LoggableMaxClassification {
+						tc.errorf(e.Pos(), "type %s has classification %s and cannot satisfy constraint Loggable",
+							inferredType.TypeName(), inferredType.Classification())
 					}
 				}
 			}
@@ -598,13 +642,6 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 		return ft.Return
 	}
 	return types.Void
-}
-
-func (tc *TypeChecker) findFunctionDecl(name string) (*ast.FunctionDecl, bool) {
-	if d, ok := tc.fnDecls[name]; ok {
-		return d, true
-	}
-	return nil, false
 }
 
 func (tc *TypeChecker) resolveTypeExpr(expr ast.TypeExpr) types.Type {

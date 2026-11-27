@@ -269,3 +269,201 @@ fn bill_customer() needs Net -> String { return charge() }
 		}
 	}
 }
+
+func TestResolvedNamedCallsAgreeWithGraphAndNativeOutput(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeSplashFile(t, dir, "main.splash", `
+module main
+use rates as first
+use shipping as second
+
+fn total(price: Int) -> Int { return first.price() + second.price() + price }
+fn main() { println(total(3)) }
+`)
+	writeSplashFile(t, dir, "rates.splash", `
+module rates
+fn price() -> Int { return 40 }
+`)
+	writeSplashFile(t, dir, "shipping.splash", `
+module shipping
+fn price() -> Int { return 2 }
+`)
+
+	program, err := analyzeProgram(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := program.graph.Node("total")
+	if got := strings.Join(total.Callees(), ","); got != "rates.price,shipping.price" {
+		t.Fatalf("total callees = %q; want rates.price,shipping.price", got)
+	}
+
+	executable := filepath.Join(dir, "invoice")
+	if err := runBuild(entry, executable); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	out, err := exec.Command(executable).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "45" {
+		t.Fatalf("run = %q, %v; want 45", out, err)
+	}
+}
+
+func TestResolvedNamedCallsRejectAmbiguousFlatImport(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeSplashFile(t, dir, "main.splash", `
+module main
+use rates as first
+use shipping as second
+
+fn main() { println(price()) }
+`)
+	writeSplashFile(t, dir, "rates.splash", "module rates\nfn price() -> Int { return 40 }\n")
+	writeSplashFile(t, dir, "shipping.splash", "module shipping\nfn price() -> Int { return 2 }\n")
+
+	if err := runCheck(entry); err == nil {
+		t.Fatal("check accepted a flat call with two distinct imported declarations")
+	}
+}
+
+func TestLocalFunctionValueDoesNotResolveToShadowedDeclaration(t *testing.T) {
+	entry := writeSplashFile(t, t.TempDir(), "main.splash", `
+module main
+fn price() -> Int { return 40 }
+fn alternate() -> Int { return 2 }
+fn apply(price: fn() -> Int) -> Int { return price() }
+fn main() { println(apply(alternate)) }
+`)
+	program, err := analyzeProgram(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := program.graph.Node("apply").Callees(); len(got) != 0 {
+		t.Fatalf("indirect caller has named callees %v", got)
+	}
+	executable := filepath.Join(t.TempDir(), "callback")
+	if err := runBuild(entry, executable); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	out, err := exec.Command(executable).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "2" {
+		t.Fatalf("run = %q, %v; want 2", out, err)
+	}
+}
+
+func TestProtectedCallsRejectUnresolvedIndirectTargets(t *testing.T) {
+	entry := writeSplashFile(t, t.TempDir(), "main.splash", `
+module main
+fn process(callback: fn() -> Int) needs Agent -> Int { return callback() }
+`)
+	program, err := analyzeProgram(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diags := program.safetyDiagnostics()
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "indirect call target") {
+		t.Fatalf("expected a specific unresolved-target diagnostic, got %v", diags)
+	}
+	if out, err := captureStdout(t, func() error { return runEmit(entry) }); err == nil || out != "" {
+		t.Fatalf("emit = %q, %v; want no artifact", out, err)
+	}
+}
+
+func TestQualifiedApprovalCallLowersWithErrorChannel(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeSplashFile(t, dir, "main.splash", `
+module main
+use rates as pricing
+
+fn main() {
+    let price = pricing.standardPrice()
+    println(price)
+}
+`)
+	writeSplashFile(t, dir, "rates.splash", `
+module rates
+approve fn standardPrice() -> Int { return 42 }
+`)
+	executable := filepath.Join(dir, "priced")
+	if err := runBuild(entry, executable); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	cmd := exec.Command(executable)
+	cmd.Stdin = strings.NewReader("y\n")
+	out, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) != "42" {
+		t.Fatalf("run = %q, %v; want 42", out, err)
+	}
+}
+
+func TestQualifiedNamedCallsApplyExistingPolicy(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeSplashFile(t, dir, "main.splash", `
+module main
+use reports as local
+
+fn summarize() needs Agent -> Int { return local.count() }
+`)
+	writeSplashFile(t, dir, "reports.splash", `
+module reports
+redline fn count() -> Int { return 42 }
+`)
+	program, err := analyzeProgram(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diags := program.safetyDiagnostics()
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "redline fn") {
+		t.Fatalf("expected the existing redline rule to apply to a qualified target, got %v", diags)
+	}
+}
+
+func TestNestedApprovalCallRejectsUnsupportedLowering(t *testing.T) {
+	entry := writeSplashFile(t, t.TempDir(), "main.splash", `
+module main
+approve fn standardPrice() -> Int { return 42 }
+fn quotedPrice() -> Int { return standardPrice() }
+fn main() { println(quotedPrice()) }
+`)
+	program, err := analyzeProgram(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diags := program.safetyDiagnostics()
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "approval call") {
+		t.Fatalf("expected one diagnostic for the unsupported nested approval call, got %v", diags)
+	}
+	if out, err := captureStdout(t, func() error { return runEmit(entry) }); err == nil || out != "" {
+		t.Fatalf("emit = %q, %v; want no artifact", out, err)
+	}
+}
+
+func TestFlatFunctionAmbiguitySurvivesInterveningNamespace(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeSplashFile(t, dir, "main.splash", `
+module main
+use rates as first
+use constants as price
+use shipping as second
+
+fn main() { println(price()) }
+`)
+	writeSplashFile(t, dir, "rates.splash", "module rates\nfn price() -> Int { return 40 }\n")
+	writeSplashFile(t, dir, "constants.splash", "module constants\nfn tax() -> Int { return 1 }\n")
+	writeSplashFile(t, dir, "shipping.splash", "module shipping\nfn price() -> Int { return 2 }\n")
+	if err := runCheck(entry); err == nil {
+		t.Fatal("check lost the ambiguous flat name after a namespace import")
+	}
+}
+
+func TestDuplicateLocalFunctionSurvivesInterveningType(t *testing.T) {
+	entry := writeSplashFile(t, t.TempDir(), "main.splash", `
+module main
+fn price() -> Int { return 40 }
+type price { value: Int }
+fn price() -> Int { return 2 }
+fn main() { println(price()) }
+`)
+	if err := runCheck(entry); err == nil {
+		t.Fatal("check accepted duplicate declarations separated by a type")
+	}
+}
