@@ -15,7 +15,7 @@ func (e *Emitter) emitDecl(d ast.Decl) {
 		e.emitEnumDecl(decl)
 	case *ast.FunctionDecl:
 		e.emitFunctionDecl(decl)
-	// ModuleDecl, UseDecl, ConstraintDecl: skip in v0.1
+		// ModuleDecl, UseDecl, ConstraintDecl: skip in v0.1
 	}
 }
 
@@ -46,9 +46,10 @@ func (e *Emitter) emitEnumDecl(decl *ast.EnumDecl) {
 }
 
 func (e *Emitter) emitFunctionDecl(decl *ast.FunctionDecl) {
-	isApprove := e.approveFns[decl.Name]
-	isCaller := e.approveCallers[decl.Name]
-	isMain := decl.Name == "main"
+	key := e.functionKey(decl)
+	isApprove := e.approveFns[key]
+	isCaller := e.approveCallers[key]
+	isMain := e.isMain(decl)
 
 	// Set per-function emission state for stmt emitters.
 	// main() is treated as error-propagating: it becomes run() error in Go,
@@ -65,13 +66,13 @@ func (e *Emitter) emitFunctionDecl(decl *ast.FunctionDecl) {
 		// Inject approval gate: if denied, return before body runs.
 		e.needsApproval = true
 		if decl.ReturnType != nil {
-			e.writeLine("if err := splashApprove(%q); err != nil {", decl.Name)
+			e.writeLine("if err := splashApprove(%q); err != nil {", key)
 			e.indent++
 			e.writeLine("return %s, err", e.zeroValueFor(decl.ReturnType))
 			e.indent--
 			e.writeLine("}")
 		} else {
-			e.writeLine("if err := splashApprove(%q); err != nil {", decl.Name)
+			e.writeLine("if err := splashApprove(%q); err != nil {", key)
 			e.indent++
 			e.writeLine("return err")
 			e.indent--
@@ -96,7 +97,7 @@ func (e *Emitter) emitFunctionDecl(decl *ast.FunctionDecl) {
 		e.imports["os"] = true
 		e.writeLine("func main() {")
 		e.indent++
-		e.writeLine("if err := run(); err != nil {")
+		e.writeLine("if err := %s(); err != nil {", e.functionName(decl))
 		e.indent++
 		e.writeLine("fmt.Fprintln(os.Stderr, err)")
 		e.writeLine("os.Exit(1)")
@@ -118,17 +119,18 @@ func (e *Emitter) funcSignature(decl *ast.FunctionDecl) string {
 		params = append(params, fmt.Sprintf("%s %s", p.Name, e.emitTypeName(p.Type)))
 	}
 
-	isApprovalFn := e.approveFns[decl.Name] || e.approveCallers[decl.Name]
-	isMain := decl.Name == "main"
+	key := e.functionKey(decl)
+	isApprovalFn := e.approveFns[key] || e.approveCallers[key]
+	isMain := e.isMain(decl)
 
 	ret := e.emitTypeName(decl.ReturnType)
-	sig := fmt.Sprintf("func %s(%s)", decl.Name, strings.Join(params, ", "))
+	sig := fmt.Sprintf("func %s(%s)", e.functionName(decl), strings.Join(params, ", "))
 
 	switch {
 	case isMain:
 		// fn main() becomes func run() error in Go — the actual main() wrapper
 		// is emitted separately after the body.
-		sig = fmt.Sprintf("func run(%s) error", strings.Join(params, ", "))
+		sig += " error"
 	case isApprovalFn && ret != "":
 		sig += fmt.Sprintf(" (%s, error)", ret)
 	case isApprovalFn && ret == "":

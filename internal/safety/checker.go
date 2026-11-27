@@ -25,6 +25,8 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnos
 	agentReachable := g.Reachable(roots)
 	agentParents := g.Parents(roots)
 
+	diags = append(diags, c.checkUnresolvedCalls(g, roots)...)
+	diags = append(diags, c.checkApprovalCallContexts(g)...)
 	diags = append(diags, c.checkRedline(file, g, agentParents)...)
 	diags = append(diags, c.checkApprove(file, g, agentReachable)...)
 	diags = append(diags, c.checkContainment(file, g, agentReachable)...)
@@ -32,6 +34,56 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnos
 	diags = append(diags, c.checkSandbox(file, g)...)
 	diags = append(diags, c.checkBudget(file)...)
 
+	return diags
+}
+
+// checkUnresolvedCalls rejects incomplete reachability in regions that need
+// resolved identities for policy checks. Approval propagation also requires
+// complete call targets so indirect calls cannot discard the error channel.
+func (c *Checker) checkUnresolvedCalls(g *callgraph.Graph, roots []string) []diagnostic.Diagnostic {
+	if !g.HasUnresolvedCalls() {
+		return nil
+	}
+	nodes := g.Nodes()
+	var hasApproval bool
+	for _, node := range nodes {
+		if node.HasAnnotation(ast.AnnotSandbox) {
+			roots = append(roots, node.Name)
+		}
+		if node.HasAnnotation(ast.AnnotApprove) {
+			hasApproval = true
+		}
+	}
+	reachable := g.Reachable(roots)
+
+	var diags []diagnostic.Diagnostic
+	for _, node := range nodes {
+		if hasApproval || reachable[node.Name] {
+			for _, pos := range node.UnresolvedCalls {
+				diags = append(diags, diagnostic.Errorf(pos, "cannot verify indirect call target in %q under agent, sandbox, or approval checks", node.Name))
+			}
+		}
+	}
+	return diags
+}
+
+// checkApprovalCallContexts rejects uses of an approval error channel that the
+// current backend can only propagate for a whole statement, let or return value.
+func (c *Checker) checkApprovalCallContexts(g *callgraph.Graph) []diagnostic.Diagnostic {
+	gated := g.ApprovalFunctions()
+	if len(gated) == 0 {
+		return nil
+	}
+	withErrorChannel := g.Callers(gated)
+	var diags []diagnostic.Diagnostic
+	for _, node := range g.Nodes() {
+		for _, call := range node.NestedCalls {
+			if withErrorChannel[call.Target] {
+				diags = append(diags, diagnostic.Errorf(call.Position,
+					"approval call to %q must be a standalone statement, let value, or return value", call.Target))
+			}
+		}
+	}
 	return diags
 }
 
@@ -122,15 +174,15 @@ func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentParents 
 		if !ok {
 			continue
 		}
-		node := g.Node(fn.Name)
+		node := g.Node(g.FunctionKey(fn))
 		if node == nil {
 			continue
 		}
 		if !node.HasAnnotation(ast.AnnotRedline) {
 			continue
 		}
-		if _, reachable := agentParents[fn.Name]; reachable {
-			path := callgraph.PathTo(agentParents, fn.Name)
+		if _, reachable := agentParents[g.FunctionKey(fn)]; reachable {
+			path := callgraph.PathTo(agentParents, g.FunctionKey(fn))
 			diags = append(diags, diagnostic.Errorf(
 				fn.Position,
 				"redline fn %q is reachable from an agent context\n  call path: %s",
@@ -195,10 +247,10 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 		if !ok {
 			continue
 		}
-		if !agentReachable[fn.Name] {
+		if !agentReachable[g.FunctionKey(fn)] {
 			continue
 		}
-		node := g.Node(fn.Name)
+		node := g.Node(g.FunctionKey(fn))
 		if node == nil {
 			continue
 		}
@@ -300,7 +352,7 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.
 			denySet = parseEffectListArg(denyExpr)
 		}
 
-		reachable := g.Reachable([]string{fn.Name})
+		reachable := g.Reachable([]string{g.FunctionKey(fn)})
 		for name := range reachable {
 			node := g.Node(name)
 			if node == nil {
@@ -387,10 +439,10 @@ func (c *Checker) checkApprove(file *ast.File, g *callgraph.Graph, agentReachabl
 		if !ok {
 			continue
 		}
-		if !agentReachable[fn.Name] {
+		if !agentReachable[g.FunctionKey(fn)] {
 			continue
 		}
-		node := g.Node(fn.Name)
+		node := g.Node(g.FunctionKey(fn))
 		if node == nil {
 			continue
 		}
