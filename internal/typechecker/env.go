@@ -17,6 +17,7 @@ type binding struct {
 	imported  ast.Node
 	ambiguous bool
 	println   bool
+	stdlibAI  bool
 	local     LocalBinding
 }
 

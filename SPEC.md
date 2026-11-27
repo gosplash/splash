@@ -352,7 +352,7 @@ The type checker infers types for `let` bindings when no annotation is given. Ex
 
 ### 4.5 Effect Propagation
 
-For resolved named calls, the declared compatibility rule in [§5.3](#53-effect-checking) carries capability requirements along a call chain. Conservative inference from operations and checking unresolved targets are separate from this rule.
+For resolved named calls, the declared compatibility rule in [§5.3](#53-effect-checking) carries capability requirements along a call chain. The separate implementation conformance rule propagates effects from modeled operations.
 
 ---
 
@@ -397,6 +397,10 @@ fn bad() -> String {
     return summarize(1)   // error: missing DB.read, AI
 }
 ```
+
+The checker also requires every known inferred effect to be covered by its function's declared capabilities. Inference starts from modeled operations and propagates along resolved calls to a fixed point, including recursive groups. A missing grant diagnostic identifies the modeled operation and one deterministic path to it. The compiler models calls to the imported `std/ai` adapter's `prompt` operation as `AI`. The adapter contract describes the language-level operation. The provider implementation remains a trusted boundary. Built-in `println` adds no capability in this vocabulary.
+
+Unresolved calls, unsupported source forms, and unmodeled adapter operations leave effect coverage incomplete for the affected function and its callers. Incomplete summaries retain known inferred effects. `splash effects` reports them separately from the unknown remainder and lists unused grants only for functions with complete coverage under the current model. Incompleteness alone creates no additional artifact gate in this slice.
 
 ### 5.4 Effect Propagation Through `approve fn`
 

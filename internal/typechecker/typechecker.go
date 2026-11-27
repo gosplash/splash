@@ -24,6 +24,7 @@ type TypedFile struct {
 	PrintlnCalls       map[*ast.CallExpr]bool
 	UnresolvedCalls    map[*ast.CallExpr]bool
 	LocalNames         map[string]bool
+	EffectFacts        []effects.FunctionFacts
 }
 
 // moduleState is shared across the entire import chain (main file + all transitive imports).
@@ -44,6 +45,7 @@ type TypeChecker struct {
 	moduleFunctions map[*types.ModuleType]map[string]*ast.FunctionDecl
 	diags           []diagnostic.Diagnostic
 	currentEffects  effects.EffectSet
+	currentFacts    *effects.FunctionFacts
 	modules         *moduleState // nil if no loader configured
 }
 
@@ -168,7 +170,7 @@ func (tc *TypeChecker) processUseDecl(u *ast.UseDecl) {
 	switch u.Path {
 	case "std/ai":
 		// Inject 'ai' as an AIAdapter instance and 'AIError' as a named type.
-		tc.globals.Set("ai", types.Named("AIAdapter"))
+		tc.globals.symbols["ai"] = binding{typ: types.Named("AIAdapter"), stdlibAI: true}
 		tc.globals.Set("AIError", types.Named("AIError"))
 	default:
 		tc.loadUserModule(u)
@@ -401,6 +403,14 @@ func (tc *TypeChecker) checkTypeDecl(d *ast.TypeDecl, typed *TypedFile) {
 }
 
 func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
+	typed.EffectFacts = append(typed.EffectFacts, effects.FunctionFacts{Function: d})
+	tc.currentFacts = &typed.EffectFacts[len(typed.EffectFacts)-1]
+	defer func() { tc.currentFacts = nil }()
+	for _, annotation := range d.Annotations {
+		if annotation.Kind == ast.AnnotApprove {
+			tc.markEffectGap(annotation.Pos, "approval adapter has no modeled effect contract")
+		}
+	}
 	tc.currentEffects = effects.None
 	for _, effect := range d.Effects {
 		flag, known := effects.Lookup(effect.Name)
@@ -424,6 +434,9 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	}
 	for i := range d.Params {
 		p := &d.Params[i]
+		if p.Default != nil {
+			tc.markEffectGap(p.Default.Pos(), "parameter default was not analyzed")
+		}
 		paramType := tc.resolveTypeExpr(p.Type, typeParamEnv, true)
 		if p.Type != nil {
 			typed.Types[p.Type] = paramType
@@ -445,6 +458,14 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	}
 	if d.Body != nil {
 		tc.checkBlock(d.Body, env, typed, typeParamEnv, returnType)
+	} else {
+		tc.markEffectGap(d.Pos(), "function body is unavailable")
+	}
+}
+
+func (tc *TypeChecker) markEffectGap(position token.Position, reason string) {
+	if tc.currentFacts.Gap == nil {
+		tc.currentFacts.Gap = &effects.CoverageGap{Reason: reason, Position: position}
 	}
 }
 
@@ -505,6 +526,8 @@ func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, type
 	case *ast.AssignStmt:
 		tc.checkExpr(s.Target, env, typed, typeParamEnv)
 		tc.checkExpr(s.Value, env, typed, typeParamEnv)
+	default:
+		tc.markEffectGap(stmt.Pos(), "unsupported statement")
 	}
 }
 
@@ -601,11 +624,19 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 		result = types.Unknown
 		if nt, ok := tc.resolveTypeName(e.TypeName, e.Pos(), true).(*types.NamedType); ok && nt.Declaration != nil {
 			result = nt
+			for _, field := range nt.Declaration.Fields {
+				if field.Default != nil {
+					tc.markEffectGap(field.Default.Pos(), "record field default was not analyzed")
+				}
+			}
+		} else {
+			tc.markEffectGap(e.Pos(), "record constructor was not resolved")
 		}
 		for _, f := range e.Fields {
 			tc.checkExpr(f.Value, env, typed, typeParamEnv)
 		}
 	default:
+		tc.markEffectGap(expr.Pos(), "unsupported expression")
 		result = types.Unknown
 	}
 	if result != nil {
@@ -616,23 +647,23 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 
 // checkCallExpr handles function calls, including constraint satisfaction for generic calls.
 func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile, typeParamEnv map[string]types.Type) types.Type {
-	// Special case: ai.prompt<T>(...) on AIAdapter → Result<T, AIError>
-	// Look up 'ai' directly in env to avoid double-checking (which would double-report errors).
-	if mem, ok := e.Callee.(*ast.MemberExpr); ok && mem.Member == "prompt" {
-		if ident, ok2 := mem.Object.(*ast.Ident); ok2 {
-			if t, ok3 := env.Get(ident.Name); ok3 {
-				if nt, ok4 := t.(*types.NamedType); ok4 && nt.Name == "AIAdapter" {
-					typed.Types[mem.Object] = t
-					typed.Types[e.Callee] = types.Unknown
-					for _, arg := range e.Args {
-						tc.checkExpr(arg, env, typed, typeParamEnv)
-					}
-					if len(e.TypeArgs) == 1 {
-						resolved := tc.resolveTypeExpr(e.TypeArgs[0], typeParamEnv, true)
-						return resolved
-					}
-					return types.Unknown
+	// Model the compiler-provided adapter by binding identity. A user value
+	// with an AIAdapter type or the name ai carries no trusted effect contract.
+	if mem, ok := e.Callee.(*ast.MemberExpr); ok && mem.Member == "prompt" && !mem.Optional {
+		if ident, ok := mem.Object.(*ast.Ident); ok {
+			if adapter, ok := env.lookup(ident.Name); ok && adapter.stdlibAI && !adapter.ambiguous {
+				tc.currentFacts.Operations = append(tc.currentFacts.Operations, effects.Operation{
+					Effects: effects.AI, Name: "std/ai.prompt", Position: e.Pos(),
+				})
+				typed.Types[mem.Object] = adapter.typ
+				typed.Types[e.Callee] = types.Unknown
+				for _, arg := range e.Args {
+					tc.checkExpr(arg, env, typed, typeParamEnv)
 				}
+				if len(e.TypeArgs) == 1 {
+					return tc.resolveTypeExpr(e.TypeArgs[0], typeParamEnv, true)
+				}
+				return types.Unknown
 			}
 		}
 	}
@@ -650,6 +681,7 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 	}
 	fnDecl := typed.FunctionReferences[e.Callee]
 	if fnDecl != nil {
+		tc.currentFacts.Calls = append(tc.currentFacts.Calls, effects.ResolvedCall{Target: fnDecl, Position: e.Pos()})
 		missing := effects.Parse(fnDecl.Effects) &^ (tc.currentEffects | effects.Agent)
 		if missing != effects.None {
 			tc.errorf(e.Pos(), "missing declared effect %s for call to %q (declared at %s)", missing, fnDecl.Name, fnDecl.Pos())
@@ -657,6 +689,7 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 	}
 	if fnDecl == nil && !println {
 		typed.UnresolvedCalls[e] = true
+		tc.markEffectGap(e.Pos(), "unresolved call")
 	}
 
 	ft, ok := calleeType.(*types.FunctionType)
