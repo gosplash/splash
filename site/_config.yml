@@ -1,8 +1,7 @@
 title: Splash
 description: >
-  Splash is a compiled, statically-typed programming language for backend
-  systems and AI agent infrastructure. Its compiler enforces capability bounds,
-  data classification, and agent safety properties before the binary is produced.
+  Splash is an early statically typed language for backend and control-plane
+  software, designed for machines to write and humans to trust.
 baseurl: ""
 url: "https://gosplash.dev"
 

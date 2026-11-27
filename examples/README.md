@@ -2,7 +2,7 @@
 
 These examples focus on Splash's actual design center: control-plane software whose authority must be statically understood before it runs. They are intentionally centered on agent entrypoints, tool surfaces, approval gates, containment, and data-flow boundaries rather than generic application code.
 
-All can be checked with `splash check` and built with `splash build`. `tool fn` declarations emit JSON Schema via `splash tools`. `splash emit` prints the generated Go source.
+These files include native examples and illustrative language examples. Start with the [supported subset](../docs/design/supported-subset.md) for native builds. The finance and health examples check statically at the audited revision and use features that fail native compilation. `splash tools` emits tool argument schemas, and `splash emit` prints Go after the currently implemented safety passes. [Implementation status](../README.md#implementation-status)
 
 ```
 splash check <file.splash>         # parse + type check + safety enforcement
@@ -261,25 +261,4 @@ go build ./cmd/splash/...
 
 ## Compiler Status
 
-| Feature | Status |
-|---|---|
-| Lexer + parser | ✅ Complete |
-| Type checker | ✅ Complete |
-| Effect system (`needs`) | ✅ Complete |
-| Call graph analysis | ✅ Complete |
-| `redline fn` enforcement | ✅ Complete |
-| `@containment` enforcement | ✅ Complete |
-| `approve fn` runtime (`ApprovalAdapter`, `StdinApproval`) | ✅ Complete (Phase 4a) |
-| Go codegen | ✅ Complete |
-| `splash check` / `splash build` / `splash emit` | ✅ Complete |
-| `tool fn` JSON Schema (`splash tools`) | ✅ Complete |
-| `tool fn` safety filtering (agent-reachable only) | ✅ Complete |
-| `use std/ai` + `ai.prompt<T>` type checking | ✅ Complete |
-| Effects field in tool schema output | ✅ Complete |
-| Member access type resolution | ✅ Complete |
-| `approve fn` denial / error cascade (`(T, error)` Go signatures) | ✅ Complete (Phase 4b) |
-| `@sandbox` effect allow/deny enforcement (compile-time) | ✅ Complete |
-| `@budget` argument type validation (compile-time) | ✅ Complete |
-| `std/db` stdlib | Planned — Phase 4 |
-| `@sensitive` / `Loggable` enforcement (`tool fn` return type + `println`) | ✅ Complete |
-| Multi-file modules (`use path` loads sibling `.splash` files) | ✅ Complete |
+The [implementation-status table](../README.md#implementation-status) gives evidence for the supported subset, policy checks and remaining gaps. The [repository assessment](../docs/design/repository-assessment.md) records what was tested, including native-build outcomes.

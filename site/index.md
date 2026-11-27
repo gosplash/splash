@@ -5,6 +5,18 @@ title: Splash
 
 # Splash
 
+**Designed for machines to write and humans to trust.**
+
+Splash is an early statically typed programming language for backend and control-plane software, designed around explicit contracts, fast deterministic compiler feedback and verifiable authority boundaries.
+
+Coding agents can write conventional Splash software with no embedded model. Software that runs agents can also declare which operations require approval and which are outside agent authority. The current compiler checks specific modeled paths and source forms.
+
+[Get started](https://github.com/gosplash/splash#quick-start) · [Specification](https://github.com/gosplash/splash/blob/master/SPEC.md) · [Implementation status](https://github.com/gosplash/splash#implementation-status)
+
+---
+
+The April 2026 whitepaper below records the original design and roadmap. Its guarantees and examples describe a broader target than the current implementation. See the [repository assessment](https://github.com/gosplash/splash/blob/master/docs/design/repository-assessment.md) for measured performance, tested scope and known gaps.
+
 **Compiler-Enforced Safety for AI Agent Systems**
 
 *White Paper — v0.1*
