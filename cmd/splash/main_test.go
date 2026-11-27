@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/codegen"
 	"gosplash.dev/splash/internal/toolschema"
 )
 
@@ -465,5 +467,92 @@ fn main() { println(price()) }
 `)
 	if err := runCheck(entry); err == nil {
 		t.Fatal("check accepted duplicate declarations separated by a type")
+	}
+}
+
+func TestVM001HelloMatchesGoAndExpectedOutput(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSplashFile(t, dir, "hello.splash", `module main
+fn main() {
+    println("Hello, world")
+}
+`)
+	program, err := analyzeProgram(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSplashFile(t, dir, "hello.splash", `module main
+fn main() {
+    println("different")
+}
+`)
+	var vmOutput bytes.Buffer
+	if err := program.runVM(&vmOutput, codegen.VMLimits{Instructions: 3, Frames: 1}); err != nil {
+		t.Fatal(err)
+	}
+	const want = "Hello, world\n"
+	if got := vmOutput.String(); got != want {
+		t.Fatalf("VM printed %q, want %q", got, want)
+	}
+
+	goSource, err := program.emitGo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := filepath.Join(dir, "hello.go")
+	if err := os.WriteFile(generated, []byte(goSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	goOutput, err := exec.Command("go", "run", generated).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run generated Go: %v\n%s", err, goOutput)
+	}
+	if got := string(goOutput); got != want {
+		t.Fatalf("Go printed %q, want %q", got, want)
+	}
+}
+
+func TestVM001RejectsUnsupportedSourceBeforeOutput(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{"integer", `println(42)`},
+		{"expression", `println("Hello" + " world")`},
+		{"branch", `if true { println("yes") }`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeSplashFile(t, t.TempDir(), "unsupported.splash", "module main\nfn main() {\nprintln(\"first\")\n"+test.body+"\n}\n")
+			program, err := analyzeProgram(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			err = program.runVM(&out, codegen.VMLimits{Instructions: 100, Frames: 1})
+			var vmErr *codegen.VMError
+			if !errors.As(err, &vmErr) || vmErr.Code != codegen.VMUnsupported || vmErr.Source.Line != 4 {
+				t.Fatalf("want unsupported source diagnostic at line 4, got %v", err)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("unsupported input produced output %q", out.String())
+			}
+		})
+	}
+}
+
+func TestVM001ReportsUnsupportedImportLocation(t *testing.T) {
+	dir := t.TempDir()
+	writeSplashFile(t, dir, "library.splash", "module library\nfn other() {}\n")
+	path := writeSplashFile(t, dir, "main.splash", "module main\nuse library\nfn main() {}\n")
+	program, err := analyzeProgram(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = program.runVM(&out, codegen.VMLimits{Instructions: 3, Frames: 1})
+	var vmErr *codegen.VMError
+	if !errors.As(err, &vmErr) || vmErr.Code != codegen.VMUnsupported ||
+		vmErr.Source.File != path || vmErr.Source.Line != 2 {
+		t.Fatalf("want unsupported import at %s:2, got %v", path, err)
 	}
 }
