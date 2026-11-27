@@ -948,12 +948,13 @@ func (p *Parser) parseExpr(minPrec precedence) ast.Expr {
 			} else {
 				// Comparison: left < right
 				p.advance()
-				right := p.parseExpr(prec + 1)
+				right := p.parseExpr(prec)
 				left = &ast.BinaryExpr{Left: left, Op: cur.Kind, Right: right, Position: cur.Pos}
 			}
 		default:
 			p.advance()
-			right := p.parseExpr(prec + 1)
+			// The Pratt loop already stops at equal precedence.
+			right := p.parseExpr(prec)
 			left = &ast.BinaryExpr{Left: left, Op: cur.Kind, Right: right, Position: cur.Pos}
 		}
 	}
@@ -967,7 +968,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 	switch cur.Kind {
 	case token.INT:
 		p.advance()
-		v, _ := strconv.ParseInt(cur.Literal, 10, 64)
+		v, err := strconv.ParseInt(cur.Literal, 10, 64)
+		if err != nil {
+			p.errorf(cur.Pos, "integer literal is outside the signed 64-bit range")
+		}
 		return &ast.IntLiteral{Value: v, Position: cur.Pos}
 
 	case token.FLOAT:
@@ -1006,6 +1010,13 @@ func (p *Parser) parsePrefix() ast.Expr {
 
 	case token.BANG, token.MINUS:
 		p.advance()
+		// The minimum signed Int has a magnitude that cannot be represented
+		// as a positive Int literal. Consume it together with the minus sign.
+		if cur.Kind == token.MINUS && p.check(token.INT) &&
+			strings.TrimLeft(p.current().Literal, "0") == "9223372036854775808" {
+			p.advance()
+			return &ast.IntLiteral{Value: -1 << 63, Position: cur.Pos}
+		}
 		operand := p.parseExpr(precUnary)
 		return &ast.UnaryExpr{Op: cur.Kind, Operand: operand, Position: cur.Pos}
 

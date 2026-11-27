@@ -14,7 +14,7 @@ A compiler for the Splash language, written in Go. Splash transpiles to Go. The 
 
 1. **Run `go test ./...`** — all tests must pass before and after your change.
 2. **Write the failing test first.** Every new enforcement check, codegen behavior, or language feature has a test. See test patterns below.
-3. **Don't add packages.** The package structure is settled. Add to existing files.
+3. **Use existing packages for changes.** The execution architecture defines separate `internal/ir`, `internal/lowering`, `internal/bytecode`, and `internal/vm` packages. See [the IR and VM design](docs/design/splash-ir-and-vm.md) when changing their interfaces.
 4. **Don't create helpers for one-off uses.** No premature abstraction.
 5. **Don't add error handling for things that can't fail.** Trust internal invariants.
 
@@ -26,7 +26,7 @@ A compiler for the Splash language, written in Go. Splash transpiles to Go. The 
 Tokenizes `.splash` source. Do not add language semantics here. If a new token kind is needed, add it to `internal/token`.
 
 ### `internal/parser`
-Pratt parser. Produces `*ast.File`. Do not do type checking or effect resolution here. The parser's job is AST shape, not meaning. New syntax goes here; new constraints go in the type checker or safety checker.
+Pratt parser. Produces `*ast.File` and validates that integer literals fit the AST's `int64` representation. Put operand typing in `internal/typechecker` and effect enforcement in `internal/safety`.
 
 ### `internal/ast`
 AST node types and annotation kinds. `annotation.go` has `AnnotationKind` constants and the string→kind lookup map. When adding a new annotation, add the constant and the string mapping — that's all. No logic here.

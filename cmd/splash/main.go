@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,15 +11,18 @@ import (
 	"strings"
 
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/bytecode"
 	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/codegen"
 	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/effects"
 	"gosplash.dev/splash/internal/lexer"
+	"gosplash.dev/splash/internal/lowering"
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/safety"
 	"gosplash.dev/splash/internal/toolschema"
 	"gosplash.dev/splash/internal/typechecker"
+	"gosplash.dev/splash/internal/vm"
 )
 
 func main() {
@@ -94,13 +99,16 @@ func main() {
 	}
 }
 
-// analyzedProgram owns the captured source and typed modules. Existing graph
-// and lowering consumers still use the flattened projection.
+// analyzedProgram owns the captured source, typed modules, and resolved calls.
 type analyzedProgram struct {
 	sources map[string]string
 	modules []*typechecker.TypedFile
 	merged  *ast.File
 	graph   *callgraph.Graph
+
+	functionReferences map[ast.Expr]*ast.FunctionDecl
+	printlnCalls       map[*ast.CallExpr]bool
+	localNames         map[string]bool
 }
 
 func analyzeProgram(path string) (*analyzedProgram, error) {
@@ -143,7 +151,19 @@ func analyzeProgram(path string) (*analyzedProgram, error) {
 
 	program.modules = append(tc.LoadedTypedFiles(), entry)
 	program.merged = mergeFiles(program.modules)
-	program.graph = callgraph.Build(program.merged)
+	files := make([]*ast.File, 0, len(program.modules))
+	program.functionReferences = make(map[ast.Expr]*ast.FunctionDecl)
+	program.printlnCalls = make(map[*ast.CallExpr]bool)
+	program.localNames = make(map[string]bool)
+	unresolved := make(map[*ast.CallExpr]bool)
+	for _, module := range program.modules {
+		files = append(files, module.File)
+		maps.Copy(program.functionReferences, module.FunctionReferences)
+		maps.Copy(program.printlnCalls, module.PrintlnCalls)
+		maps.Copy(program.localNames, module.LocalNames)
+		maps.Copy(unresolved, module.UnresolvedCalls)
+	}
+	program.graph = callgraph.BuildResolved(files, program.functionReferences, unresolved)
 	return program, nil
 }
 
@@ -172,23 +192,6 @@ func (p *analyzedProgram) reportSafetyErrors() bool {
 	return len(diagnostics) > 0
 }
 
-// collectApproveFns returns the set of approval-gated function names in f.
-func collectApproveFns(f *ast.File) map[string]bool {
-	fns := make(map[string]bool)
-	for _, decl := range f.Declarations {
-		fn, ok := decl.(*ast.FunctionDecl)
-		if !ok {
-			continue
-		}
-		for _, ann := range fn.Annotations {
-			if ann.Kind == ast.AnnotApprove {
-				fns[fn.Name] = true
-			}
-		}
-	}
-	return fns
-}
-
 func runEmit(path string) error {
 	program, err := analyzeProgram(path)
 	if err != nil {
@@ -208,8 +211,33 @@ func (p *analyzedProgram) emitGo() (string, error) {
 		return "", fmt.Errorf("safety errors")
 	}
 	return codegen.NewGoBackend().Emit(p.merged, codegen.Options{
-		ApprovalCallers: p.graph.Callers(collectApproveFns(p.merged)),
+		ApprovalCallers:    p.graph.Callers(p.graph.ApprovalFunctions()),
+		FunctionKey:        p.graph.FunctionKey,
+		FunctionReferences: p.functionReferences,
+		PrintlnCalls:       p.printlnCalls,
+		LocalNames:         p.localNames,
+		Entry:              p.modules[len(p.modules)-1].File,
 	}), nil
+}
+
+// runVM is the experimental internal path. Public commands still use Go lowering.
+func (p *analyzedProgram) runVM(output io.Writer, limits vm.Limits) error {
+	if p.reportSafetyErrors() {
+		return fmt.Errorf("safety errors")
+	}
+	program, err := lowering.LowerVM(p.modules)
+	if err != nil {
+		return err
+	}
+	executable, err := bytecode.Lower(program)
+	if err != nil {
+		return err
+	}
+	runtime, err := vm.New(executable, output, limits)
+	if err != nil {
+		return err
+	}
+	return runtime.RunMain()
 }
 
 // mergeFiles builds a combined ast.File where all imported files' declarations
@@ -287,11 +315,16 @@ func runTools(path string, format toolschema.Format) error {
 		return fmt.Errorf("safety errors: tool surface is unsafe")
 	}
 
-	// Tool declarations are agent roots. The safety check above rejects the
-	// entire export when the modeled graph violates policy.
-	agentReachable := program.graph.Reachable(program.graph.AgentRoots())
-
-	schemas := toolschema.ExtractReachable(program.merged, agentReachable)
+	// Each tool declaration is an agent root, and the safety check above
+	// rejects the entire export when the modeled graph violates policy.
+	schemas := toolschema.Extract(program.merged)
+	names := make(map[string]bool)
+	for _, schema := range schemas {
+		if names[schema.Name] {
+			return fmt.Errorf("duplicate exported tool name %q", schema.Name)
+		}
+		names[schema.Name] = true
+	}
 	if schemas == nil {
 		schemas = []toolschema.ToolSchema{}
 	}
@@ -325,6 +358,9 @@ func runGraph(path string) error {
 	fmt.Println("functions:")
 	for _, node := range g.Nodes() {
 		fmt.Printf("- %s [effects: %s]%s\n", node.Name, node.Effects.String(), graphFlags(node))
+		if len(node.UnresolvedCalls) > 0 {
+			fmt.Printf("  unresolved call sites: %d\n", len(node.UnresolvedCalls))
+		}
 		callees := node.Callees()
 		if len(callees) == 0 {
 			fmt.Println("  calls: none")
@@ -358,7 +394,7 @@ func runApprovals(path string) error {
 		return err
 	}
 
-	approveFns := collectApproveFns(program.merged)
+	approveFns := program.graph.ApprovalFunctions()
 	callers := program.graph.Callers(approveFns)
 
 	fmt.Println("approval-gated functions:")

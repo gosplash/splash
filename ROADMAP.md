@@ -92,7 +92,7 @@ Record every agent action: function called, arguments, model reasoning, parent a
 
 **`splash deploy`** — capability manifest diffing. A version upgrade that acquires new effects fails the build until a human approves the change. Lockfile-level capability tracking.
 
-**LLVM backend** — the `Backend` interface is the extension point. The safety model is fully enforced before codegen; the backend receives a verified, effect-annotated AST with no security-relevant decisions remaining. Unlocks native targets, WASM, and embedded contexts.
+**Splash IR and VM** — an experimental stack VM will run a typed subset from validated IR and bytecode. Go transpilation remains the transitional default. Native code generation and cross-platform integration are later work. LLVM and other lowering tools remain possible future comparisons. [Execution design](docs/design/splash-ir-and-vm.md)
 
 **Effect polymorphism** — functions parameterized over their effects. The current system is monomorphic by design. If production use shows it's needed, this is the v0.3 candidate.
 
@@ -100,8 +100,6 @@ Record every agent action: function called, arguments, model reasoning, parent a
 
 ## Not on the Roadmap
 
-**Runtime effect enforcement.** Effects are a compile-time property. There is no plan to add runtime effect checking — it would add overhead and provide weaker guarantees than the static analysis.
+**Replacing compile-time effect checks with runtime checks.** The later capability-aware runtime can restrict concrete access for an invocation while the compiler establishes the source-level effect contract.
 
 **Gradual typing or `any` escape.** The type system is intentionally strict. Escape hatches for type safety undermine the classification and constraint enforcement the safety model depends on.
-
-**A VM or custom runtime.** Splash targets Go's runtime. The compiler team works on the frontend; Go handles goroutines, GC, and the toolchain. This is a scoping decision, not a limitation.

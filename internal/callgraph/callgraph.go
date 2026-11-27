@@ -2,18 +2,29 @@
 package callgraph
 
 import (
+	"fmt"
 	"slices"
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
+	"gosplash.dev/splash/internal/token"
 )
+
+// CallSite describes a resolved invocation that consumes its value as part of
+// a larger expression or assignment.
+type CallSite struct {
+	Target   string
+	Position token.Position
+}
 
 // Node represents a single function in the call graph.
 type Node struct {
-	Name        string
-	Effects     effects.EffectSet
-	Annotations []ast.Annotation
-	callees     map[string]bool // direct callees by name
+	Name            string
+	Effects         effects.EffectSet
+	Annotations     []ast.Annotation
+	UnresolvedCalls []token.Position
+	NestedCalls     []CallSite
+	callees         map[string]bool // direct callees by graph key
 }
 
 // Calls reports whether this node directly calls the named function.
@@ -31,8 +42,16 @@ func (n *Node) HasAnnotation(kind ast.AnnotationKind) bool {
 
 // Graph is the complete call graph for a file.
 type Graph struct {
-	nodes map[string]*Node
+	nodes         map[string]*Node
+	functionKeys  map[*ast.FunctionDecl]string
+	hasUnresolved bool
 }
+
+// HasUnresolvedCalls reports whether any analyzed call lacked a named target.
+func (g *Graph) HasUnresolvedCalls() bool { return g.hasUnresolved }
+
+// FunctionKey returns the graph node key for the exact declaration.
+func (g *Graph) FunctionKey(fn *ast.FunctionDecl) string { return g.functionKeys[fn] }
 
 // Node returns the node for the named function, or nil if not found.
 func (g *Graph) Node(name string) *Node { return g.nodes[name] }
@@ -73,6 +92,17 @@ func (g *Graph) AgentRoots() []string {
 	}
 	slices.Sort(roots)
 	return roots
+}
+
+// ApprovalFunctions returns graph keys of approval-gated declarations.
+func (g *Graph) ApprovalFunctions() map[string]bool {
+	fns := make(map[string]bool)
+	for name, node := range g.nodes {
+		if node.HasAnnotation(ast.AnnotApprove) {
+			fns[name] = true
+		}
+	}
+	return fns
 }
 
 // Reachable performs a BFS from the given root function names and returns
@@ -149,7 +179,7 @@ func (g *Graph) Parents(roots []string) map[string]string {
 		if node == nil {
 			continue
 		}
-		for callee := range node.callees {
+		for _, callee := range node.Callees() {
 			if _, seen := parents[callee]; !seen {
 				parents[callee] = cur
 				queue = append(queue, callee)
@@ -181,114 +211,166 @@ func PathTo(parents map[string]string, target string) []string {
 	return path
 }
 
-// Build constructs a call graph by walking all function declarations in file.
+// Build walks a parsed AST for callers that do not have a type checker result.
 func Build(file *ast.File) *Graph {
-	g := &Graph{nodes: make(map[string]*Node)}
-
-	// First pass: register all function nodes.
-	for _, decl := range file.Declarations {
-		fn, ok := decl.(*ast.FunctionDecl)
-		if !ok {
-			continue
+	return build([]*ast.File{file}, func(call *ast.CallExpr, _ *Graph) (string, bool) {
+		if ident, ok := call.Callee.(*ast.Ident); ok {
+			return ident.Name, false
 		}
-		g.nodes[fn.Name] = &Node{
-			Name:        fn.Name,
-			Effects:     effects.Parse(fn.Effects),
-			Annotations: fn.Annotations,
-			callees:     make(map[string]bool),
+		return "", false
+	})
+}
+
+// BuildResolved builds nodes from the owning files and uses only the call
+// targets established by the type checker. Indirect calls produce no named edge.
+func BuildResolved(files []*ast.File, references map[ast.Expr]*ast.FunctionDecl, unresolved map[*ast.CallExpr]bool) *Graph {
+	return build(files, func(call *ast.CallExpr, g *Graph) (string, bool) {
+		missing := unresolved[call]
+		g.hasUnresolved = g.hasUnresolved || missing
+		return g.FunctionKey(references[call.Callee]), missing
+	})
+}
+
+func build(files []*ast.File, resolve func(*ast.CallExpr, *Graph) (string, bool)) *Graph {
+	g := &Graph{
+		nodes:        make(map[string]*Node),
+		functionKeys: make(map[*ast.FunctionDecl]string),
+	}
+	counts := make(map[string]int)
+	for _, file := range files {
+		for _, decl := range file.Declarations {
+			if fn, ok := decl.(*ast.FunctionDecl); ok {
+				counts[fn.Name]++
+			}
 		}
 	}
 
-	// Second pass: walk bodies to collect call edges.
-	for _, decl := range file.Declarations {
-		fn, ok := decl.(*ast.FunctionDecl)
-		if !ok || fn.Body == nil {
-			continue
+	for _, file := range files {
+		for _, decl := range file.Declarations {
+			fn, ok := decl.(*ast.FunctionDecl)
+			if !ok {
+				continue
+			}
+			key := fn.Name
+			if counts[fn.Name] > 1 {
+				if file.Module != nil {
+					key = file.Module.Name + "." + key
+				}
+				if g.nodes[key] != nil {
+					prefix := key
+					for n := 2; g.nodes[key] != nil; n++ {
+						key = fmt.Sprintf("%s#%d", prefix, n)
+					}
+				}
+			}
+			g.functionKeys[fn] = key
+			g.nodes[key] = &Node{
+				Name:        key,
+				Effects:     effects.Parse(fn.Effects),
+				Annotations: fn.Annotations,
+				callees:     make(map[string]bool),
+			}
 		}
-		node := g.nodes[fn.Name]
-		collectCalls(fn.Body, node)
+	}
+
+	target := func(call *ast.CallExpr) (string, bool) { return resolve(call, g) }
+	for _, file := range files {
+		for _, decl := range file.Declarations {
+			fn, ok := decl.(*ast.FunctionDecl)
+			if ok && fn.Body != nil {
+				collectCalls(fn.Body, g.nodes[g.FunctionKey(fn)], target)
+			}
+		}
 	}
 
 	return g
 }
 
 // collectCalls walks a block statement and records all direct CallExpr targets.
-func collectCalls(block *ast.BlockStmt, node *Node) {
+func collectCalls(block *ast.BlockStmt, node *Node, target func(*ast.CallExpr) (string, bool)) {
 	if block == nil {
 		return
 	}
 	for _, stmt := range block.Stmts {
-		walkStmt(stmt, node)
+		walkStmt(stmt, node, target)
 	}
 }
 
-func walkStmt(stmt ast.Stmt, node *Node) {
+func walkStmt(stmt ast.Stmt, node *Node, target func(*ast.CallExpr) (string, bool)) {
 	if stmt == nil {
 		return
 	}
 	switch s := stmt.(type) {
 	case *ast.ReturnStmt:
-		if s.Value != nil {
-			walkExpr(s.Value, node)
-		}
+		walkExprContext(s.Value, node, target, true)
 	case *ast.LetStmt:
-		walkExpr(s.Value, node)
+		walkExprContext(s.Value, node, target, true)
 	case *ast.ExprStmt:
-		walkExpr(s.Expr, node)
+		walkExprContext(s.Expr, node, target, true)
 	case *ast.AssignStmt:
-		walkExpr(s.Target, node)
-		walkExpr(s.Value, node)
+		walkExpr(s.Target, node, target)
+		walkExpr(s.Value, node, target)
 	case *ast.IfStmt:
-		walkExpr(s.Cond, node)
-		collectCalls(s.Then, node)
+		walkExpr(s.Cond, node, target)
+		collectCalls(s.Then, node, target)
 		if s.Else != nil {
-			walkStmt(s.Else, node)
+			walkStmt(s.Else, node, target)
 		}
 	case *ast.GuardStmt:
-		walkExpr(s.Cond, node)
-		collectCalls(s.Else, node)
+		walkExpr(s.Cond, node, target)
+		collectCalls(s.Else, node, target)
 	case *ast.ForStmt:
-		walkExpr(s.Iter, node)
-		collectCalls(s.Body, node)
+		walkExpr(s.Iter, node, target)
+		collectCalls(s.Body, node, target)
 	case *ast.BlockStmt:
-		collectCalls(s, node)
+		collectCalls(s, node, target)
 	}
 }
 
-func walkExpr(expr ast.Expr, node *Node) {
+func walkExpr(expr ast.Expr, node *Node, target func(*ast.CallExpr) (string, bool)) {
+	walkExprContext(expr, node, target, false)
+}
+
+func walkExprContext(expr ast.Expr, node *Node, target func(*ast.CallExpr) (string, bool), wholeStatementValue bool) {
 	if expr == nil {
 		return
 	}
 	switch e := expr.(type) {
 	case *ast.CallExpr:
-		// Record the direct callee name if it's a simple identifier.
-		if ident, ok := e.Callee.(*ast.Ident); ok {
-			node.callees[ident.Name] = true
+		key, unresolved := target(e)
+		if key != "" {
+			node.callees[key] = true
+			if !wholeStatementValue {
+				node.NestedCalls = append(node.NestedCalls, CallSite{Target: key, Position: e.Pos()})
+			}
 		}
-		walkExpr(e.Callee, node)
+		if unresolved {
+			node.UnresolvedCalls = append(node.UnresolvedCalls, e.Pos())
+		}
+		walkExpr(e.Callee, node, target)
 		for _, arg := range e.Args {
-			walkExpr(arg, node)
+			walkExpr(arg, node, target)
 		}
 	case *ast.BinaryExpr:
-		walkExpr(e.Left, node)
-		walkExpr(e.Right, node)
+		walkExpr(e.Left, node, target)
+		walkExpr(e.Right, node, target)
 	case *ast.UnaryExpr:
-		walkExpr(e.Operand, node)
+		walkExpr(e.Operand, node, target)
 	case *ast.MemberExpr:
-		walkExpr(e.Object, node)
+		walkExpr(e.Object, node, target)
 	case *ast.IndexExpr:
-		walkExpr(e.Object, node)
-		walkExpr(e.Index, node)
+		walkExpr(e.Object, node, target)
+		walkExpr(e.Index, node, target)
 	case *ast.NullCoalesceExpr:
-		walkExpr(e.Left, node)
-		walkExpr(e.Right, node)
+		walkExpr(e.Left, node, target)
+		walkExpr(e.Right, node, target)
 	case *ast.ListLiteral:
 		for _, el := range e.Elements {
-			walkExpr(el, node)
+			walkExpr(el, node, target)
 		}
 	case *ast.StructLiteral:
 		for _, f := range e.Fields {
-			walkExpr(f.Value, node)
+			walkExpr(f.Value, node, target)
 		}
 	}
 }

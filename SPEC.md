@@ -299,7 +299,7 @@ binary_op ::= "=" | "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
 
 | Type         | Description                                    |
 |--------------|------------------------------------------------|
-| `Int`        | 64-bit integer                                 |
+| `Int`        | Signed 64-bit integer                          |
 | `Float`      | 64-bit floating point                          |
 | `String`     | UTF-8 string                                   |
 | `Bool`       | Boolean                                        |
@@ -310,6 +310,10 @@ binary_op ::= "=" | "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
 | `Result<T, E>` | Success or error (used by `std/ai`)          |
 
 `T?` is syntactic sugar for `Option<T>`. The type checker treats them identically.
+
+`Int` arithmetic checks overflow and reports an execution error when the result is out of range. Division truncates toward zero. Remainder is zero or has the dividend's sign. Division and remainder by zero report an error. Dividing the minimum integer by minus one and negating the minimum integer overflow. Its remainder by minus one is zero. Operands and call arguments evaluate from left to right. Numeric operations do not implicitly convert operand types.
+
+The experimental VM implements checked arithmetic. The transitional Go backend still lowers `Int` to Go `int` and can promote mixed numeric constants. Differential tests compare successful executions in the shared source subset where intermediate values fit both backends. [Integer semantics decision](docs/decisions/2026-11-27-checked-integer-semantics.md)
 
 ### 4.2 Generic Functions
 
