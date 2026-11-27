@@ -302,7 +302,7 @@ Run benchmarks: `go test -bench=. ./internal/callgraph/... ./internal/typechecke
 - Runtime budget enforcement (compile-time type validation is done; counter injection in `ai.prompt` calls is not)
 - Non-blocking approval adapters (`SlackApproval`, `WebhookApproval`)
 - `@bypass(reason, approved_by)` auditable escape hatch
-- LLVM backend (the `Backend` interface is the extension point; Go is the only current implementation)
+- Splash VM support beyond the experimental literal-output subset, along with native and portable deployment targets. [Execution design](docs/design/splash-ir-and-vm.md)
 - `splash deploy` with capability manifest diffing
 
 ## License

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/exec"
@@ -214,6 +215,14 @@ func (p *analyzedProgram) emitGo() (string, error) {
 		LocalNames:         p.localNames,
 		Entry:              p.modules[len(p.modules)-1].File,
 	}), nil
+}
+
+// runVM is the experimental internal path. Public commands still use Go lowering.
+func (p *analyzedProgram) runVM(output io.Writer, limits codegen.VMLimits) error {
+	if p.reportSafetyErrors() {
+		return fmt.Errorf("safety errors")
+	}
+	return codegen.RunVM(p.modules, output, limits)
 }
 
 // mergeFiles builds a combined ast.File where all imported files' declarations
