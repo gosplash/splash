@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -8,6 +9,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 LANES = (("go", "go"), ("splash", "splash"), ("splash-vm", "splash"))
+HAS_RUST = shutil.which("cargo") is not None and shutil.which("rustc") is not None
 
 
 class GradeInvoiceTest(unittest.TestCase):
@@ -64,26 +66,46 @@ class GradeInvoiceTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("accepted 9 cases", result.stdout)
 
-    def test_public_cli_benchmark_reports_all_three_conditions(self):
+    @unittest.skipUnless(HAS_RUST, "Rust and Cargo required")
+    def test_rust_reference_and_rounding_control(self):
+        reference = self.grade("rust", "oracle/testdata/rust/invoice.rs")
+        self.assertEqual(reference.returncode, 0, reference.stderr)
+        self.assertIn("accepted 9 cases", reference.stdout)
+        variant = self.grade("rust", "task/testdata/rust/invoice.rs", "task/public-cases.json")
+        self.assertEqual(variant.returncode, 0, variant.stderr)
+        starter = self.grade("rust", "task/testdata/rust/invoice.rs")
+        self.assertEqual(starter.returncode, 1, starter.stderr)
+        self.assertIn("half-cent rounds up: expected ['1', '1', '0'], got ['1', '0', '1']", starter.stderr)
+
+    @unittest.skipUnless(HAS_RUST, "Rust and Cargo required")
+    def test_public_cli_benchmark_reports_all_workflows(self):
         result = subprocess.run(
             [sys.executable, "-B", str(HERE / "benchmark.py"), "--splash", str(self.splash),
-             "--samples", "1"],
+             "--samples", "1", "--splash-revision",
+             subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=HERE.parents[2], text=True).strip()
+             if (HERE.parents[2] / ".git").exists() else "archive-test-build"],
             cwd=HERE.parents[2], capture_output=True, text=True, timeout=120,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(report["cases"], 9)
-        self.assertEqual(set(report["conditions"]), {"go", "splash-go", "splash-vm"})
-        for condition, measurements in report["conditions"].items():
-            with self.subTest(condition=condition):
-                sample, = measurements["samples_ms"]
-                self.assertGreater(sample["total"], 0)
-                if condition == "splash-vm":
-                    self.assertEqual(set(sample), {"total"})
-                else:
-                    self.assertEqual(set(sample), {"build", "execute", "total"})
-                    self.assertGreater(sample["build"], 0)
-                    self.assertGreater(sample["execute"], 0)
+        self.assertEqual(set(report["conditions"]), {"rust", "go", "splash-go", "splash-vm"})
+        self.assertEqual(set(report["optimized_release"]), {"rust-release"})
+        conditions = {**report["conditions"], **report["optimized_release"]}
+        for condition, workflows in conditions.items():
+            expected = {"static", "cold", "warm", "edit", "unchanged", "prebuilt"}
+            self.assertEqual(set(workflows), expected)
+            for workflow, measurements in workflows.items():
+                with self.subTest(condition=condition, workflow=workflow):
+                    if condition == "splash-vm" and workflow == "prebuilt":
+                        self.assertIsNone(measurements)
+                        continue
+                    sample, = measurements["samples_ms"]
+                    self.assertGreater(sample["total"], 0)
+                    summary = measurements["statistics_ms"]["total"]
+                    self.assertEqual(summary["samples"], 1)
+                    self.assertEqual(summary["median"], sample["total"])
+                    self.assertEqual(summary["p95"], sample["total"])
 
 
 if __name__ == "__main__":
