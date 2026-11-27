@@ -41,6 +41,8 @@ Every sample uses a fresh directory, fresh processes, and a new output path for 
 
 The runner makes one unreported warm-up pass and rotates the starting condition on each measured pass. The two native builds use the Go caches and toolchain settings inherited from the environment. File system caches also persist across processes. This measures the invoice fixture's startup-inclusive source-to-result latency with a prebuilt compiler and warmed caches. TTCS measures how long an authoring system takes to produce an independently accepted change.
 
+The [VM-004 Apple M5 run](results/vm-004-apple-m5.json) records the exact tested revision, reproduction commands, oracle digest, and all 12 samples per condition. Its median source-to-result latencies were 248.7 ms for native Go, 254.1 ms for Splash through Go, and 6.35 ms for Splash VM. The native measurements include building and launching a fresh executable. The VM measurement includes loading and running the source through the prebuilt Splash CLI. These timings describe the end-to-end workflow for one fixture and host.
+
 ## Grader boundary
 
 Only `task/` is intended for the candidate workspace. The runner, oracle data, and reference implementations belong in the protected grading environment. Checked-in cases and solutions are public infrastructure controls. Use fresh sealed grading cases for measured trials.

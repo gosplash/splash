@@ -61,6 +61,8 @@ fn main() {
 
 Run `./splash run main.splash --backend vm` to print `10000`. Running with an existing Splash binary requires no Go installation. The default limits are 1,000,000 dispatched instructions and 256 active frames. Run `splash run --help` for the limit flags.
 
+Use OS-level process isolation for untrusted source. The VM limits bound instruction dispatch and active frames within the Splash process. [Public VM execution](docs/design/splash-ir-and-vm.md#public-vm-execution)
+
 All tests:
 
 ```bash

@@ -95,7 +95,7 @@ VM-004 exposes the VM-003 subset through `splash run main.splash --backend vm`. 
 | `--max-instructions N` | 1,000,000 | Maximum dispatched VM instructions per invocation. |
 | `--max-frames N` | 256 | Maximum active frames, including `main`. |
 
-Zero grants none of the corresponding resource. The limits count dispatches and active frames. Memory, field-copy costs, and frontend work have separate accounting needs. Program output goes to stdout. Failures exit nonzero and report on stderr. Source and safety failures retain their analysis diagnostics. Admission, IR and bytecode validation, and runtime failures report their existing error codes. A runtime failure can follow earlier successful output.
+Zero grants none of the corresponding resource. The limits count dispatches and active frames. Memory, field-copy costs, and frontend work have separate accounting needs. Use OS-level process isolation with memory, time, and filesystem limits for untrusted source. Program output goes to stdout. Failures exit nonzero and report on stderr. Source and safety failures retain their analysis diagnostics. Admission, IR and bytecode validation, and runtime failures report their existing error codes. A runtime failure can follow earlier successful output.
 
 For a later capability-aware runtime, an artifact-specific `VerifiedProgram` establishes what a program may request under the compiler's rules. It does not grant concrete host access. Instantiate each run with a host table containing only explicitly granted adapters, matched to verified imports and operation contracts. Resource identifiers, destination rules, credentials and request-specific approval belong to trusted adapter configuration. Avoid ambient filesystem, network, process or provider access.
 
