@@ -32,13 +32,15 @@ const (
 	Not
 	Call
 	Print
+	MakeRecord
+	GetField
 	Jump
 	JumpIfFalse
 	Return
 )
 
-// Instruction uses Index for a local slot, function index, or branch target.
-// Const specifies a Kind and the matching value instead.
+// Instruction uses Index for a local, function, branch target, or field slot.
+// Const specifies a primitive kind. Record operations specify a record kind.
 type Instruction struct {
 	Op     Op
 	Index  int
@@ -58,6 +60,7 @@ type Function struct {
 }
 
 type Program struct {
+	Records   []ir.Record
 	Functions []Function
 	Entry     int // -1 for a program only used through direct invocation.
 }
@@ -79,7 +82,7 @@ func Lower(input ir.Program) (Program, error) {
 	if err := ir.Validate(input); err != nil {
 		return Program{}, err
 	}
-	result := Program{Entry: input.Entry, Functions: make([]Function, len(input.Functions))}
+	result := Program{Entry: input.Entry, Records: ir.CloneRecords(input.Records), Functions: make([]Function, len(input.Functions))}
 	for index, fn := range input.Functions {
 		result.Functions[index] = lowerFunction(fn)
 	}
@@ -104,6 +107,11 @@ func lowerFunction(fn ir.Function) Function {
 			case ir.Const:
 				instruction.Kind, instruction.Int = operation.Type, operation.Int
 				instruction.Bool, instruction.Text = operation.Bool, operation.Text
+			case ir.MakeRecord:
+				instruction.Kind = operation.Type
+			case ir.GetField:
+				instruction.Kind = out.Locals[temps[operation.Args[0]]]
+				instruction.Index = operation.Index
 			}
 			out.Code = append(out.Code, instruction)
 			if operation.Type != ir.Void {
@@ -143,11 +151,8 @@ func instructionOp(op ir.Op) Op {
 		ir.Const: Const, ir.Load: Load, ir.Store: Store, ir.Add: Add, ir.Sub: Sub, ir.Mul: Mul,
 		ir.Div: Div, ir.Mod: Mod, ir.Eq: Eq, ir.Ne: Ne, ir.Lt: Lt, ir.Le: Le, ir.Gt: Gt,
 		ir.Ge: Ge, ir.Neg: Neg, ir.Not: Not, ir.Call: Call, ir.Print: Print,
+		ir.MakeRecord: MakeRecord, ir.GetField: GetField,
 	}[op]
-}
-
-func valueKind(kind ir.Kind) bool {
-	return kind == ir.Int || kind == ir.Bool || kind == ir.String
 }
 
 // Validate checks all instruction encodings and runs typed stack and local
@@ -162,27 +167,34 @@ func Validate(program Program) error {
 			return &ValidationError{Source: entry.Source, Detail: "entry function must take no parameters and return Void"}
 		}
 	}
+	for index, record := range program.Records {
+		for field, kind := range record.Fields {
+			if !ir.IsPrimitiveValue(kind) {
+				return &ValidationError{Detail: fmt.Sprintf("record %d field %d requires a primitive value type", index, field)}
+			}
+		}
+	}
 	for _, fn := range program.Functions {
-		if err := validateFunctionEncoding(fn, len(program.Functions)); err != nil {
+		if err := validateFunctionEncoding(fn, program); err != nil {
 			return err
 		}
 	}
 	for _, fn := range program.Functions {
-		if err := validateFlow(fn, program.Functions); err != nil {
+		if err := validateFlow(fn, program); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateFunctionEncoding(fn Function, functionCount int) error {
+func validateFunctionEncoding(fn Function, program Program) error {
 	if len(fn.Code) == 0 || len(fn.Params) > len(fn.Locals) ||
 		!slices.Equal(fn.Params, fn.Locals[:len(fn.Params)]) ||
-		fn.Result != ir.Void && !valueKind(fn.Result) {
+		fn.Result != ir.Void && !ir.IsValue(program.Records, fn.Result) {
 		return &ValidationError{Source: fn.Source, Detail: "invalid function signature or missing code"}
 	}
 	for _, local := range fn.Locals {
-		if !valueKind(local) {
+		if !ir.IsValue(program.Records, local) {
 			return &ValidationError{Source: fn.Source, Detail: "invalid local type"}
 		}
 	}
@@ -190,17 +202,25 @@ func validateFunctionEncoding(fn Function, functionCount int) error {
 		var limit int
 		switch instruction.Op {
 		case Const:
-			if !valueKind(instruction.Kind) || instruction.Index != 0 {
+			if !ir.IsPrimitiveValue(instruction.Kind) || instruction.Index != 0 {
 				return &ValidationError{Source: instruction.Source, Detail: "invalid constant operands"}
 			}
 			if instruction.Kind == ir.String && !utf8.ValidString(instruction.Text) {
 				return &ValidationError{Source: instruction.Source, Detail: "string constant must be valid UTF-8"}
 			}
 			continue
+		case MakeRecord, GetField:
+			record, ok := ir.RecordFor(program.Records, instruction.Kind)
+			if !ok || instruction.Index < 0 ||
+				instruction.Op == MakeRecord && instruction.Index != 0 ||
+				instruction.Op == GetField && instruction.Index >= len(record.Fields) {
+				return &ValidationError{Source: instruction.Source, Detail: "invalid record instruction operands"}
+			}
+			continue
 		case Load, Store:
 			limit = len(fn.Locals)
 		case Call:
-			limit = functionCount
+			limit = len(program.Functions)
 		case Jump, JumpIfFalse:
 			limit = len(fn.Code)
 		case Add, Sub, Mul, Div, Mod, Eq, Ne, Lt, Le, Gt, Ge, Neg, Not, Print, Return:
@@ -220,7 +240,7 @@ type flowState struct {
 	initialized []bool
 }
 
-func validateFlow(fn Function, functions []Function) error {
+func validateFlow(fn Function, program Program) error {
 	// Encoding validation has already checked every branch target. A block
 	// starts at the entry, a branch target, or just after a control transfer.
 	leaders := make([]bool, len(fn.Code))
@@ -252,7 +272,7 @@ func validateFlow(fn Function, functions []Function) error {
 		// Advance one working state through the block. Only entries need
 		// snapshots for joins and the fixed-point worklist.
 		for {
-			if err := next.apply(fn, functions, fn.Code[pc]); err != nil {
+			if err := next.apply(fn, program, fn.Code[pc]); err != nil {
 				return err
 			}
 			if pc+1 == len(fn.Code) || leaders[pc+1] {
@@ -302,7 +322,7 @@ func validateFlow(fn Function, functions []Function) error {
 	return nil
 }
 
-func (s *flowState) apply(fn Function, functions []Function, instruction Instruction) error {
+func (s *flowState) apply(fn Function, program Program, instruction Instruction) error {
 	badStack := &ValidationError{Source: instruction.Source, Detail: "incorrect operand types or stack underflow"}
 	switch instruction.Op {
 	case Const:
@@ -345,16 +365,29 @@ func (s *flowState) apply(fn Function, functions []Function, instruction Instruc
 		}
 		s.stack = append(s.stack, kind)
 	case Print:
-		if len(s.stack) == 0 {
+		if len(s.stack) == 0 || !ir.IsPrimitiveValue(s.stack[len(s.stack)-1]) {
 			return badStack
 		}
 		s.stack = s.stack[:len(s.stack)-1]
+	case MakeRecord:
+		record, _ := ir.RecordFor(program.Records, instruction.Kind)
+		base := len(s.stack) - len(record.Fields)
+		if base < 0 || !slices.Equal(s.stack[base:], record.Fields) {
+			return badStack
+		}
+		s.stack = append(s.stack[:base], instruction.Kind)
+	case GetField:
+		if !s.pop(instruction.Kind) {
+			return badStack
+		}
+		record, _ := ir.RecordFor(program.Records, instruction.Kind)
+		s.stack = append(s.stack, record.Fields[instruction.Index])
 	case JumpIfFalse:
 		if !s.pop(ir.Bool) {
 			return badStack
 		}
 	case Call:
-		callee := functions[instruction.Index]
+		callee := program.Functions[instruction.Index]
 		if len(s.stack) < len(callee.Params) {
 			return badStack
 		}

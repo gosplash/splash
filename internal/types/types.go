@@ -1,6 +1,10 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+
+	"gosplash.dev/splash/internal/ast"
+)
 
 // Type is the interface that all types in the Splash type system must implement.
 type Type interface {
@@ -43,9 +47,10 @@ var (
 	Unknown = &PrimitiveType{name: "Unknown"}
 )
 
-// NamedType represents a user-defined named type.
+// NamedType represents a named type. Declared records carry their declaration identity.
 type NamedType struct {
 	Name                 string
+	Declaration          *ast.TypeDecl
 	TypeArgs             []Type
 	FieldClassifications []Classification
 }
@@ -67,11 +72,13 @@ func (n *NamedType) TypeName() string {
 }
 
 func (n *NamedType) IsAssignableTo(other Type) bool {
-	// Named types are assignable only by name equality
 	if opt, ok := other.(*OptionalType); ok {
 		return n.IsAssignableTo(opt.Inner)
 	}
 	if other, ok := other.(*NamedType); ok {
+		if n.Declaration != nil || other.Declaration != nil {
+			return n.Declaration == other.Declaration
+		}
 		return n.Name == other.Name
 	}
 	return false

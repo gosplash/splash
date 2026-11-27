@@ -22,6 +22,34 @@ func TestValidateRequiresUTF8InStringConstants(t *testing.T) {
 	}
 }
 
+func TestValidateChecksNominalRecordTypes(t *testing.T) {
+	first, second := RecordBase, RecordBase+1
+	pos := token.Position{File: "records.splash", Line: 5, Column: 5}
+	for _, tc := range []struct {
+		name string
+		op   Instruction
+	}{
+		{"field type", Instruction{Op: MakeRecord, Type: first, Dest: 2, Args: []int{1}}},
+		{"field slot", Instruction{Op: GetField, Type: Int, Dest: 2, Args: []int{1}, Index: 1}},
+		{"nominal call argument", Instruction{Op: Call, Type: Void, Dest: -1, Args: []int{1}, Index: 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			op := tc.op
+			op.Source = pos
+			program := Program{Records: []Record{{Fields: []Kind{Int}}, {Fields: []Kind{Int}}}, Functions: []Function{
+				{Result: Void, Blocks: []Block{{Ops: []Instruction{
+					{Op: Const, Type: Int, Dest: 0}, {Op: MakeRecord, Type: second, Dest: 1, Args: []int{0}}, op,
+				}, End: Terminator{Op: Return, Value: -1}}}},
+				{Params: []Kind{first}, Locals: []Kind{first}, Result: Void, Blocks: []Block{{End: Terminator{Op: Return, Value: -1}}}},
+			}}
+			var invalid *ValidationError
+			if err := Validate(program); !errors.As(err, &invalid) || invalid.Source != pos {
+				t.Fatalf("want record error at %s, got %v", pos, err)
+			}
+		})
+	}
+}
+
 func TestValidateTypedRecursiveCalls(t *testing.T) {
 	program := Program{Functions: []Function{
 		{

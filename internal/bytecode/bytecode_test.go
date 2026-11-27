@@ -87,6 +87,33 @@ func TestValidateRequiresUTF8InStringConstants(t *testing.T) {
 	}
 }
 
+func TestValidateChecksRecordOperands(t *testing.T) {
+	first, second := ir.RecordBase, ir.RecordBase+1
+	pos := token.Position{File: "records.splash", Line: 5, Column: 5}
+	for _, tc := range []struct {
+		name   string
+		prefix []Instruction
+		op     Instruction
+	}{
+		{"missing field", nil, Instruction{Op: MakeRecord, Kind: first}},
+		{"wrong field type", []Instruction{{Op: Const, Kind: ir.Bool}}, Instruction{Op: MakeRecord, Kind: first}},
+		{"wrong nominal record", []Instruction{{Op: Const, Kind: ir.Int}, {Op: MakeRecord, Kind: second}}, Instruction{Op: GetField, Kind: first}},
+		{"unreachable invalid field slot", []Instruction{{Op: Return}}, Instruction{Op: GetField, Kind: first, Index: 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			op := tc.op
+			op.Source = pos
+			program := Program{Records: []ir.Record{{Fields: []ir.Kind{ir.Int}}, {Fields: []ir.Kind{ir.Int}}}, Functions: []Function{
+				{Result: ir.Void, Code: append(tc.prefix, op, Instruction{Op: Return})},
+			}}
+			var invalid *ValidationError
+			if err := Validate(program); !errors.As(err, &invalid) || invalid.Source != pos {
+				t.Fatalf("want record error at %s, got %v", pos, err)
+			}
+		})
+	}
+}
+
 func BenchmarkValidateStraightLine(b *testing.B) {
 	for _, size := range []struct{ operations, locals int }{
 		{32, 32}, {128, 128}, {512, 512}, {1024, 1024}, {1024, 32}, {32, 1024},

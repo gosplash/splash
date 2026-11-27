@@ -3,6 +3,7 @@ package lowering
 
 import (
 	"fmt"
+	"slices"
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/ir"
@@ -29,54 +30,77 @@ func unsupported(source token.Position, detail string) *AdmissionError {
 	return &AdmissionError{Source: source, Detail: detail}
 }
 
-// LowerVM consumes the same typed bindings as the compiler. The experimental
-// subset supports functions in a single ordinary module.
+// LowerVM consumes the captured typed modules and their resolved bindings.
 func LowerVM(modules []*typechecker.TypedFile) (ir.Program, error) {
-	if len(modules) == 0 || modules[len(modules)-1] == nil || modules[len(modules)-1].File == nil {
+	if len(modules) == 0 {
 		return ir.Program{}, unsupported(token.Position{}, "VM requires a checked entry module")
 	}
-	module := modules[len(modules)-1]
-	file := module.File
-	if len(file.Uses) != 0 {
-		return ir.Program{}, unsupported(file.Uses[0].Pos(), "VM-002 does not support imports")
+	entry := modules[len(modules)-1]
+	program := ir.Program{Entry: -1}
+	records := make(map[*ast.TypeDecl]ir.Kind)
+	targets := make(map[*ast.FunctionDecl]int)
+	type ownedFunction struct {
+		module *typechecker.TypedFile
+		decl   *ast.FunctionDecl
 	}
-	if len(modules) != 1 || file.Module == nil {
-		return ir.Program{}, unsupported(file.Pos(), "VM-002 requires one module")
-	}
-	if len(file.Module.Annotations) != 0 || len(file.Exposes) != 0 {
-		return ir.Program{}, unsupported(file.Module.Pos(), "VM-002 does not support module annotations or exports")
+	var declarations []ownedFunction
+
+	for _, module := range modules {
+		if module == nil || module.File == nil || module.File.Module == nil {
+			return ir.Program{}, unsupported(token.Position{}, "VM requires checked module declarations")
+		}
+		file := module.File
+		if len(file.Module.Annotations) != 0 {
+			return ir.Program{}, unsupported(file.Module.Pos(), "VM does not support module annotations")
+		}
+		for _, use := range file.Uses {
+			if use.Path == "std/ai" {
+				return ir.Program{}, unsupported(use.Pos(), "VM does not support host adapter imports")
+			}
+		}
+		for _, decl := range file.Declarations {
+			switch d := decl.(type) {
+			case *ast.TypeDecl:
+				record, err := recordFor(module, d)
+				if err != nil {
+					return ir.Program{}, err
+				}
+				records[d] = ir.RecordBase + ir.Kind(len(program.Records))
+				program.Records = append(program.Records, record)
+			case *ast.FunctionDecl:
+				if len(d.TypeParams) != 0 || len(d.Effects) != 0 || len(d.Annotations) != 0 || d.IsAsync || d.Body == nil {
+					return ir.Program{}, unsupported(d.Pos(), "VM supports ordinary, non-generic functions with bodies")
+				}
+				targets[d] = len(declarations)
+				declarations = append(declarations, ownedFunction{module: module, decl: d})
+			default:
+				return ir.Program{}, unsupported(decl.Pos(), "declaration is outside the VM subset")
+			}
+		}
 	}
 
-	program := ir.Program{Entry: -1}
-	targets := make(map[*ast.FunctionDecl]int)
-	declarations := make([]*ast.FunctionDecl, 0, len(file.Declarations))
-	for _, decl := range file.Declarations {
-		fn, ok := decl.(*ast.FunctionDecl)
-		if !ok || len(fn.TypeParams) != 0 || len(fn.Effects) != 0 || len(fn.Annotations) != 0 || fn.IsAsync || fn.Body == nil {
-			return ir.Program{}, unsupported(decl.Pos(), "VM-002 supports ordinary, non-generic functions with bodies")
-		}
-		signature, err := signatureFor(fn)
+	for id, owned := range declarations {
+		fn := owned.decl
+		signature, err := signatureFor(owned.module, fn, records)
 		if err != nil {
 			return ir.Program{}, err
 		}
-		id := len(program.Functions)
-		if fn.Name == "main" {
+		if owned.module == entry && fn.Name == "main" {
 			if signature.Result != ir.Void || len(signature.Params) != 0 {
 				return ir.Program{}, unsupported(fn.Pos(), "main must have no parameters and return Void")
 			}
 			program.Entry = id
 		}
-		targets[fn] = id
-		declarations = append(declarations, fn)
 		program.Functions = append(program.Functions, signature)
 	}
 	if program.Entry < 0 {
-		return ir.Program{}, unsupported(file.Module.Pos(), "VM requires a main function")
+		return ir.Program{}, unsupported(entry.File.Module.Pos(), "VM requires a main function")
 	}
 
-	for id, fn := range declarations {
+	for id, owned := range declarations {
+		fn := owned.decl
 		builder := functionBuilder{
-			module: module, targets: targets, functions: program.Functions,
+			module: owned.module, targets: targets, records: records, functions: program.Functions,
 			fn: &program.Functions[id], slots: make(map[typechecker.LocalBinding]int),
 		}
 		for i := range fn.Params {
@@ -96,18 +120,38 @@ func LowerVM(modules []*typechecker.TypedFile) (ir.Program, error) {
 	return program, nil
 }
 
-func signatureFor(fn *ast.FunctionDecl) (ir.Function, error) {
+func recordFor(module *typechecker.TypedFile, decl *ast.TypeDecl) (ir.Record, error) {
+	if len(decl.TypeParams) != 0 || len(decl.Annotations) != 0 {
+		return ir.Record{}, unsupported(decl.Pos(), "VM requires plain, non-generic record declarations")
+	}
+	var record ir.Record
+	seen := make(map[string]bool, len(decl.Fields))
+	for _, field := range decl.Fields {
+		kind := annotationKind(module, field.Type, nil)
+		if !ir.IsPrimitiveValue(kind) || field.Default != nil || len(field.Annotations) != 0 {
+			return ir.Record{}, unsupported(field.Pos(), "VM requires primitive record fields without defaults or annotations")
+		}
+		if seen[field.Name] {
+			return ir.Record{}, unsupported(field.Pos(), "VM requires distinct record field names")
+		}
+		seen[field.Name] = true
+		record.Fields = append(record.Fields, kind)
+	}
+	return record, nil
+}
+
+func signatureFor(module *typechecker.TypedFile, fn *ast.FunctionDecl, records map[*ast.TypeDecl]ir.Kind) (ir.Function, error) {
 	result := ir.Function{Result: ir.Void, Source: fn.Pos()}
 	if fn.ReturnType != nil {
-		result.Result = declaredKind(fn.ReturnType)
+		result.Result = annotationKind(module, fn.ReturnType, records)
 		if result.Result == 0 {
-			return ir.Function{}, unsupported(fn.ReturnType.Pos(), "VM-002 requires a primitive result type")
+			return ir.Function{}, unsupported(fn.ReturnType.Pos(), "VM requires a resolved result type in the supported subset")
 		}
 	}
 	for _, param := range fn.Params {
-		kind := declaredKind(param.Type)
+		kind := annotationKind(module, param.Type, records)
 		if kind == 0 || kind == ir.Void || param.Default != nil || param.Variadic {
-			return ir.Function{}, unsupported(param.Pos, "VM-002 requires primitive parameters without defaults")
+			return ir.Function{}, unsupported(param.Pos, "VM requires supported parameter types without defaults or variadics")
 		}
 		result.Params = append(result.Params, kind)
 		result.Locals = append(result.Locals, kind)
@@ -115,26 +159,15 @@ func signatureFor(fn *ast.FunctionDecl) (ir.Function, error) {
 	return result, nil
 }
 
-func declaredKind(expr ast.TypeExpr) ir.Kind {
+func annotationKind(module *typechecker.TypedFile, expr ast.TypeExpr, records map[*ast.TypeDecl]ir.Kind) ir.Kind {
 	named, ok := expr.(*ast.NamedTypeExpr)
 	if !ok || len(named.TypeArgs) != 0 {
 		return 0
 	}
-	switch named.Name {
-	case "Void":
-		return ir.Void
-	case "String":
-		return ir.String
-	case "Int":
-		return ir.Int
-	case "Bool":
-		return ir.Bool
-	default:
-		return 0
-	}
+	return valueKind(module.Types[expr], records)
 }
 
-func valueKind(typ types.Type) ir.Kind {
+func valueKind(typ types.Type, records map[*ast.TypeDecl]ir.Kind) ir.Kind {
 	switch typ {
 	case types.Void:
 		return ir.Void
@@ -144,13 +177,16 @@ func valueKind(typ types.Type) ir.Kind {
 		return ir.Int
 	case types.Bool:
 		return ir.Bool
-	default:
-		return 0
 	}
+	if named, ok := typ.(*types.NamedType); ok {
+		return records[named.Declaration]
+	}
+	return 0
 }
 
 type functionBuilder struct {
 	module    *typechecker.TypedFile
+	records   map[*ast.TypeDecl]ir.Kind
 	targets   map[*ast.FunctionDecl]int
 	functions []ir.Function
 	fn        *ir.Function
@@ -191,7 +227,7 @@ func (b *functionBuilder) lowerBlock(block *ast.BlockStmt) error {
 
 func (b *functionBuilder) statement(stmt ast.Stmt) error {
 	if b.current < 0 {
-		return unsupported(stmt.Pos(), "VM-002 does not lower statements after termination")
+		return unsupported(stmt.Pos(), "VM does not lower statements after termination")
 	}
 	switch s := stmt.(type) {
 	case *ast.BlockStmt:
@@ -201,8 +237,8 @@ func (b *functionBuilder) statement(stmt ast.Stmt) error {
 		if err != nil {
 			return err
 		}
-		kind := valueKind(b.module.Types[s.Value])
-		if s.Type != nil && declaredKind(s.Type) != kind {
+		kind := valueKind(b.module.Types[s.Value], b.records)
+		if s.Type != nil && annotationKind(b.module, s.Type, b.records) != kind {
 			return unsupported(s.Pos(), "local binding requires the exact declared type")
 		}
 		slot := len(b.fn.Locals)
@@ -222,14 +258,14 @@ func (b *functionBuilder) statement(stmt ast.Stmt) error {
 	case *ast.ExprStmt:
 		call, ok := s.Expr.(*ast.CallExpr)
 		if !ok {
-			return unsupported(s.Pos(), "VM-002 supports only call expressions as statements")
+			return unsupported(s.Pos(), "VM supports only call expressions as statements")
 		}
 		_, err := b.expression(call)
 		return err
 	case *ast.IfStmt:
 		return b.conditional(s)
 	default:
-		return unsupported(stmt.Pos(), "statement is outside the VM-002 subset")
+		return unsupported(stmt.Pos(), "statement is outside the VM subset")
 	}
 	return nil
 }
@@ -267,15 +303,15 @@ func (b *functionBuilder) conditional(stmt *ast.IfStmt) error {
 }
 
 func (b *functionBuilder) value(expr ast.Expr) (int, error) {
-	kind := valueKind(b.module.Types[expr])
+	kind := valueKind(b.module.Types[expr], b.records)
 	if kind == ir.Void || kind == 0 {
-		return -1, unsupported(expr.Pos(), "VM requires a known primitive value type")
+		return -1, unsupported(expr.Pos(), "VM requires a resolved value type in the supported subset")
 	}
 	return b.expression(expr)
 }
 
 func (b *functionBuilder) expression(expr ast.Expr) (int, error) {
-	op := ir.Instruction{Type: valueKind(b.module.Types[expr]), Source: expr.Pos()}
+	op := ir.Instruction{Type: valueKind(b.module.Types[expr], b.records), Source: expr.Pos()}
 	if op.Type == 0 {
 		return -1, unsupported(expr.Pos(), "expression has no supported resolved type")
 	}
@@ -296,7 +332,7 @@ func (b *functionBuilder) expression(expr ast.Expr) (int, error) {
 		var ok bool
 		op.Op, ok = unaryOps[e.Op]
 		if !ok {
-			return -1, unsupported(e.Pos(), "unary operation is outside the VM-002 subset")
+			return -1, unsupported(e.Pos(), "unary operation is outside the VM subset")
 		}
 		arg, err := b.value(e.Operand)
 		if err != nil {
@@ -307,7 +343,7 @@ func (b *functionBuilder) expression(expr ast.Expr) (int, error) {
 		var ok bool
 		op.Op, ok = binaryOps[e.Op]
 		if !ok {
-			return -1, unsupported(e.Pos(), "binary operation is outside the VM-002 subset")
+			return -1, unsupported(e.Pos(), "binary operation is outside the VM subset")
 		}
 		left, err := b.value(e.Left)
 		if err != nil {
@@ -318,11 +354,59 @@ func (b *functionBuilder) expression(expr ast.Expr) (int, error) {
 			return -1, err
 		}
 		op.Args = []int{left, right}
+	case *ast.StructLiteral:
+		return b.constructRecord(e, op)
+	case *ast.MemberExpr:
+		named, ok := b.module.Types[e.Object].(*types.NamedType)
+		if e.Optional || !ok || b.records[named.Declaration] == 0 {
+			return -1, unsupported(e.Pos(), "VM requires a resolved record field projection")
+		}
+		field := slices.IndexFunc(named.Declaration.Fields, func(field ast.FieldDecl) bool { return field.Name == e.Member })
+		if field < 0 {
+			return -1, unsupported(e.Pos(), "VM requires a declared record field")
+		}
+		object, err := b.value(e.Object)
+		if err != nil {
+			return -1, err
+		}
+		op.Op, op.Index, op.Args = ir.GetField, field, []int{object}
 	case *ast.CallExpr:
 		return b.call(e, op)
 	default:
-		return -1, unsupported(expr.Pos(), "expression is outside the VM-002 subset")
+		return -1, unsupported(expr.Pos(), "expression is outside the VM subset")
 	}
+	return b.emit(op), nil
+}
+
+func (b *functionBuilder) constructRecord(expr *ast.StructLiteral, op ir.Instruction) (int, error) {
+	named, ok := b.module.Types[expr].(*types.NamedType)
+	if !ok || b.records[named.Declaration] == 0 {
+		return -1, unsupported(expr.Pos(), "VM requires a resolved record declaration")
+	}
+	declaration := named.Declaration
+	if len(expr.Fields) != len(declaration.Fields) {
+		return -1, unsupported(expr.Pos(), "VM requires one initializer for each record field")
+	}
+	values := make(map[string]int, len(expr.Fields))
+	// Capture temporaries in source order before packing fields by slot.
+	for _, field := range expr.Fields {
+		if _, exists := values[field.Name]; exists {
+			return -1, unsupported(field.Pos, "duplicate record field initializer")
+		}
+		value, err := b.value(field.Value)
+		if err != nil {
+			return -1, err
+		}
+		values[field.Name] = value
+	}
+	for _, field := range declaration.Fields {
+		value, ok := values[field.Name]
+		if !ok {
+			return -1, unsupported(expr.Pos(), fmt.Sprintf("missing initializer for record field %q", field.Name))
+		}
+		op.Args = append(op.Args, value)
+	}
+	op.Op = ir.MakeRecord
 	return b.emit(op), nil
 }
 
@@ -336,7 +420,7 @@ var binaryOps = map[token.Kind]ir.Op{
 
 func (b *functionBuilder) call(call *ast.CallExpr, op ir.Instruction) (int, error) {
 	if len(call.TypeArgs) != 0 {
-		return -1, unsupported(call.Pos(), "VM-002 does not support explicit type arguments")
+		return -1, unsupported(call.Pos(), "VM does not support explicit type arguments")
 	}
 	if b.module.PrintlnCalls[call] {
 		if len(call.Args) != 1 || op.Type != ir.Void {

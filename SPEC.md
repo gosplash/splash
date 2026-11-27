@@ -289,6 +289,8 @@ binary_op ::= "=" | "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
 
 **Struct literals** are only parsed when the identifier begins with an uppercase letter. This disambiguates `Foo { ... }` (struct literal) from a block following an identifier expression.
 
+Each record declaration defines a nominal type. A record from one module is distinct from a record with the same name and fields declared in another module. An import alias refers to the original declaration. A record literal evaluates its field initializers exactly once, in the order they appear in source.
+
 **Generic calls** use lookahead to distinguish `f<T>(x)` (generic call) from `f < T` (comparison). The lookahead checks for `< Ident[?] [, Ident[?]]* > (`.
 
 ---
