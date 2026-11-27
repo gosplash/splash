@@ -28,8 +28,8 @@ func TestMissingEffectRejectsArtifactPaths(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			output, diag, err := captureEffectCommand(t, command)
-			if err == nil || !strings.Contains(err.Error(), "type errors") || output != "" {
-				t.Fatalf("want effect rejection in source analysis before output, got %v and %q", err, output)
+			if !errors.Is(err, safety.ErrRejected) || output != "" {
+				t.Fatalf("want effect rejection before output, got %v and %q", err, output)
 			}
 			if !strings.Contains(diag, `missing declared effect DB.read for call to "lookup"`) {
 				t.Fatalf("want specific effect diagnostic, got %q", diag)

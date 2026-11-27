@@ -63,22 +63,40 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 	return Result{Violations: diags, Incomplete: requiredCoverage(g, inferred, len(gated) != 0)}
 }
 
-// requiredCoverage uses transitive effect summaries to find uncovered policy roots.
+// requiredCoverage reports direct coverage gaps in the resolved closure of policy roots.
 // Approval error propagation applies to all source functions when any uses approval.
 // The compiler-injected Go adapter is a trusted host boundary for this source check.
 func requiredCoverage(g *callgraph.Graph, summaries []*effects.Summary, hasApproval bool) []diagnostic.Diagnostic {
+	hasGaps := slices.ContainsFunc(summaries, func(summary *effects.Summary) bool {
+		return len(summary.DirectGaps) != 0
+	})
+	if !hasGaps {
+		return nil
+	}
+
+	var reachable map[string]bool
+	if !hasApproval {
+		roots := g.AgentRoots()
+		for _, summary := range summaries {
+			key := g.FunctionKey(summary.Function)
+			if node := g.Node(key); summary.Declared != effects.None || (node != nil && node.HasAnnotation(ast.AnnotSandbox)) {
+				roots = append(roots, key)
+			}
+		}
+		reachable = g.Reachable(roots)
+	}
+
 	var diags []diagnostic.Diagnostic
-	seen := make(map[*effects.CoverageGap]bool)
+	seen := make(map[effects.CoverageGap]bool)
 	for _, summary := range summaries {
-		gap := summary.Gap
-		if gap == nil || gap.ApprovalBoundary || seen[gap] {
+		if !hasApproval && !reachable[g.FunctionKey(summary.Function)] {
 			continue
 		}
-		node := g.Node(g.FunctionKey(summary.Function))
-		if hasApproval || summary.Declared != effects.None ||
-			(node != nil && (node.HasAnnotation(ast.AnnotTool) || node.HasAnnotation(ast.AnnotSandbox))) {
-			diags = append(diags, diagnostic.Errorf(gap.Position, "incomplete policy coverage: %s", gap.Reason))
-			seen[gap] = true
+		for _, gap := range summary.DirectGaps {
+			if !gap.ApprovalBoundary && !seen[gap] {
+				diags = append(diags, diagnostic.Errorf(gap.Position, "incomplete policy coverage: %s", gap.Reason))
+				seen[gap] = true
+			}
 		}
 	}
 	return diags

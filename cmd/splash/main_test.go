@@ -359,7 +359,7 @@ fn main() { println(apply(alternate)) }
 	}
 }
 
-func TestProtectedCallsRejectUnresolvedIndirectTargets(t *testing.T) {
+func TestProtectedUnresolvedIndirectCallsAreIndeterminate(t *testing.T) {
 	entry := writeSplashFile(t, t.TempDir(), "main.splash", `
 module main
 fn process(callback: fn() -> Int) needs Agent -> Int { return callback() }
@@ -368,11 +368,12 @@ fn process(callback: fn() -> Int) needs Agent -> Int { return callback() }
 	if err != nil {
 		t.Fatal(err)
 	}
-	diags := program.safetyDiagnostics().Incomplete
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "unresolved call target") {
-		t.Fatalf("expected a specific unresolved-target diagnostic, got %v", diags)
+	status := program.safetyDiagnostics()
+	if len(status.Violations) != 0 || len(status.Incomplete) != 1 ||
+		!strings.Contains(status.Incomplete[0].Message, "unresolved call target") {
+		t.Fatalf("expected a specific unresolved-target diagnostic, got %v", status)
 	}
-	if out, err := captureStdout(t, func() error { return runEmit(entry) }); err == nil || out != "" {
+	if out, err := captureStdout(t, func() error { return runEmit(entry) }); !errors.Is(err, safety.ErrIndeterminate) || out != "" {
 		t.Fatalf("emit = %q, %v; want no artifact", out, err)
 	}
 }

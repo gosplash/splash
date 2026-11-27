@@ -390,7 +390,7 @@ Effects after `needs` are comma-separated. A function with no `needs` clause req
 
 ### 5.3 Effect Checking
 
-For a resolved direct or qualified call, the type checker requires the caller's declared capabilities to cover the callee's declared capabilities. This also applies to grants the callee's current body leaves unused. The structural `Agent` marker is excluded from this comparison.
+For a resolved direct or qualified call, source verification requires the caller's declared capabilities to cover the callee's declared capabilities. This also applies to grants the callee's current body leaves unused. The structural `Agent` marker is excluded from this comparison.
 
 ```splash
 fn bad() -> String {
