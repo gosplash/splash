@@ -782,3 +782,17 @@ fn sample() { accept("text") }
 		t.Errorf("unexpected errors for generic argument: %v", diags)
 	}
 }
+
+func TestImportedGenericReturnDoesNotResolveToPrivateRecord(t *testing.T) {
+	diags := checkWithImports(`module app
+use library as imported
+fn sample() -> Int { return imported.identity(1) }
+`, map[string]string{"library.splash": `module library
+expose identity
+type T { n: Int }
+fn identity<T>(value: T) -> T { return value }
+`})
+	if hasError(diags) {
+		t.Fatalf("generic result should not bind to the private record: %v", diags)
+	}
+}

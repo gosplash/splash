@@ -310,12 +310,21 @@ func (tc *TypeChecker) buildNamedType(d *ast.TypeDecl) *types.NamedType {
 }
 
 func (tc *TypeChecker) buildFunctionType(d *ast.FunctionDecl) *types.FunctionType {
+	var typeParams map[string]types.Type
+	if len(d.TypeParams) > 0 {
+		// Call signatures are not instantiated yet. Unresolved type parameters
+		// still shadow any module type with the same name.
+		typeParams = make(map[string]types.Type, len(d.TypeParams))
+		for _, param := range d.TypeParams {
+			typeParams[param.Name] = types.Unknown
+		}
+	}
 	ft := &types.FunctionType{}
 	for _, p := range d.Params {
-		ft.Params = append(ft.Params, tc.resolveTypeExpr(p.Type, nil, false))
+		ft.Params = append(ft.Params, tc.resolveTypeExpr(p.Type, typeParams, false))
 	}
 	if d.ReturnType != nil {
-		ft.Return = tc.resolveTypeExpr(d.ReturnType, nil, false)
+		ft.Return = tc.resolveTypeExpr(d.ReturnType, typeParams, false)
 	} else {
 		ft.Return = types.Void
 	}
@@ -391,7 +400,7 @@ func (tc *TypeChecker) checkTypeDecl(d *ast.TypeDecl, typed *TypedFile) {
 
 func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	env := NewEnv(tc.globals)
-	typeParamEnv := make(map[string]*types.TypeParamType)
+	typeParamEnv := make(map[string]types.Type)
 	for _, tp := range d.TypeParams {
 		for _, constraintName := range tp.Constraints {
 			if _, ok := tc.constraintDecls[constraintName]; !ok {
@@ -428,13 +437,13 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	}
 }
 
-func (tc *TypeChecker) checkBlock(block *ast.BlockStmt, env *Env, typed *TypedFile, typeParamEnv map[string]*types.TypeParamType, returnType types.Type) {
+func (tc *TypeChecker) checkBlock(block *ast.BlockStmt, env *Env, typed *TypedFile, typeParamEnv map[string]types.Type, returnType types.Type) {
 	for _, stmt := range block.Stmts {
 		tc.checkStmt(stmt, env, typed, typeParamEnv, returnType)
 	}
 }
 
-func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, typeParamEnv map[string]*types.TypeParamType, returnType types.Type) {
+func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, typeParamEnv map[string]types.Type, returnType types.Type) {
 	switch s := stmt.(type) {
 	case *ast.LetStmt:
 		typed.LocalNames[s.Name] = true
@@ -488,7 +497,7 @@ func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, type
 	}
 }
 
-func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, typeParamEnv map[string]*types.TypeParamType) types.Type {
+func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, typeParamEnv map[string]types.Type) types.Type {
 	var result types.Type
 	switch e := expr.(type) {
 	case *ast.IntLiteral:
@@ -595,7 +604,7 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 }
 
 // checkCallExpr handles function calls, including constraint satisfaction for generic calls.
-func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile, typeParamEnv map[string]*types.TypeParamType) types.Type {
+func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile, typeParamEnv map[string]types.Type) types.Type {
 	// Special case: ai.prompt<T>(...) on AIAdapter → Result<T, AIError>
 	// Look up 'ai' directly in env to avoid double-checking (which would double-report errors).
 	if mem, ok := e.Callee.(*ast.MemberExpr); ok && mem.Member == "prompt" {
@@ -698,7 +707,7 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 	return types.Void
 }
 
-func (tc *TypeChecker) resolveTypeExpr(expr ast.TypeExpr, typeParams map[string]*types.TypeParamType, reportAmbiguity bool) types.Type {
+func (tc *TypeChecker) resolveTypeExpr(expr ast.TypeExpr, typeParams map[string]types.Type, reportAmbiguity bool) types.Type {
 	if expr == nil {
 		return types.Void
 	}
