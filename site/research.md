@@ -76,7 +76,7 @@ A separate synthetic workload with 1,000 recursive policy groups measured 22.753
 
 ### Reproduce compiler scaling
 
-Use the recorded Go version, 1.26.3. Measured source revision `f3c9890bac510e607b8e0469342a20901f5cc1e1` is the pinned EFF-001 checkout plus the [benchmark patch]({{ '/assets/research/compiler-scaling-f3c9890.patch' | relative_url }}).
+Use Go 1.26.3 for reproduction. The raw log omits the original Go version. Measured source revision `f3c9890bac510e607b8e0469342a20901f5cc1e1` is the pinned EFF-001 checkout plus the [benchmark patch]({{ '/assets/research/compiler-scaling-f3c9890.patch' | relative_url }}).
 
 ```bash
 scratch=$(mktemp -d)
