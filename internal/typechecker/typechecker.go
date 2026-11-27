@@ -18,6 +18,7 @@ type TypedFile struct {
 	File               *ast.File
 	Types              map[ast.Node]types.Type
 	FunctionReferences map[ast.Expr]*ast.FunctionDecl
+	LocalReferences    map[*ast.Ident]LocalBinding
 	PrintlnCalls       map[*ast.CallExpr]bool
 	UnresolvedCalls    map[*ast.CallExpr]bool
 	LocalNames         map[string]bool
@@ -105,6 +106,7 @@ func (tc *TypeChecker) Check(file *ast.File) (*TypedFile, []diagnostic.Diagnosti
 		File:               file,
 		Types:              make(map[ast.Node]types.Type),
 		FunctionReferences: make(map[ast.Expr]*ast.FunctionDecl),
+		LocalReferences:    make(map[*ast.Ident]LocalBinding),
 		PrintlnCalls:       make(map[*ast.CallExpr]bool),
 		UnresolvedCalls:    make(map[*ast.CallExpr]bool),
 		LocalNames:         make(map[string]bool),
@@ -377,8 +379,12 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 		typeParamEnv[tp.Name] = tpt
 		env.Set(tp.Name, tpt)
 	}
-	for _, p := range d.Params {
-		env.Set(p.Name, tc.resolveTypeExprWithParams(p.Type, typeParamEnv))
+	for i := range d.Params {
+		p := &d.Params[i]
+		env.symbols[p.Name] = binding{
+			typ:   tc.resolveTypeExprWithParams(p.Type, typeParamEnv),
+			local: LocalBinding{Param: p},
+		}
 		typed.LocalNames[p.Name] = true
 	}
 	var returnType types.Type = types.Void
@@ -412,9 +418,9 @@ func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, type
 			} else if !valType.IsAssignableTo(declType) {
 				tc.errorf(s.Pos(), "cannot assign %s to %s", valType.TypeName(), declType.TypeName())
 			}
-			env.Set(s.Name, declType)
+			env.symbols[s.Name] = binding{typ: declType, local: LocalBinding{Let: s}}
 		} else {
-			env.Set(s.Name, valType)
+			env.symbols[s.Name] = binding{typ: valType, local: LocalBinding{Let: s}}
 		}
 	case *ast.ReturnStmt:
 		if s.Value != nil {
@@ -476,6 +482,9 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 				if b.function != nil {
 					typed.FunctionReferences[e] = b.function
 				}
+				if b.local != (LocalBinding{}) {
+					typed.LocalReferences[e] = b.local
+				}
 			}
 		} else {
 			tc.errorf(e.Pos(), "undefined: %s", e.Name)
@@ -502,8 +511,11 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 			result = left // arithmetic: inherit left operand type
 		}
 	case *ast.UnaryExpr:
-		tc.checkExpr(e.Operand, env, typed, typeParamEnv)
+		operand := tc.checkExpr(e.Operand, env, typed, typeParamEnv)
 		result = types.Bool
+		if e.Op == token.MINUS {
+			result = operand
+		}
 	case *ast.NullCoalesceExpr:
 		left := tc.checkExpr(e.Left, env, typed, typeParamEnv)
 		tc.checkExpr(e.Right, env, typed, typeParamEnv)

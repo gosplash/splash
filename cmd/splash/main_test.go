@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"gosplash.dev/splash/internal/ast"
-	"gosplash.dev/splash/internal/codegen"
+	"gosplash.dev/splash/internal/ir"
+	"gosplash.dev/splash/internal/lowering"
 	"gosplash.dev/splash/internal/toolschema"
+	"gosplash.dev/splash/internal/vm"
 )
 
 func writeSplashFile(t *testing.T, dir, name, src string) string {
@@ -487,7 +489,7 @@ fn main() {
 }
 `)
 	var vmOutput bytes.Buffer
-	if err := program.runVM(&vmOutput, codegen.VMLimits{Instructions: 3, Frames: 1}); err != nil {
+	if err := program.runVM(&vmOutput, vm.Limits{Instructions: 100, Frames: 1}); err != nil {
 		t.Fatal(err)
 	}
 	const want = "Hello, world\n"
@@ -517,9 +519,9 @@ func TestVM001RejectsUnsupportedSourceBeforeOutput(t *testing.T) {
 		name string
 		body string
 	}{
-		{"integer", `println(42)`},
-		{"expression", `println("Hello" + " world")`},
-		{"branch", `if true { println("yes") }`},
+		{"float", `println(4.2)`},
+		{"short circuit", `println(true && false)`},
+		{"guard", `guard true else { println("yes") }`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := writeSplashFile(t, t.TempDir(), "unsupported.splash", "module main\nfn main() {\nprintln(\"first\")\n"+test.body+"\n}\n")
@@ -528,9 +530,9 @@ func TestVM001RejectsUnsupportedSourceBeforeOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			err = program.runVM(&out, codegen.VMLimits{Instructions: 100, Frames: 1})
-			var vmErr *codegen.VMError
-			if !errors.As(err, &vmErr) || vmErr.Code != codegen.VMUnsupported || vmErr.Source.Line != 4 {
+			err = program.runVM(&out, vm.Limits{Instructions: 100, Frames: 1})
+			var vmErr *lowering.AdmissionError
+			if !errors.As(err, &vmErr) || vmErr.Source.Line != 4 {
 				t.Fatalf("want unsupported source diagnostic at line 4, got %v", err)
 			}
 			if out.Len() != 0 {
@@ -549,10 +551,141 @@ func TestVM001ReportsUnsupportedImportLocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = program.runVM(&out, codegen.VMLimits{Instructions: 3, Frames: 1})
-	var vmErr *codegen.VMError
-	if !errors.As(err, &vmErr) || vmErr.Code != codegen.VMUnsupported ||
+	err = program.runVM(&out, vm.Limits{Instructions: 100, Frames: 1})
+	var vmErr *lowering.AdmissionError
+	if !errors.As(err, &vmErr) ||
 		vmErr.Source.File != path || vmErr.Source.Line != 2 {
 		t.Fatalf("want unsupported import at %s:2, got %v", path, err)
+	}
+}
+
+const vmFactorial = `module main
+fn factorial(n: Int) -> Int {
+    if n <= 1 {
+        return 1
+    }
+    let previous = factorial(n - 1)
+    return n * previous
+}
+fn main() {
+    println(factorial(0))
+    println(factorial(5))
+}
+`
+
+func TestVM002RecursiveExecutionMatchesGoAndExpectedOutput(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSplashFile(t, dir, "recursive.splash", vmFactorial)
+	program, err := analyzeProgram(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := program.runVM(&out, vm.Limits{Instructions: 1000, Frames: 8}); err != nil {
+		t.Fatal(err)
+	}
+	const want = "1\n120\n"
+	if out.String() != want {
+		t.Fatalf("VM printed %q, want %q", out.String(), want)
+	}
+	goSource, err := program.emitGo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := filepath.Join(dir, "recursive.go")
+	if err := os.WriteFile(generated, []byte(goSource), 0644); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := exec.Command("go", "run", generated).CombinedOutput()
+	if err != nil || string(actual) != want {
+		t.Fatalf("Go returned %q, %v, want %q", actual, err, want)
+	}
+}
+
+func TestVM002CountsAcrossFrames(t *testing.T) {
+	path := writeSplashFile(t, t.TempDir(), "recursive.splash", vmFactorial)
+	program, err := analyzeProgram(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		limits vm.Limits
+		code   vm.ErrorCode
+	}{
+		{vm.Limits{Instructions: 45, Frames: 8}, vm.InstructionLimit},
+		{vm.Limits{Instructions: 1000, Frames: 2}, vm.FrameLimit},
+	} {
+		var out bytes.Buffer
+		err := program.runVM(&out, tc.limits)
+		var vmErr *vm.Error
+		if !errors.As(err, &vmErr) || vmErr.Code != tc.code || vmErr.FrameDepth < 2 {
+			t.Fatalf("want %s in a nested frame, got %#v", tc.code, err)
+		}
+		if tc.code == vm.InstructionLimit && vmErr.InstructionCount != tc.limits.Instructions {
+			t.Fatalf("used %d dispatches, limit %d", vmErr.InstructionCount, tc.limits.Instructions)
+		}
+	}
+}
+
+func TestVM002IntegerLiteralsRespectSigned64BitRange(t *testing.T) {
+	for _, source := range []string{"9223372036854775808", "-9223372036854775809"} {
+		path := writeSplashFile(t, t.TempDir(), "range.splash", "module main\nfn main() { println("+source+") }\n")
+		if _, err := analyzeProgram(path); err == nil {
+			t.Fatalf("out-of-range literal %s passed analysis", source)
+		}
+	}
+	path := writeSplashFile(t, t.TempDir(), "range.splash", "module main\nfn main() { println(-9223372036854775808) }\n")
+	program, err := analyzeProgram(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := program.runVM(&out, vm.Limits{Instructions: 100, Frames: 1}); err != nil || out.String() != "-9223372036854775808\n" {
+		t.Fatalf("minimum Int printed %q, error %v", out.String(), err)
+	}
+}
+
+func TestVM002EvaluatesOperandsAndCallArgumentsLeftToRight(t *testing.T) {
+	path := writeSplashFile(t, t.TempDir(), "order.splash", `module main
+fn trace(n: Int) -> Int {
+    println(n)
+    return n
+}
+fn add(a: Int, b: Int) -> Int {
+    return a + b
+}
+fn main() {
+    println(trace(4) + trace(2))
+    println(add(trace(3), trace(1)))
+}
+`)
+	program, err := analyzeProgram(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = program.runVM(&out, vm.Limits{Instructions: 1000, Frames: 3})
+	const want = "4\n2\n6\n3\n1\n4\n"
+	if err != nil || out.String() != want {
+		t.Fatalf("VM returned %q, %v, want %q", out.String(), err, want)
+	}
+}
+
+func TestVM002RejectsMistypedIRBeforeExecution(t *testing.T) {
+	for _, body := range []string{"println(1 + true)", "println(identity())", "if 1 { println(2) }"} {
+		t.Run(body, func(t *testing.T) {
+			path := writeSplashFile(t, t.TempDir(), "invalid.splash", "module main\nfn identity(n: Int) -> Int { return n }\nfn main() {\nprintln(1)\n"+body+"\n}\n")
+			program, err := analyzeProgram(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			err = program.runVM(&out, vm.Limits{Instructions: 100, Frames: 3})
+			var validation *ir.ValidationError
+			if !errors.As(err, &validation) || validation.Source.File != path || out.Len() != 0 ||
+				!strings.Contains(err.Error(), path+":") || !strings.Contains(err.Error(), "SPLASH_VM_INVALID_IR") {
+				t.Fatalf("want source-backed IR rejection before output, got %v and %q", err, out.String())
+			}
+		})
 	}
 }

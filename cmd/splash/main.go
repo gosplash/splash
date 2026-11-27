@@ -11,15 +11,18 @@ import (
 	"strings"
 
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/bytecode"
 	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/codegen"
 	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/effects"
 	"gosplash.dev/splash/internal/lexer"
+	"gosplash.dev/splash/internal/lowering"
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/safety"
 	"gosplash.dev/splash/internal/toolschema"
 	"gosplash.dev/splash/internal/typechecker"
+	"gosplash.dev/splash/internal/vm"
 )
 
 func main() {
@@ -218,11 +221,23 @@ func (p *analyzedProgram) emitGo() (string, error) {
 }
 
 // runVM is the experimental internal path. Public commands still use Go lowering.
-func (p *analyzedProgram) runVM(output io.Writer, limits codegen.VMLimits) error {
+func (p *analyzedProgram) runVM(output io.Writer, limits vm.Limits) error {
 	if p.reportSafetyErrors() {
 		return fmt.Errorf("safety errors")
 	}
-	return codegen.RunVM(p.modules, output, limits)
+	program, err := lowering.LowerVM(p.modules)
+	if err != nil {
+		return err
+	}
+	executable, err := bytecode.Lower(program)
+	if err != nil {
+		return err
+	}
+	runtime, err := vm.New(executable, output, limits)
+	if err != nil {
+		return err
+	}
+	return runtime.RunMain()
 }
 
 // mergeFiles builds a combined ast.File where all imported files' declarations

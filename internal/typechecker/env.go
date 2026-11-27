@@ -5,12 +5,19 @@ import (
 	"gosplash.dev/splash/internal/types"
 )
 
+// LocalBinding identifies an exact declaration within one analyzed snapshot.
+type LocalBinding struct {
+	Param *ast.Param
+	Let   *ast.LetStmt
+}
+
 type binding struct {
 	typ       types.Type
 	function  *ast.FunctionDecl
 	imported  ast.Node
 	ambiguous bool
 	println   bool
+	local     LocalBinding
 }
 
 // Env is a lexically-scoped symbol table.
