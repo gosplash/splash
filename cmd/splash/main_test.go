@@ -70,19 +70,27 @@ redline fn dangerous() -> String { return "boom" }
 
 	binary := filepath.Join(dir, "program")
 	for _, command := range []struct {
-		name string
-		run  func() error
+		name      string
+		run       func() error
+		wantError string
 	}{
-		{"check", func() error { return runCheck(mainPath) }},
-		{"run --backend vm", func() error { return runVMCommand([]string{mainPath, "--backend", "vm"}, os.Stdout) }},
-		{"emit", func() error { return runEmit(mainPath) }},
-		{"build", func() error { return runBuild(mainPath, binary) }},
-		{"tools", func() error { return runTools(mainPath, toolschema.FormatOpenAI) }},
+		{name: "check", run: func() error { return runCheck(mainPath) }},
+		{
+			name:      "run --backend vm",
+			run:       func() error { return runVMCommand([]string{mainPath, "--backend", "vm"}, os.Stdout) },
+			wantError: "safety errors",
+		},
+		{name: "emit", run: func() error { return runEmit(mainPath) }},
+		{name: "build", run: func() error { return runBuild(mainPath, binary) }},
+		{name: "tools", run: func() error { return runTools(mainPath, toolschema.FormatOpenAI) }},
 	} {
 		t.Run(command.name, func(t *testing.T) {
 			out, err := captureStdout(t, command.run)
 			if err == nil || out != "" {
 				t.Fatalf("expected rejection without output; got error %v and stdout %q", err, out)
+			}
+			if command.wantError != "" && err.Error() != command.wantError {
+				t.Fatalf("want %q, got %v", command.wantError, err)
 			}
 		})
 	}
