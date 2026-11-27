@@ -693,16 +693,11 @@ Splash `enum` declarations become Go type aliases with constants. Variants with 
 
 ### 11.4 The Agent Error Boundary
 
-`needs Agent` functions define the error surface of agent execution. Two kinds of runtime failures propagate to this boundary:
-
-1. **`approve fn` denials** — when the `ApprovalAdapter` rejects a call, the error propagates through all transitive callers up to the `needs Agent` function.
-2. **AI call failures** — when `ai.prompt<T>` fails (network error, model error, timeout), the error propagates the same way.
-
-In Splash source, neither failure is visible. Functions declare their return types without error handling. The compiler injects the error propagation in generated Go.
+`needs Agent` functions define the error surface of agent execution. When the `ApprovalAdapter` denies an `approve fn` call, generated Go propagates the error through transitive callers to the `needs Agent` function. Splash source signatures leave this propagation implicit.
 
 Any function annotated with `approve fn` — and all transitive callers up to the `needs Agent` boundary — have their return type widened from `T` to `(T, error)` in the generated Go. The call to `splashApprove("fn_name")` is injected as the first statement.
 
-**The symmetry:** error propagation follows capability propagation. Effects flow up the call graph to the Agent boundary; errors flow up the same path to the same boundary.
+The proposed AI runtime would route provider failures, including network errors and timeouts, to the same error boundary. Current source analysis models the `AI` effect of `ai.prompt<T>`. The Go backend emits an ordinary call for it.
 
 ### 11.5 `tool fn` Functions
 
