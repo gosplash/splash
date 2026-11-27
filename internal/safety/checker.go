@@ -3,6 +3,7 @@
 package safety
 
 import (
+	"errors"
 	"slices"
 	"strings"
 
@@ -25,16 +26,27 @@ type Module struct {
 	Types map[ast.Node]types.Type
 }
 
-// Check runs all enforcement passes and returns any violations as diagnostics.
-func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effects.Summary) []diagnostic.Diagnostic {
+var (
+	ErrRejected      = errors.New("safety errors (rejected)")
+	ErrIndeterminate = errors.New("safety verification indeterminate")
+)
+
+// Result contains known policy violations and missing required source evidence.
+type Result struct {
+	Violations []diagnostic.Diagnostic
+	Incomplete []diagnostic.Diagnostic
+}
+
+// Check runs the enforcement passes and reports findings even if coverage is incomplete.
+func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effects.Summary) Result {
 	var diags []diagnostic.Diagnostic
 
 	roots := g.AgentRoots()
 	agentReachable := g.Reachable(roots)
 	agentParents := g.Parents(roots)
 
-	diags = append(diags, c.checkUnresolvedCalls(g, roots)...)
-	diags = append(diags, c.checkApprovalCallContexts(g)...)
+	gated := g.ApprovalFunctions()
+	diags = append(diags, c.checkApprovalCallContexts(g, gated)...)
 	for _, module := range modules {
 		file := module.File
 		diags = append(diags, c.checkRedline(file, g, agentParents)...)
@@ -48,34 +60,25 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 		diags = append(diags, summary.Diagnostics()...)
 	}
 
-	return diags
+	return Result{Violations: diags, Incomplete: requiredCoverage(g, inferred, len(gated) != 0)}
 }
 
-// checkUnresolvedCalls rejects incomplete reachability in regions that need
-// resolved identities for policy checks. Approval propagation also requires
-// complete call targets so indirect calls cannot discard the error channel.
-func (c *Checker) checkUnresolvedCalls(g *callgraph.Graph, roots []string) []diagnostic.Diagnostic {
-	if !g.HasUnresolvedCalls() {
-		return nil
-	}
-	nodes := g.Nodes()
-	var hasApproval bool
-	for _, node := range nodes {
-		if node.HasAnnotation(ast.AnnotSandbox) {
-			roots = append(roots, node.Name)
-		}
-		if node.HasAnnotation(ast.AnnotApprove) {
-			hasApproval = true
-		}
-	}
-	reachable := g.Reachable(roots)
-
+// requiredCoverage uses transitive effect summaries to find uncovered policy roots.
+// Approval error propagation applies to all source functions when any uses approval.
+// The compiler-injected Go adapter is a trusted host boundary for this source check.
+func requiredCoverage(g *callgraph.Graph, summaries []*effects.Summary, hasApproval bool) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
-	for _, node := range nodes {
-		if hasApproval || reachable[node.Name] {
-			for _, pos := range node.UnresolvedCalls {
-				diags = append(diags, diagnostic.Errorf(pos, "cannot verify indirect call target in %q under agent, sandbox, or approval checks", node.Name))
-			}
+	seen := make(map[*effects.CoverageGap]bool)
+	for _, summary := range summaries {
+		gap := summary.Gap
+		if gap == nil || gap.ApprovalBoundary || seen[gap] {
+			continue
+		}
+		node := g.Node(g.FunctionKey(summary.Function))
+		if hasApproval || summary.Declared != effects.None ||
+			(node != nil && (node.HasAnnotation(ast.AnnotTool) || node.HasAnnotation(ast.AnnotSandbox))) {
+			diags = append(diags, diagnostic.Errorf(gap.Position, "incomplete policy coverage: %s", gap.Reason))
+			seen[gap] = true
 		}
 	}
 	return diags
@@ -83,8 +86,7 @@ func (c *Checker) checkUnresolvedCalls(g *callgraph.Graph, roots []string) []dia
 
 // checkApprovalCallContexts rejects uses of an approval error channel that the
 // current backend can only propagate for a whole statement, let or return value.
-func (c *Checker) checkApprovalCallContexts(g *callgraph.Graph) []diagnostic.Diagnostic {
-	gated := g.ApprovalFunctions()
+func (c *Checker) checkApprovalCallContexts(g *callgraph.Graph, gated map[string]bool) []diagnostic.Diagnostic {
 	if len(gated) == 0 {
 		return nil
 	}

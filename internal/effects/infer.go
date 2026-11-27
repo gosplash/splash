@@ -32,6 +32,9 @@ type Operation struct {
 type CoverageGap struct {
 	Reason   string
 	Position token.Position
+	// ApprovalBoundary identifies the compiler-injected Go host boundary.
+	// Source verification accounts for approval call edges independently.
+	ApprovalBoundary bool
 }
 
 // Summary distinguishes the known lower bound of the conservative effect
@@ -80,8 +83,8 @@ func Infer(facts []FunctionFacts) []*Summary {
 			if target := byFunction[call.Target]; target != nil {
 				summary.requiredByCalls |= target.Declared
 				callers[target] = append(callers[target], callerEdge{summary, call.Position})
-			} else if summary.Gap == nil {
-				summary.Gap = &CoverageGap{"resolved target has no effect summary", call.Position}
+			} else if summary.Gap == nil || summary.Gap.ApprovalBoundary {
+				summary.Gap = &CoverageGap{Reason: "resolved target has no effect summary", Position: call.Position}
 			}
 		}
 		if summary.Gap != nil {
@@ -108,7 +111,10 @@ func Infer(facts []FunctionFacts) []*Summary {
 	for head := 0; head < len(incomplete); head++ {
 		current := incomplete[head]
 		for _, edge := range callers[current] {
-			if edge.caller.Gap == nil {
+			// A source gap must remain visible even when a caller also
+			// inherits an unmodeled approval host boundary.
+			previous := edge.caller.Gap
+			if previous == nil || (previous.ApprovalBoundary && !current.Gap.ApprovalBoundary) {
 				edge.caller.Gap = current.Gap
 				incomplete = append(incomplete, edge.caller)
 			}

@@ -406,11 +406,6 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	typed.EffectFacts = append(typed.EffectFacts, effects.FunctionFacts{Function: d})
 	tc.currentFacts = &typed.EffectFacts[len(typed.EffectFacts)-1]
 	defer func() { tc.currentFacts = nil }()
-	for _, annotation := range d.Annotations {
-		if annotation.Kind == ast.AnnotApprove {
-			tc.markEffectGap(annotation.Pos, "approval adapter has no modeled effect contract")
-		}
-	}
 	tc.currentEffects = effects.None
 	for _, effect := range d.Effects {
 		flag, known := effects.Lookup(effect.Name)
@@ -434,7 +429,7 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	}
 	for i := range d.Params {
 		p := &d.Params[i]
-		if p.Default != nil {
+		if p.Default != nil && !literalDefault(p.Default) {
 			tc.markEffectGap(p.Default.Pos(), "parameter default was not analyzed")
 		}
 		paramType := tc.resolveTypeExpr(p.Type, typeParamEnv, true)
@@ -460,6 +455,28 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 		tc.checkBlock(d.Body, env, typed, typeParamEnv, returnType)
 	} else {
 		tc.markEffectGap(d.Pos(), "function body is unavailable")
+	}
+	if tc.currentFacts.Gap == nil {
+		for _, annotation := range d.Annotations {
+			if annotation.Kind == ast.AnnotApprove {
+				tc.currentFacts.Gap = &effects.CoverageGap{
+					Reason:   "approval adapter has no modeled effect contract",
+					Position: annotation.Pos, ApprovalBoundary: true,
+				}
+				break
+			}
+		}
+	}
+}
+
+func literalDefault(expr ast.Expr) bool {
+	switch expr := expr.(type) {
+	case *ast.IntLiteral, *ast.FloatLiteral, *ast.StringLiteral, *ast.BoolLiteral, *ast.NoneLiteral:
+		return true
+	case *ast.UnaryExpr:
+		return literalDefault(expr.Operand)
+	default:
+		return false
 	}
 }
 
@@ -625,7 +642,7 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 		if nt, ok := tc.resolveTypeName(e.TypeName, e.Pos(), true).(*types.NamedType); ok && nt.Declaration != nil {
 			result = nt
 			for _, field := range nt.Declaration.Fields {
-				if field.Default != nil {
+				if field.Default != nil && !literalDefault(field.Default) {
 					tc.markEffectGap(field.Default.Pos(), "record field default was not analyzed")
 				}
 			}
@@ -689,7 +706,7 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 	}
 	if fnDecl == nil && !println {
 		typed.UnresolvedCalls[e] = true
-		tc.markEffectGap(e.Pos(), "unresolved call")
+		tc.markEffectGap(e.Pos(), "unresolved call target")
 	}
 
 	ft, ok := calleeType.(*types.FunctionType)

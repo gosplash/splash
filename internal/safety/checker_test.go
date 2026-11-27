@@ -64,7 +64,7 @@ func check(src string) []diagnostic.Diagnostic {
 	g := callgraph.Build(file)
 	c := safety.New()
 	module, _ := typechecker.New().Check(file)
-	return c.Check([]safety.Module{{File: file, Types: module.Types}}, g, nil)
+	return c.Check([]safety.Module{{File: file, Types: module.Types}}, g, nil).Violations
 }
 
 func hasError(diags []diagnostic.Diagnostic) bool {

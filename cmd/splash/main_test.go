@@ -13,6 +13,7 @@ import (
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/ir"
 	"gosplash.dev/splash/internal/lowering"
+	"gosplash.dev/splash/internal/safety"
 	"gosplash.dev/splash/internal/toolschema"
 	"gosplash.dev/splash/internal/vm"
 )
@@ -70,15 +71,13 @@ redline fn dangerous() -> String { return "boom" }
 
 	binary := filepath.Join(dir, "program")
 	for _, command := range []struct {
-		name      string
-		run       func() error
-		wantError string
+		name string
+		run  func() error
 	}{
 		{name: "check", run: func() error { return runCheck(mainPath) }},
 		{
-			name:      "run --backend vm",
-			run:       func() error { return runVMCommand([]string{mainPath, "--backend", "vm"}, os.Stdout) },
-			wantError: "safety errors",
+			name: "run --backend vm",
+			run:  func() error { return runVMCommand([]string{mainPath, "--backend", "vm"}, os.Stdout) },
 		},
 		{name: "emit", run: func() error { return runEmit(mainPath) }},
 		{name: "build", run: func() error { return runBuild(mainPath, binary) }},
@@ -86,11 +85,8 @@ redline fn dangerous() -> String { return "boom" }
 	} {
 		t.Run(command.name, func(t *testing.T) {
 			out, err := captureStdout(t, command.run)
-			if err == nil || out != "" {
+			if !errors.Is(err, safety.ErrRejected) || out != "" {
 				t.Fatalf("expected rejection without output; got error %v and stdout %q", err, out)
-			}
-			if command.wantError != "" && err.Error() != command.wantError {
-				t.Fatalf("want %q, got %v", command.wantError, err)
 			}
 		})
 	}
@@ -372,8 +368,8 @@ fn process(callback: fn() -> Int) needs Agent -> Int { return callback() }
 	if err != nil {
 		t.Fatal(err)
 	}
-	diags := program.safetyDiagnostics()
-	if len(diags) != 1 || !strings.Contains(diags[0].Message, "indirect call target") {
+	diags := program.safetyDiagnostics().Incomplete
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "unresolved call target") {
 		t.Fatalf("expected a specific unresolved-target diagnostic, got %v", diags)
 	}
 	if out, err := captureStdout(t, func() error { return runEmit(entry) }); err == nil || out != "" {
@@ -424,7 +420,7 @@ redline fn count() -> Int { return 42 }
 	if err != nil {
 		t.Fatal(err)
 	}
-	diags := program.safetyDiagnostics()
+	diags := program.safetyDiagnostics().Violations
 	if len(diags) != 1 || !strings.Contains(diags[0].Message, "redline fn") {
 		t.Fatalf("expected the existing redline rule to apply to a qualified target, got %v", diags)
 	}
@@ -441,7 +437,7 @@ fn main() { println(quotedPrice()) }
 	if err != nil {
 		t.Fatal(err)
 	}
-	diags := program.safetyDiagnostics()
+	diags := program.safetyDiagnostics().Violations
 	if len(diags) != 1 || !strings.Contains(diags[0].Message, "approval call") {
 		t.Fatalf("expected one diagnostic for the unsupported nested approval call, got %v", diags)
 	}

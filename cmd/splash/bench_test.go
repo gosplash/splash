@@ -43,7 +43,7 @@ func checkPipeline(path string) error {
 	if err != nil {
 		return err
 	}
-	if len(program.safetyDiagnostics()) > 0 {
+	if result := program.safetyDiagnostics(); len(result.Violations) != 0 || len(result.Incomplete) != 0 {
 		return fmt.Errorf("safety errors")
 	}
 	return nil

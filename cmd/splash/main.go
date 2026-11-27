@@ -14,7 +14,6 @@ import (
 	"gosplash.dev/splash/internal/bytecode"
 	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/codegen"
-	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/effects"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/lowering"
@@ -184,14 +183,14 @@ func runCheck(path string) error {
 		return err
 	}
 
-	if program.reportSafetyErrors() {
-		return fmt.Errorf("check failed")
+	if err := program.verifySafety(); err != nil {
+		return fmt.Errorf("check failed: %w", err)
 	}
 	fmt.Printf("%s: ok\n", path)
 	return nil
 }
 
-func (p *analyzedProgram) safetyDiagnostics() []diagnostic.Diagnostic {
+func (p *analyzedProgram) safetyDiagnostics() safety.Result {
 	modules := make([]safety.Module, 0, len(p.modules))
 	for _, module := range p.modules {
 		modules = append(modules, safety.Module{File: module.File, Types: module.Types})
@@ -199,12 +198,22 @@ func (p *analyzedProgram) safetyDiagnostics() []diagnostic.Diagnostic {
 	return safety.New().Check(modules, p.graph, p.effects)
 }
 
-func (p *analyzedProgram) reportSafetyErrors() bool {
-	diagnostics := p.safetyDiagnostics()
-	for _, d := range diagnostics {
-		fmt.Fprintln(os.Stderr, d)
+func (p *analyzedProgram) verifySafety() error {
+	result := p.safetyDiagnostics()
+	for _, diagnostic := range result.Violations {
+		fmt.Fprintln(os.Stderr, diagnostic)
 	}
-	return len(diagnostics) > 0
+	for _, diagnostic := range result.Incomplete {
+		fmt.Fprintln(os.Stderr, diagnostic)
+	}
+	switch {
+	case len(result.Violations) > 0:
+		return safety.ErrRejected
+	case len(result.Incomplete) > 0:
+		return safety.ErrIndeterminate
+	default:
+		return nil
+	}
 }
 
 func runEmit(path string) error {
@@ -222,8 +231,8 @@ func runEmit(path string) error {
 }
 
 func (p *analyzedProgram) emitGo() (string, error) {
-	if p.reportSafetyErrors() {
-		return "", fmt.Errorf("safety errors")
+	if err := p.verifySafety(); err != nil {
+		return "", err
 	}
 	return codegen.NewGoBackend().Emit(p.merged, codegen.Options{
 		ApprovalCallers:    p.graph.Callers(p.graph.ApprovalFunctions()),
@@ -237,8 +246,8 @@ func (p *analyzedProgram) emitGo() (string, error) {
 
 // runVM executes the captured program through the experimental VM backend.
 func (p *analyzedProgram) runVM(output io.Writer, limits vm.Limits) error {
-	if p.reportSafetyErrors() {
-		return fmt.Errorf("safety errors")
+	if err := p.verifySafety(); err != nil {
+		return err
 	}
 	program, err := lowering.LowerVM(p.modules)
 	if err != nil {
@@ -326,8 +335,8 @@ func runTools(path string, format toolschema.Format) error {
 		return err
 	}
 
-	if program.reportSafetyErrors() {
-		return fmt.Errorf("safety errors: tool surface is unsafe")
+	if err := program.verifySafety(); err != nil {
+		return fmt.Errorf("tool export: %w", err)
 	}
 
 	// Each tool declaration is an agent root, and the safety check above

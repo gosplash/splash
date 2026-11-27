@@ -13,6 +13,7 @@ Splash is an early statically typed language for backend and control-plane softw
 | Named-call redline checking and CLI artifact rejection | Uses resolved direct and qualified named calls. Unresolved indirect calls are rejected in agent- and sandbox-reachable code and in programs with approval gates. |
 | Declared caller–callee effect compatibility | Enforced for resolved direct and qualified calls visited by the type checker. Unknown labels in `needs` and `@sandbox` effect lists are rejected. |
 | Inferred effects and coverage | `splash effects` reports declared grants, modeled effects and coverage separately. The compiler propagates modeled effects through resolved calls, including recursion, and rejects known effects outside declared authority. The first external contract covers `std/ai.prompt`. |
+| Required policy coverage | `check`, `emit`, `build`, `tools`, and VM `run` report indeterminate verification when required source coverage is missing. The shared gate preserves known violations and leaves effect inspection available. |
 | Approval and classification | Implemented for selected checks and lowering forms. Request-bound approval and general classified-data flow enforcement are proposed. |
 | Semantic queries, verified artifact types and authority comparisons | Proposed. The CLI currently shares its initial analysis representation and existing safety checks on artifact paths. |
 | TTCS and cost evaluation | Experimental methodology. Comparative authoring results are pending. |

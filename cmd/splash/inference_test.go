@@ -161,8 +161,8 @@ fn caller() needs Net -> Int { return gate() }
 
 func TestEffectsPropagateUnsupportedSourceCoverage(t *testing.T) {
 	for _, tc := range []struct{ name, declarations, expression, reason string }{
-		{"parameter default", "fn leaf(n: Int = 1) needs DB.read -> Int { return n }", "leaf(1)", "parameter default was not analyzed"},
-		{"record default", "type Record { value: Int = 1 }\nfn leaf() needs DB.read -> Int { let r = Record { value: 1 }\nreturn r.value }", "leaf()", "record field default was not analyzed"},
+		{"parameter default", "fn leaf(n: Int = initial()) needs DB.read -> Int { return n }", "leaf(1)", "parameter default was not analyzed"},
+		{"record default", "type Record { value: Int = initial() }\nfn leaf() needs DB.read -> Int { let r = Record { value: 1 }\nreturn r.value }", "leaf()", "record field default was not analyzed"},
 		{"match expression", "fn leaf() needs DB.read -> Int { return match 1 { 1 => 1 } }", "leaf()", "unsupported expression"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

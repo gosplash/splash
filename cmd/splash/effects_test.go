@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"gosplash.dev/splash/internal/safety"
 	"gosplash.dev/splash/internal/toolschema"
 )
 
@@ -53,7 +55,7 @@ func TestQualifiedEffectCallRespectsSandbox(t *testing.T) {
 	const source = "module main\nuse catalog as rules\n%s\nfn main() needs DB.read { println(rules.lookup()) }\n"
 	path := writeSplashFile(t, dir, "main.splash", fmt.Sprintf(source, "@sandbox(deny: [DB.read])"))
 	output, diag, err := captureEffectCommand(t, func() error { return runCheck(path) })
-	if err == nil || err.Error() != "check failed" || output != "" ||
+	if !errors.Is(err, safety.ErrRejected) || output != "" ||
 		!strings.Contains(diag, `reachable function "lookup" uses denied effect DB.read`) {
 		t.Fatalf("want safety-stage rejection naming the imported callee, got %v, stdout %q, stderr %q", err, output, diag)
 	}
