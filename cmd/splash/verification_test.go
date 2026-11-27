@@ -150,6 +150,11 @@ agent fn status() -> Int {
 	if err != nil || !found || !strings.Contains(status, "unsupported expression") {
 		t.Fatalf("want the source gap for status, got %v:\n%s", err, output)
 	}
+	output, diagnostic, err := captureEffectCommand(t, func() error { return runEmit(path) })
+	if !errors.Is(err, safety.ErrIndeterminate) || output != "" ||
+		!strings.Contains(diagnostic, path+":3:") || !strings.Contains(diagnostic, "unsupported expression") {
+		t.Fatalf("want indeterminate emit at transitive source gap, got %v, %q:\n%s", err, output, diagnostic)
+	}
 }
 
 func TestExplicitRecordFieldDoesNotUseDefault(t *testing.T) {
