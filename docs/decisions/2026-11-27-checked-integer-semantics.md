@@ -21,7 +21,7 @@ Evaluate operands and call arguments from left to right. Numeric operations requ
 ### Consequences
 
 - VM-002 targets this contract. Existing Go lowering continues to use Go `int`.
-- Cross-backend parity is limited to operations whose values and intermediates fit both implementations and succeed under the Splash contract. Expand the shared domain after Go lowering implements equivalent checked behavior.
+- Cross-backend numeric parity covers admitted operations whose values and intermediates fit both implementations and succeed under the Splash contract. The transitional Go path can still promote mixed numeric constants. Expand the shared domain after Go lowering implements equivalent checked behavior and the frontend enforces the operand contract.
 - Integer width and error conventions for future embedding interfaces derive from this contract.
 
 ## More Information

@@ -645,6 +645,51 @@ func TestVM002IntegerLiteralsRespectSigned64BitRange(t *testing.T) {
 	}
 }
 
+func TestVM002ArithmeticPrecedence(t *testing.T) {
+	path := writeSplashFile(t, t.TempDir(), "precedence.splash", `module main
+fn main() {
+    println(1 + 2 * 3)
+    println(1 < 2 + 3)
+    println(9223372036854775807 + 1 * 0)
+    println(20 - 6 - 3)
+}
+`)
+	program, err := analyzeProgram(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = program.runVM(&out, vm.Limits{Instructions: 1000, Frames: 1})
+	const want = "7\ntrue\n9223372036854775807\n11\n"
+	if err != nil || out.String() != want {
+		t.Fatalf("VM returned %q, %v, want %q", out.String(), err, want)
+	}
+}
+
+func TestCheckUnaryNegationTypes(t *testing.T) {
+	for _, tc := range []struct {
+		kind, operand string
+		valid         bool
+	}{
+		{kind: "Int", operand: "42", valid: true},
+		{kind: "Float", operand: "1.5", valid: true},
+		{kind: "String", operand: `"hello"`},
+		{kind: "Bool", operand: "true"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			source := "module main\nfn main() { let value: " + tc.kind + " = -" + tc.operand + "\nprintln(value)\n}\n"
+			path := writeSplashFile(t, t.TempDir(), "negation.splash", source)
+			err := runCheck(path)
+			if tc.valid && err != nil {
+				t.Fatalf("negating %s should pass check: %v", tc.kind, err)
+			}
+			if !tc.valid && err == nil {
+				t.Fatalf("negating %s should fail check", tc.kind)
+			}
+		})
+	}
+}
+
 func TestVM002EvaluatesOperandsAndCallArgumentsLeftToRight(t *testing.T) {
 	path := writeSplashFile(t, t.TempDir(), "order.splash", `module main
 fn trace(n: Int) -> Int {

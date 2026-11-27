@@ -948,12 +948,13 @@ func (p *Parser) parseExpr(minPrec precedence) ast.Expr {
 			} else {
 				// Comparison: left < right
 				p.advance()
-				right := p.parseExpr(prec + 1)
+				right := p.parseExpr(prec)
 				left = &ast.BinaryExpr{Left: left, Op: cur.Kind, Right: right, Position: cur.Pos}
 			}
 		default:
 			p.advance()
-			right := p.parseExpr(prec + 1)
+			// The Pratt loop already stops at equal precedence.
+			right := p.parseExpr(prec)
 			left = &ast.BinaryExpr{Left: left, Op: cur.Kind, Right: right, Position: cur.Pos}
 		}
 	}

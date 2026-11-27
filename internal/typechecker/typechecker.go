@@ -514,7 +514,13 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 		operand := tc.checkExpr(e.Operand, env, typed, typeParamEnv)
 		result = types.Bool
 		if e.Op == token.MINUS {
-			result = operand
+			switch operand {
+			case types.Int, types.Float, types.Unknown:
+				result = operand
+			default:
+				tc.errorf(e.Pos(), "unary - requires Int or Float, got %s", operand.TypeName())
+				result = types.Unknown
+			}
 		}
 	case *ast.NullCoalesceExpr:
 		left := tc.checkExpr(e.Left, env, typed, typeParamEnv)
