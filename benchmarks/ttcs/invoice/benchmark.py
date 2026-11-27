@@ -42,15 +42,33 @@ def verify_output(actual, cases, condition, workflow):
         raise ValueError(f"{condition}/{workflow}: {mismatch}")
 
 
-def measure(condition, workflow, cases, splash, directory, warm_cache):
+def benchmark_environment(root):
+    # The fixture is offline and dependency-free. Isolate tool configuration
+    # that would otherwise change compiler invocations or cache placement.
+    prefixes = ("CARGO_", "RUSTC", "RUSTFLAGS", "__CARGO_", "GOCACHE", "GOFLAGS", "GOEXPERIMENT")
+    env = {key: value for key, value in os.environ.items() if not key.startswith(prefixes)}
+    env.update(CARGO_HOME=str(root / "cargo-home"), GOENV="off", GOTOOLCHAIN="local", GOWORK="off")
+    return env
+
+
+def measure(condition, workflow, cases, splash, directory, warm_cache, base_env):
     name, lane, source, release = condition
     build, execute = stage_candidate(lane, ORACLE / "testdata" / source, cases, splash, directory, release=release)
-    env = os.environ.copy()
+    env = base_env.copy()
     if lane == "rust":
-        env["CARGO_TARGET_DIR"] = str(directory / "target")
+        target = str(directory / "target")
+        env.update(CARGO_TARGET_DIR=target, CARGO_BUILD_BUILD_DIR=target)
         env["CARGO_INCREMENTAL"] = "0" if release else "1"
     elif lane in ("go", "splash"):
         env["GOCACHE"] = str(directory / "go-cache" if workflow == "cold" else warm_cache / lane)
+
+    if workflow == "unchanged":
+        if lane == "rust":
+            execute = ["cargo", "run", "--offline", "--locked", "--quiet", *(["--release"] if release else [])]
+            build = None
+        elif lane == "go":
+            execute = ["go", "run", "invoice.go", "probe.go"]
+            build = None
 
     if workflow in ("warm", "edit", "unchanged", "prebuilt"):
         if build is not None:
@@ -69,13 +87,6 @@ def measure(condition, workflow, cases, splash, directory, warm_cache):
         Path(execute[0]).unlink()
     if workflow == "prebuilt":
         build = None
-    if workflow == "unchanged":
-        if lane == "rust":
-            execute = ["cargo", "run", "--offline", "--locked", "--quiet", *(["--release"] if release else [])]
-            build = None
-        elif lane == "go":
-            execute = ["go", "run", "invoice.go", "probe.go"]
-            build = None
 
     start = perf_counter_ns()
     if build is not None:
@@ -124,7 +135,8 @@ def main(argv=None):
         cases = read_cases(cases_path)
         with tempfile.TemporaryDirectory(prefix="ttcs-invoice-benchmark-") as temp:
             root = Path(temp)
-            versions = {tool: run(command, root, 30).strip() for tool, command in {
+            base_env = benchmark_environment(root)
+            versions = {tool: run(command, root, 30, env=base_env).strip() for tool, command in {
                 "rustc": ["rustc", "--version", "--verbose"],
                 "cargo": ["cargo", "--version", "--verbose"],
                 "go": ["go", "version"],
@@ -135,6 +147,7 @@ def main(argv=None):
             if recorded_revision and not recorded_revision.startswith(args.splash_revision):
                 raise ValueError("--splash-revision disagrees with the binary's recorded revision")
             versions["splash_revision"] = recorded_revision or args.splash_revision
+            versions["splash_revision_source"] = "Go build metadata" if recorded_revision else "caller-supplied"
             versions["splash_sha256"] = hashlib.sha256(args.splash.read_bytes()).hexdigest()
             if (REPO / ".git").exists():
                 versions["benchmark_revision"] = run(["git", "rev-parse", "HEAD"], REPO, 30).strip()
@@ -144,11 +157,12 @@ def main(argv=None):
 
             def run_sample(condition, workflow):
                 with tempfile.TemporaryDirectory(dir=root) as temp_workspace:
-                    return measure(condition, workflow, cases, args.splash, Path(temp_workspace), warm_cache)
+                    return measure(condition, workflow, cases, args.splash, Path(temp_workspace), warm_cache, base_env)
 
             # Warm the toolchain and host once. Cold samples still get new compiler caches.
             for condition in CONDITIONS:
                 run_sample(condition, "warm")
+                run_sample(condition, "static")
             for workflow in WORKFLOWS:
                 applicable = tuple(condition for condition in CONDITIONS
                                    if workflow != "prebuilt" or condition[0] != "splash-vm")
@@ -171,10 +185,11 @@ def main(argv=None):
             "cold": "fresh GOCACHE or Cargo target directory; inherited OS caches and preinstalled Rust standard library",
             "warm": "same source and workspace after preparation; final native output removed, intermediates retained",
             "edit": "same prepared workspace and caches; source replaced with quotient-and-remainder rounding",
-            "unchanged": "same prepared workspace, source and caches; language-appropriate rerun command",
+            "unchanged": "same workspace, source and caches; prime and time the same language-appropriate rerun command",
             "prebuilt": "previously built and launched artifact; fresh process",
             "static": "fresh workspace; warm shared per-lane Go cache or fresh Cargo target directory",
         },
+        "tool_configuration": "isolated Cargo home, target and build directories; compiler/profile overrides cleared; Go persisted config and external cache disabled; tool path and OS settings inherited",
         "python": platform.python_version(),
         "versions": versions,
         "cases": len(cases),

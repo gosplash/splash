@@ -29,10 +29,12 @@ Each case contains a name, input integers in quantity/unit-cents/discount-percen
 Run on one host with Python 3.9+, Go, Rust, and Cargo on PATH. Build the Splash frontend at the pinned baseline in a separate checkout. Run the comparator from this checkout.
 
 ```sh
-baseline=$(mktemp -d)
-git archive e15ec6d | tar -x -C "$baseline"
-(cd "$baseline" && go build -o "$baseline/splash" ./cmd/splash)
-python3 -B benchmarks/ttcs/invoice/benchmark.py --splash "$baseline/splash" \
+scratch=$(mktemp -d)
+baseline="$scratch/source"
+git clone --quiet --no-checkout . "$baseline"
+git -C "$baseline" checkout --quiet --detach e15ec6d
+(cd "$baseline" && go build -buildvcs=true -o "$scratch/splash" ./cmd/splash)
+python3 -B benchmarks/ttcs/invoice/benchmark.py --splash "$scratch/splash" \
   --splash-revision e15ec6de9706c5c084d577c43bace12361566800 --samples 12 --hardware 'Apple M5'
 ```
 
@@ -44,12 +46,12 @@ The [VM-004 baseline](results/vm-004-apple-m5.json) measured one startup-inclusi
 | Cold build-to-result | Fresh workspace and empty `GOCACHE` or Cargo target directory. Rust and Go build then launch a fresh artifact. Splash through Go runs `splash build` then launches its artifact. Splash VM runs `splash run probe.splash --backend vm` in one process. Rust uses the standard library shipped with its toolchain. The Go cold path may compile its standard library. OS caches remain inherited. |
 | Warm build-to-result | Prepare and verify the reference in the same workspace. Remove the native output file before timing while retaining build intermediates and caches. Run the same build and launch commands as in the cold path. Cargo may restore an artifact from its existing target state. |
 | Incremental edit-to-result | Prepare and verify the reference, then replace the candidate in the same workspace. The edit uses quotient-and-remainder rounding instead of an offset and division while preserving the nine expected results. Time build and launch immediately after the edit. The source file write is outside timing. The Rust dev profile reuses incremental compiler state. Go reuses its build cache, and the Splash frontend reanalyzes the program. |
-| Unchanged-source execution | Prepare and verify the reference. Preserve the workspace, source, compiler caches, and artifact. Time `cargo run` for Rust, `go run` for Go, `splash build` and launch for the Go-backed Splash path, and `splash run` for the VM. These are developer rerun commands, each with its own validation or build behavior. |
+| Unchanged-source execution | Prime each workspace with the same command sequence used for timing and verify the output. Preserve its source, compiler caches, and any output artifact. Use `cargo run` for Rust, `go run` for Go, `splash build` and launch for the Go-backed Splash path, and `splash run` for the VM. These are developer rerun commands, each with its own validation or build behavior. |
 | Previously compiled native binary | Prepare, build, and launch once outside timing. Time another direct launch of the already-built executable. The VM has no prebuilt artifact in this comparison. |
 
 The primary Rust condition uses Cargo's normal dev profile with incremental compilation enabled. A separate Rust release condition uses Cargo's optimized release profile with incremental compilation disabled. See the [Cargo profiles reference](https://doc.rust-lang.org/cargo/reference/profiles.html) and [`cargo check` behavior](https://doc.rust-lang.org/cargo/commands/cargo-check.html).
 
-Timing includes process launch, captured output, and exit. Staging, preparation, oracle comparison, and the Splash compiler build are outside timing. The runner rotates condition order within each workflow and makes an unreported warm-up pass. Each executable sample and preparation run must pass the unchanged oracle. A failure aborts the report. The runner preserves each timing, records versions and the oracle digest, and reports median, nearest-rank p95, minimum, maximum, and sample count. With 12 samples the p95 is the maximum.
+Timing includes process launch, captured output, and exit. Staging, preparation, oracle comparison, and the Splash compiler build are outside timing. The runner rotates condition order within each workflow and primes warm build and static checks outside timing. It uses an isolated Cargo home and isolated compiler caches. It clears Cargo compiler and profile overrides and disables persisted Go settings and external Go cache delegation. Tool discovery via PATH and OS or SDK settings are inherited. Each executable sample and preparation run must pass the unchanged oracle. A failure aborts the report. The runner preserves each timing, records versions and the oracle digest, and reports median, nearest-rank p95, minimum, maximum, and sample count. With 12 samples the p95 is the maximum.
 
 The VM repeats analysis, lowering, validation, and execution for each timed run. Separate build and launch phase timings are available for workflows that explicitly split those commands. In-process native throughput is outside this comparison. It uses one small workload, inherited OS caches, and a prebuilt Splash compiler, with tool-specific cold and warm cache behavior. [The authoring protocol](../../../docs/design/time-to-correct-software.md) defines a future matched Rust agent arm with its own outcome measures.
 
