@@ -216,7 +216,7 @@ approve fn run_billing_agent(
 
 // ─── Entry Point ──────────────────────────────────────
 
-fn main() {
+fn main() needs DB.read, DB.write, Net, AI {
   // Fraud path: read-only, AI-powered risk assessment
   let insight = run_fraud_agent(42)
   println(insight.recommendation)

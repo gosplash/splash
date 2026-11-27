@@ -164,7 +164,7 @@ redline fn export_all_biometrics(user_id: Int) needs DB.read, FS {
 
 // ─── Entry Point ──────────────────────────────────────
 
-fn main() {
+fn main() needs DB.read, AI {
   let insight = ask_health_coach(1, "Should I train hard today? I feel tired but my numbers look good.")
   println(insight.summary)
 }

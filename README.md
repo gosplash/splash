@@ -11,7 +11,7 @@ Splash is an early statically typed language for backend and control-plane softw
 | Native Go backend for the documented pilot subset | Implemented and integration-tested on the reference examples. [Supported subset](docs/design/supported-subset.md) |
 | Experimental VM execution | `splash run <file.splash> --backend vm` runs typed business logic from a standalone Splash binary. [VM subset and limits](docs/design/splash-ir-and-vm.md#public-vm-execution) |
 | Named-call redline checking and CLI artifact rejection | Uses resolved direct and qualified named calls. Unresolved indirect calls are rejected in agent- and sandbox-reachable code and in programs with approval gates. |
-| Declared caller–callee effect compatibility | Specified. The current compiler records and reports declared effects. General call-site effect checking and conservative inference are planned. |
+| Declared caller–callee effect compatibility | Enforced for resolved direct and qualified calls visited by the type checker. Unknown labels in `needs` and `@sandbox` effect lists are rejected. Inferred effects and coverage for indirect calls remain planned. |
 | Approval and classification | Implemented for selected checks and lowering forms. Request-bound approval and general classified-data flow enforcement are proposed. |
 | Semantic queries, verified artifact types and authority comparisons | Proposed. The CLI currently shares its initial analysis representation and existing safety checks on artifact paths. |
 | TTCS and cost evaluation | Experimental methodology. Comparative authoring results are pending. |
@@ -113,7 +113,7 @@ The CLI shares one analysis entry point. `splash check`, `splash run`, `splash e
 
 ## Effect System
 
-Effects are declared in function signatures with `needs`. The specification requires callers to cover the callee's declared effects. The current compiler uses declared labels for graph-based policy checks, with general call-site enforcement still pending.
+Effects are declared in function signatures with `needs`. A resolved caller must cover the callee’s declared capabilities, including unused grants. The compiler also uses declared labels for graph-based policy checks. Conservative inference from function bodies remains planned.
 
 ```splash
 fn fetch(id: Int) needs DB.read -> Report { ... }

@@ -2,6 +2,7 @@
 package safety_test
 
 import (
+	"strings"
 	"testing"
 
 	"gosplash.dev/splash/internal/callgraph"
@@ -10,6 +11,29 @@ import (
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/safety"
 )
+
+func TestSandboxRejectsUnknownEffectLabels(t *testing.T) {
+	for _, policy := range []string{"allow", "deny"} {
+		diags := check("module sample\n@sandbox(" + policy + ": [DB.admn])\nfn entry() {}\n")
+		if len(diags) != 1 || diags[0].Pos.Line != 2 || !strings.Contains(diags[0].Message, `unknown effect "DB.admn"`) {
+			t.Fatalf("want unknown %s effect at the annotation, got %v", policy, diags)
+		}
+	}
+}
+
+func TestSandboxDeniesDeclaredAdminEffect(t *testing.T) {
+	diags := check("module sample\n@sandbox(deny: [DB.admin])\nfn entry() needs DB.admin {}\n")
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "denied effect DB.admin") {
+		t.Fatalf("want denied DB.admin, got %v", diags)
+	}
+}
+
+func TestReadOnlyContainmentDeniesDatabaseAdministration(t *testing.T) {
+	diags := check("@containment(agent: \"read_only\")\nmodule sample\nagent fn entry() needs DB.admin {}\n")
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "has DB.admin") {
+		t.Fatalf("want DB.admin rejection under read-only containment, got %v", diags)
+	}
+}
 
 func check(src string) []diagnostic.Diagnostic {
 	toks := lexer.New("test.splash", src).Tokenize()

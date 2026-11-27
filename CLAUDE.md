@@ -26,7 +26,7 @@ A compiler for the Splash language, written in Go. Splash transpiles to Go. The 
 Tokenizes `.splash` source. Do not add language semantics here. If a new token kind is needed, add it to `internal/token`.
 
 ### `internal/parser`
-Pratt parser. Produces `*ast.File` and validates that integer literals fit the AST's `int64` representation. Put operand typing in `internal/typechecker` and effect enforcement in `internal/safety`.
+Pratt parser. Produces `*ast.File` and validates that integer literals fit the AST's `int64` representation. Put operand typing and resolved call contract checks in `internal/typechecker`. Put graph-based policy checks in `internal/safety`.
 
 ### `internal/ast`
 AST node types and annotation kinds. `annotation.go` has `AnnotationKind` constants and the string→kind lookup map. When adding a new annotation, add the constant and the string mapping — that's all. No logic here.
@@ -129,9 +129,7 @@ Tests check that generated Go source contains expected substrings. Use `contains
 
 ## Effect Vocabulary (complete list)
 
-`DB.read`, `DB.write`, `DB.admin`, `DB` (expands to read+write), `Net`, `AI`, `Agent`, `FS`, `Exec`, `Cache`, `Secrets`, `Secrets.read`, `Secrets.write`, `Queue`, `Metric`, `Store`, `Clock`
-
-Unknown effect names in `needs` clauses are caught by the type checker. Unknown names in `@sandbox` allow/deny lists are silently ignored by `effects.Parse()` (the type checker catches them in `needs` context; sandbox lists share the same parser).
+Use the [specified vocabulary](SPEC.md#52-effect-vocabulary). The type checker validates `needs` and the safety checker validates `@sandbox` lists using `effects.Lookup`. Keep graph summaries and diagnostics on the same vocabulary.
 
 ---
 

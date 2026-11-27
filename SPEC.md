@@ -386,9 +386,11 @@ Effects after `needs` are comma-separated. A function with no `needs` clause req
 
 `Agent` is structural: it marks an entry point for call graph analysis and is not subject to `@sandbox` allow/deny constraints.
 
+`DB` is shorthand for `DB.read, DB.write`. `DB.admin` is a separate effect. Unknown labels in `needs` and `@sandbox` effect lists are errors.
+
 ### 5.3 Effect Checking
 
-The type checker errors if a call site's declared effects do not cover the callee's required effects:
+For a resolved direct or qualified call, the type checker requires the caller's declared capabilities to cover the callee's declared capabilities. This also applies to grants the callee's current body leaves unused. The structural `Agent` marker is excluded from this comparison.
 
 ```splash
 fn bad() -> String {
