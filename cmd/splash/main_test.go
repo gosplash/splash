@@ -542,10 +542,9 @@ func TestVM001RejectsUnsupportedSourceBeforeOutput(t *testing.T) {
 	}
 }
 
-func TestVM001ReportsUnsupportedImportLocation(t *testing.T) {
+func TestVMReportsUnsupportedHostImportLocation(t *testing.T) {
 	dir := t.TempDir()
-	writeSplashFile(t, dir, "library.splash", "module library\nfn other() {}\n")
-	path := writeSplashFile(t, dir, "main.splash", "module main\nuse library\nfn main() {}\n")
+	path := writeSplashFile(t, dir, "main.splash", "module main\nuse std/ai\nfn main() {}\n")
 	program, err := analyzeProgram(path)
 	if err != nil {
 		t.Fatal(err)

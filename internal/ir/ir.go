@@ -9,13 +9,14 @@ import (
 	"gosplash.dev/splash/internal/token"
 )
 
-type Kind uint8
+type Kind uint32
 
 const (
 	Void Kind = iota + 1
 	String
 	Int
 	Bool
+	RecordBase // Record kinds start here and index the program's record table.
 )
 
 func (kind Kind) String() string {
@@ -29,13 +30,47 @@ func (kind Kind) String() string {
 	case Bool:
 		return "Bool"
 	default:
+		if kind >= RecordBase {
+			return fmt.Sprintf("record %d", kind-RecordBase)
+		}
 		return fmt.Sprintf("invalid kind %d", kind)
 	}
 }
 
 type Program struct {
+	Records   []Record
 	Functions []Function
 	Entry     int
+}
+
+// Record holds declaration-order field types. Its table index is its nominal
+// identity within a program, even when two declarations have the same shape.
+type Record struct {
+	Fields []Kind
+}
+
+func RecordFor(records []Record, kind Kind) (Record, bool) {
+	if kind < RecordBase || uint64(kind-RecordBase) >= uint64(len(records)) {
+		return Record{}, false
+	}
+	return records[kind-RecordBase], true
+}
+
+func CloneRecords(records []Record) []Record {
+	cloned := slices.Clone(records)
+	for i := range cloned {
+		cloned[i].Fields = slices.Clone(records[i].Fields)
+	}
+	return cloned
+}
+
+func IsPrimitiveValue(kind Kind) bool {
+	return kind == Int || kind == Bool || kind == String
+}
+
+func IsValue(records []Record, kind Kind) bool {
+	_, record := RecordFor(records, kind)
+	return record || IsPrimitiveValue(kind)
 }
 
 type Function struct {
@@ -72,11 +107,13 @@ const (
 	Not
 	Call
 	Print
+	MakeRecord
+	GetField
 )
 
 // Instruction defines a fresh temporary in Dest when Type is non-void.
-// Args reads temporaries in this block in evaluation order. Index selects a
-// local slot for loads and stores, or a function for calls.
+// Args reads temporaries in this block. MakeRecord takes them in declaration
+// order after the initializers have run. Index names a local, function or field.
 type Instruction struct {
 	Op     Op
 	Type   Kind
@@ -125,6 +162,13 @@ func invalid(source token.Position, format string, args ...any) error {
 // Validate checks structure and types everywhere, and definite local
 // initialization on every reachable control-flow path.
 func Validate(program Program) error {
+	for index, record := range program.Records {
+		for field, kind := range record.Fields {
+			if !IsPrimitiveValue(kind) {
+				return invalid(token.Position{}, "record %d field %d requires a primitive value type", index, field)
+			}
+		}
+	}
 	if program.Entry < 0 || program.Entry >= len(program.Functions) {
 		return invalid(token.Position{}, "invalid entry function %d", program.Entry)
 	}
@@ -133,7 +177,7 @@ func Validate(program Program) error {
 		return invalid(entry.Source, "entry function must take no parameters and return Void")
 	}
 	for _, function := range program.Functions {
-		if function.Result != Void && !isValue(function.Result) {
+		if function.Result != Void && !IsValue(program.Records, function.Result) {
 			return invalid(function.Source, "invalid function result type %s", function.Result)
 		}
 		if len(function.Params) > len(function.Locals) {
@@ -143,7 +187,7 @@ func Validate(program Program) error {
 			if slot < len(function.Params) && kind != function.Params[slot] {
 				return invalid(function.Source, "parameter %d does not match its local slot", slot)
 			}
-			if !isValue(kind) {
+			if !IsValue(program.Records, kind) {
 				return invalid(function.Source, "invalid local type %s in slot %d", kind, slot)
 			}
 		}
@@ -202,7 +246,7 @@ func validateInstruction(program Program, function Function, inst Instruction, o
 	}
 	switch inst.Op {
 	case Const:
-		if !isValue(inst.Type) || len(operands) != 0 {
+		if !IsPrimitiveValue(inst.Type) || len(operands) != 0 {
 			return invalid(inst.Source, "constant requires a value type and no operands")
 		}
 		if inst.Type == String && !utf8.ValidString(inst.Text) {
@@ -238,17 +282,28 @@ func validateInstruction(program Program, function Function, inst Instruction, o
 		callee := program.Functions[inst.Index]
 		return expect(callee.Result, callee.Params...)
 	case Print:
-		if inst.Type != Void || len(operands) != 1 || !isValue(operands[0]) {
+		if inst.Type != Void || len(operands) != 1 || !IsPrimitiveValue(operands[0]) {
 			return invalid(inst.Source, "print requires one value operand and a Void result")
+		}
+		return nil
+	case MakeRecord:
+		record, ok := RecordFor(program.Records, inst.Type)
+		if !ok || !slices.Equal(operands, record.Fields) {
+			return invalid(inst.Source, "record construction requires the declared field types")
+		}
+		return nil
+	case GetField:
+		if len(operands) != 1 {
+			return invalid(inst.Source, "field projection requires one record")
+		}
+		record, ok := RecordFor(program.Records, operands[0])
+		if !ok || inst.Index < 0 || inst.Index >= len(record.Fields) || inst.Type != record.Fields[inst.Index] {
+			return invalid(inst.Source, "invalid field projection")
 		}
 		return nil
 	default:
 		return invalid(inst.Source, "unknown operation %d", inst.Op)
 	}
-}
-
-func isValue(kind Kind) bool {
-	return kind == Int || kind == Bool || kind == String
 }
 
 func validateTerminator(function Function, end Terminator, temporaries map[int]Kind) error {

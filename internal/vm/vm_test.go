@@ -62,6 +62,46 @@ func TestInvokeRequiresUTF8InStringArguments(t *testing.T) {
 	requireError(t, err, InvalidInvocation, 0, 0, pos)
 }
 
+func TestRecordValuesAreImmutableAndRuntimeOwned(t *testing.T) {
+	kind := ir.RecordBase
+	program := bytecode.Program{Entry: -1, Records: []ir.Record{{Fields: []ir.Kind{ir.Int}}, {Fields: []ir.Kind{ir.Int}}}, Functions: []bytecode.Function{
+		{Result: kind, Code: []bytecode.Instruction{{Op: bytecode.Const, Kind: ir.Int, Int: 42}, {Op: bytecode.MakeRecord, Kind: kind}, {Op: bytecode.Return}}},
+		{Params: []ir.Kind{kind}, Locals: []ir.Kind{kind}, Result: ir.Int, Code: []bytecode.Instruction{{Op: bytecode.Load}, {Op: bytecode.GetField, Kind: kind}, {Op: bytecode.Return}}},
+		{Params: []ir.Kind{kind + 1}, Locals: []ir.Kind{kind + 1}, Result: ir.Void, Code: []bytecode.Instruction{{Op: bytecode.Return}}},
+		{Params: []ir.Kind{ir.Int}, Locals: []ir.Kind{ir.Int}, Result: ir.Void, Code: []bytecode.Instruction{{Op: bytecode.Return}}},
+	}}
+	makeRuntime := func() *Runtime {
+		t.Helper()
+		runtime, err := New(program, nil, Limits{Instructions: 20, Frames: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return runtime
+	}
+	first, other := makeRuntime(), makeRuntime()
+	program.Records[0].Fields[0] = ir.Bool
+	record, err := first.Invoke(0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy := record
+	copy.Int = 99
+	got, err := first.Invoke(1, []Value{copy})
+	if err != nil || got != (Value{Kind: ir.Int, Int: 42}) {
+		t.Fatalf("projection returned %v, %v", got, err)
+	}
+	_, err = other.Invoke(1, []Value{record})
+	requireError(t, err, InvalidInvocation, 0, 0, token.Position{})
+	_, err = first.Invoke(1, []Value{{Kind: kind}})
+	requireError(t, err, InvalidInvocation, 0, 0, token.Position{})
+	copy.Kind = kind + 1
+	_, err = first.Invoke(2, []Value{copy})
+	requireError(t, err, InvalidInvocation, 0, 0, token.Position{})
+	copy.Kind = ir.Int
+	_, err = first.Invoke(3, []Value{copy})
+	requireError(t, err, InvalidInvocation, 0, 0, token.Position{})
+}
+
 func TestDispatchBudgetIsGlobalAcrossFrames(t *testing.T) {
 	callSite := token.Position{File: "recursion.splash", Line: 3, Column: 5}
 	program := bytecode.Program{Functions: []bytecode.Function{

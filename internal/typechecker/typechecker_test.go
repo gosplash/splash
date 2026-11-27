@@ -2,12 +2,15 @@ package typechecker_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
+	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/typechecker"
+	"gosplash.dev/splash/internal/types"
 )
 
 func check(src string) []diagnostic.Diagnostic {
@@ -388,9 +391,14 @@ fn debug(p: Profile) {
 // checkWithImports type-checks src with an in-memory filesystem for imports.
 // files maps module paths (e.g. "billing") to their Splash source content.
 func checkWithImports(mainSrc string, files map[string]string) []diagnostic.Diagnostic {
+	_, _, diags := checkTypedWithImports(mainSrc, files)
+	return diags
+}
+
+func checkTypedWithImports(mainSrc string, files map[string]string) (*typechecker.TypedFile, []*typechecker.TypedFile, []diagnostic.Diagnostic) {
 	toks := lexer.New("test.splash", mainSrc).Tokenize()
 	p := parser.New("test.splash", toks)
-	file, _ := p.ParseFile()
+	file, parseDiags := p.ParseFile()
 	tc := typechecker.New()
 	tc.SetFileLoader(".", func(path string) ([]byte, error) {
 		content, ok := files[path]
@@ -399,8 +407,8 @@ func checkWithImports(mainSrc string, files map[string]string) []diagnostic.Diag
 		}
 		return []byte(content), nil
 	})
-	_, diags := tc.Check(file)
-	return diags
+	typed, diags := tc.Check(file)
+	return typed, tc.LoadedTypedFiles(), append(parseDiags, diags...)
 }
 
 func TestUseDecl_ImportedTypeAvailable(t *testing.T) {
@@ -492,6 +500,120 @@ type Charge {
 	})
 	if hasError(diags) {
 		t.Errorf("expected no errors after namespaced type access, got: %v", diags)
+	}
+}
+
+func TestUseDecl_RetainsOwningRecordTypes(t *testing.T) {
+	main := `
+module app
+use primary as first
+use secondary as second
+use primary as again
+fn sample(other: second.Entry) -> first.Entry {
+    let entry: first.Entry = again.make()
+    return entry
+}
+`
+	typed, imports, diags := checkTypedWithImports(main, map[string]string{
+		"primary.splash": `
+module primary
+fn make() -> Entry { return Entry { count: 1 } }
+type Entry { count: Int }
+`,
+		"secondary.splash": `
+module secondary
+type Entry { count: Int }
+`,
+	})
+	if hasError(diags) {
+		t.Fatalf("unexpected errors: %v", diags)
+	}
+	if len(imports) != 2 {
+		t.Fatalf("loaded %d modules, want 2", len(imports))
+	}
+	first := imports[0].File.Declarations[1].(*ast.TypeDecl)
+	second := imports[1].File.Declarations[0].(*ast.TypeDecl)
+	makeEntry := imports[0].File.Declarations[0].(*ast.FunctionDecl)
+	fn := typed.File.Declarations[0].(*ast.FunctionDecl)
+	let := fn.Body.Stmts[0].(*ast.LetStmt)
+	if field := imports[0].Types[first.Fields[0].Type]; field != types.Int {
+		t.Errorf("first.Entry.count type = %v, want Int", field)
+	}
+	for _, fact := range []struct {
+		name string
+		got  types.Type
+		want *ast.TypeDecl
+	}{
+		{"parameter", typed.Types[fn.Params[0].Type], second},
+		{"return", typed.Types[fn.ReturnType], first},
+		{"let", typed.Types[let.Type], first},
+		{"call result", typed.Types[let.Value], first},
+		{"local literal", imports[0].Types[makeEntry.Body.Stmts[0].(*ast.ReturnStmt).Value], first},
+	} {
+		if named, ok := fact.got.(*types.NamedType); !ok || named.Declaration != fact.want {
+			t.Errorf("%s type = %v, want record declared at %v", fact.name, fact.got, fact.want.Pos())
+		}
+	}
+}
+
+func TestUseDecl_ProjectsRecordFieldsFromDefiningModule(t *testing.T) {
+	main := `
+module app
+use primary as first
+use secondary as second
+fn sample() -> Int { return first.make().detail.count }
+`
+	typed, _, diags := checkTypedWithImports(main, map[string]string{
+		"primary.splash": `
+module primary
+expose make
+type Detail { count: Int }
+type Entry { detail: Detail }
+fn make() -> Entry { return Entry { detail: Detail { count: 1 } } }
+`,
+		"secondary.splash": `
+module secondary
+type Entry { detail: String }
+type Detail { count: String }
+`,
+	})
+	if hasError(diags) {
+		t.Fatalf("unexpected errors: %v", diags)
+	}
+	fn := typed.File.Declarations[0].(*ast.FunctionDecl)
+	projection := fn.Body.Stmts[0].(*ast.ReturnStmt).Value
+	if got := typed.Types[projection]; got != types.Int {
+		t.Errorf("projected type = %v, want Int", got)
+	}
+}
+
+func TestUseDecl_RejectsSameShapedRecordSubstitution(t *testing.T) {
+	files := map[string]string{
+		"primary.splash": `
+module primary
+fn accept(value: Entry) -> Int { return value.count }
+type Entry { count: Int }
+`,
+		"secondary.splash": `
+module secondary
+type Entry { count: Int }
+`,
+	}
+	const imports = "\nmodule app\nuse primary as first\nuse secondary as second\n"
+	for _, test := range []struct{ name, body, want string }{
+		{"return", `fn sample() -> first.Entry { return second.Entry { count: 1 } }`, "cannot return"},
+		{"let", `fn sample() { let item: first.Entry = second.Entry { count: 1 } }`, "cannot assign"},
+		{"argument", `fn sample() -> Int { return first.accept(second.Entry { count: 1 }) }`, "argument"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diags := checkWithImports(imports+test.body+"\n", files)
+			for _, diag := range diags {
+				if diag.Severity == diagnostic.Error && strings.Contains(diag.Message, test.want) {
+					return
+				}
+			}
+			t.Errorf("expected %q error, got %v", test.want, diags)
+		})
 	}
 }
 
@@ -606,5 +728,71 @@ fn use_it(p: Point) -> String {
 	diags := check(src)
 	if !hasError(diags) {
 		t.Error("expected error: NonExistentConstraint is not declared and not built-in")
+	}
+}
+
+func TestDuplicateRecordDeclaration(t *testing.T) {
+	_, _, diags := checkTypedWithImports(`module app
+type Entry { count: Int }
+type Entry { count: Int }
+`, nil)
+	for _, diag := range diags {
+		if diag.Severity == diagnostic.Error && strings.Contains(diag.Message, `duplicate type "Entry"`) {
+			if diag.Pos.File != "test.splash" || diag.Pos.Line != 3 || diag.Pos.Column < 1 {
+				t.Errorf("duplicate declaration reported at %v, want test.splash:3", diag.Pos)
+			}
+			return
+		}
+	}
+	t.Errorf("expected a duplicate type declaration error, got %v", diags)
+}
+
+func TestUseDecl_RejectsAmbiguousRecordNames(t *testing.T) {
+	files := map[string]string{
+		"primary.splash":   "module primary\ntype Entry { count: Int }\n",
+		"secondary.splash": "module secondary\ntype Entry { count: Int }\n",
+	}
+	for _, test := range []struct{ name, aliases, body, want string }{
+		{"plain annotation", "use primary as first\nuse secondary as second\n", `fn read(value: Entry) {}`, `"Entry"`},
+		{"qualified annotation", "use primary as shared\nuse secondary as shared\n", `fn read(value: shared.Entry) {}`, `"shared.Entry"`},
+		{"qualified literal", "use primary as shared\nuse secondary as shared\n", `fn read() { let value = shared.Entry { count: 1 } }`, `"shared.Entry"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			diags := checkWithImports("module app\n"+test.aliases+test.body+"\n", files)
+			for _, diag := range diags {
+				if diag.Severity == diagnostic.Error && strings.Contains(diag.Message, "ambiguous imported name "+test.want) {
+					if diag.Pos.File != "test.splash" || diag.Pos.Line != 4 || diag.Pos.Column < 1 {
+						t.Errorf("ambiguous name reported at %v, want test.splash:4", diag.Pos)
+					}
+					return
+				}
+			}
+			t.Errorf("expected an ambiguity error for %s, got %v", test.want, diags)
+		})
+	}
+}
+
+func TestGenericParameterShadowsRecordTypeInCalls(t *testing.T) {
+	diags := check(`module app
+type T { n: Int }
+fn accept<T>(value: T) {}
+fn sample() { accept("text") }
+`)
+	if hasError(diags) {
+		t.Errorf("unexpected errors for generic argument: %v", diags)
+	}
+}
+
+func TestImportedGenericReturnDoesNotResolveToPrivateRecord(t *testing.T) {
+	diags := checkWithImports(`module app
+use library as imported
+fn sample() -> Int { return imported.identity(1) }
+`, map[string]string{"library.splash": `module library
+expose identity
+type T { n: Int }
+fn identity<T>(value: T) -> T { return value }
+`})
+	if hasError(diags) {
+		t.Fatalf("generic result should not bind to the private record: %v", diags)
 	}
 }

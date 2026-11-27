@@ -49,10 +49,18 @@ type Limits struct {
 }
 
 type Value struct {
-	Kind ir.Kind
-	Int  int64
-	Bool bool
-	Text string
+	Kind   ir.Kind
+	Int    int64
+	Bool   bool
+	Text   string
+	record *recordValue
+}
+
+// Records own their fields and share only an immutable handle when copied.
+type recordValue struct {
+	owner  *Runtime
+	kind   ir.Kind
+	fields []Value
 }
 
 // Runtime owns a validated program snapshot and the host-provided output
@@ -64,7 +72,7 @@ type Runtime struct {
 }
 
 func New(program bytecode.Program, output io.Writer, limits Limits) (*Runtime, error) {
-	snapshot := bytecode.Program{Entry: program.Entry, Functions: slices.Clone(program.Functions)}
+	snapshot := bytecode.Program{Entry: program.Entry, Records: ir.CloneRecords(program.Records), Functions: slices.Clone(program.Functions)}
 	for index := range snapshot.Functions {
 		fn := &snapshot.Functions[index]
 		fn.Params = slices.Clone(fn.Params)
@@ -121,6 +129,10 @@ func (runtime *Runtime) Invoke(functionID int, args []Value) (Value, error) {
 		}
 		if argument.Kind == ir.String && !utf8.ValidString(argument.Text) {
 			return Value{}, &Error{Code: InvalidInvocation, Source: fn.Source, Detail: "string argument must be valid UTF-8"}
+		}
+		if (argument.record != nil || argument.Kind >= ir.RecordBase) &&
+			(argument.record == nil || argument.record.owner != runtime || argument.record.kind != argument.Kind) {
+			return Value{}, &Error{Code: InvalidInvocation, Source: fn.Source, Detail: "record argument requires a value of this runtime and record type"}
 		}
 	}
 	if runtime.limits.Frames < 1 {
@@ -184,6 +196,16 @@ func (runtime *Runtime) Invoke(functionID int, args []Value) (Value, error) {
 			if written != len(line) {
 				return fail(OutputError, io.ErrShortWrite.Error())
 			}
+		case bytecode.MakeRecord:
+			record, _ := ir.RecordFor(runtime.program.Records, instruction.Kind)
+			base := len(current.stack) - len(record.Fields)
+			fields := slices.Clone(current.stack[base:])
+			clear(current.stack[base:])
+			value := Value{Kind: instruction.Kind, record: &recordValue{owner: runtime, kind: instruction.Kind, fields: fields}}
+			current.stack = append(current.stack[:base], value)
+		case bytecode.GetField:
+			value := current.pop().record.fields[instruction.Index]
+			current.stack = append(current.stack, value)
 		case bytecode.Jump:
 			current.pc = instruction.Index
 		case bytecode.JumpIfFalse:
