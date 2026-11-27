@@ -569,7 +569,7 @@ Deliverable: a type-checker that accepts or rejects Splash programs and produces
 
 ### Phase 2: Effect System and Go Codegen
 
-- Effect declaration and propagation (`needs` checking at every call site)
+- Declared effect compatibility (`needs` checking on resolved direct and qualified calls)
 - Call graph construction and agent-context reachability analysis
 - `redline fn` enforcement via call graph tracing
 - `@containment` module boundary enforcement

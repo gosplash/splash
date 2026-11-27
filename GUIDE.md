@@ -26,7 +26,7 @@ Splash is intentionally narrow. That narrowness is part of the value proposition
 
 Splash programs have two concerns: **what they do** and **what they're allowed to do**. Most languages only let you express the first. Splash lets you express both, and the compiler enforces the contract.
 
-Effects are declarations, not implementations. When you write `needs DB.read`, you are not causing a database read — you are declaring that this function requires the database-read capability to be in scope. The compiler enforces this requirement across the entire call graph. The effect tells readers exactly what this code touches.
+Effects are declarations, not implementations. When you write `needs DB.read`, you are not causing a database read — you are declaring that this function requires the database-read capability to be in scope. The type checker enforces the declared requirement at resolved direct and qualified calls. The effect tells readers which capability this function is permitted to use.
 
 Safety annotations (`redline fn`, `approve fn`, `@sandbox`, `@containment`) are also declarations. They describe invariants the compiler enforces over the call graph. You write them once; the compiler checks them forever, on every build.
 

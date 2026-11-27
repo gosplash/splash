@@ -339,8 +339,12 @@ func (p *Parser) parseAnnotationArgs(kind ast.AnnotationKind) map[string]ast.Exp
 			keyTok := p.eatName()
 			p.eat(token.COLON)
 			val := p.parseExpr(precLowest)
-			if _, duplicate := args[keyTok.Literal]; duplicate && kind == ast.AnnotSandbox {
-				p.errorf(keyTok.Pos, "duplicate @sandbox argument %q", keyTok.Literal)
+			if kind == ast.AnnotSandbox {
+				if keyTok.Literal != "allow" && keyTok.Literal != "deny" {
+					p.errorf(keyTok.Pos, "unknown @sandbox argument %q", keyTok.Literal)
+				} else if _, duplicate := args[keyTok.Literal]; duplicate {
+					p.errorf(keyTok.Pos, "duplicate @sandbox argument %q", keyTok.Literal)
+				}
 			}
 			args[keyTok.Literal] = val
 			if !p.check(token.COMMA) {

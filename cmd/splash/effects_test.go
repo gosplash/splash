@@ -25,26 +25,12 @@ func TestMissingEffectRejectsArtifactPaths(t *testing.T) {
 		"tools": func() error { return runTools(path, toolschema.FormatOpenAI) },
 	} {
 		t.Run(name, func(t *testing.T) {
-			stderr, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			previous := os.Stderr
-			os.Stderr = stderr
-			t.Cleanup(func() {
-				os.Stderr = previous
-				stderr.Close()
-			})
-			output, err := captureStdout(t, command)
+			output, diag, err := captureEffectCommand(t, command)
 			if err == nil || !strings.Contains(err.Error(), "type errors") || output != "" {
 				t.Fatalf("want effect rejection in source analysis before output, got %v and %q", err, output)
 			}
-			if _, err := stderr.Seek(0, io.SeekStart); err != nil {
-				t.Fatal(err)
-			}
-			diag, err := io.ReadAll(stderr)
-			if err != nil || !strings.Contains(string(diag), `missing declared effect DB.read for call to "lookup"`) {
-				t.Fatalf("want specific effect diagnostic, got %q (%v)", diag, err)
+			if !strings.Contains(diag, `missing declared effect DB.read for call to "lookup"`) {
+				t.Fatalf("want specific effect diagnostic, got %q", diag)
 			}
 		})
 	}
@@ -66,12 +52,36 @@ func TestQualifiedEffectCallRespectsSandbox(t *testing.T) {
 	writeSplashFile(t, dir, "catalog.splash", "module catalog\nfn lookup() needs DB.read -> Int { return 42 }\n")
 	const source = "module main\nuse catalog as rules\n%s\nfn main() needs DB.read { println(rules.lookup()) }\n"
 	path := writeSplashFile(t, dir, "main.splash", fmt.Sprintf(source, "@sandbox(deny: [DB.read])"))
-	output, err := captureStdout(t, func() error { return runCheck(path) })
-	if err == nil || err.Error() != "check failed" || output != "" {
-		t.Fatalf("want safety-stage rejection, got %v and %q", err, output)
+	output, diag, err := captureEffectCommand(t, func() error { return runCheck(path) })
+	if err == nil || err.Error() != "check failed" || output != "" ||
+		!strings.Contains(diag, `reachable function "lookup" uses denied effect DB.read`) {
+		t.Fatalf("want safety-stage rejection naming the imported callee, got %v, stdout %q, stderr %q", err, output, diag)
 	}
 	writeSplashFile(t, dir, "main.splash", fmt.Sprintf(source, "@sandbox(allow: [DB.read])"))
 	if err := runCheck(path); err != nil {
 		t.Fatalf("check qualified call with matching grant and policy: %v", err)
 	}
+}
+
+func captureEffectCommand(t *testing.T, command func() error) (stdout, stderr string, err error) {
+	t.Helper()
+	file, createErr := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if createErr != nil {
+		t.Fatal(createErr)
+	}
+	previous := os.Stderr
+	os.Stderr = file
+	defer func() {
+		os.Stderr = previous
+		file.Close()
+	}()
+	stdout, err = captureStdout(t, command)
+	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+		t.Fatal(seekErr)
+	}
+	message, readErr := io.ReadAll(file)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	return stdout, string(message), err
 }

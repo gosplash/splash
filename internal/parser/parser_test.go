@@ -21,6 +21,13 @@ func TestSandboxRejectsRepeatedPolicyArgument(t *testing.T) {
 	}
 }
 
+func TestSandboxRejectsUnknownPolicyArgument(t *testing.T) {
+	_, diags := parseWithDiags(t, "module sample\n@sandbox(denny: [Net])\nfn run() {}\n")
+	if len(diags) != 1 || diags[0].Pos.Line != 2 || diags[0].Message != `unknown @sandbox argument "denny"` {
+		t.Fatalf("want diagnostic at the unknown sandbox argument, got %v", diags)
+	}
+}
+
 func parse(t *testing.T, src string) *ast.File {
 	t.Helper()
 	toks := lexer.New("test.splash", src).Tokenize()
