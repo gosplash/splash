@@ -286,6 +286,10 @@ body {
 
 /* --- Code blocks --- */
 
+.content p code {
+  overflow-wrap: anywhere;
+}
+
 .content pre {
   background: var(--bg-code);
   border: 1px solid var(--border);
@@ -354,6 +358,21 @@ pre[class*="language-"]       { background: none; text-shadow: none; }
 
 .content tr:last-child td {
   border-bottom: none;
+}
+
+.research-table {
+  margin-bottom: 1.75rem;
+  overflow-x: auto;
+}
+
+.research-table:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 3px;
+}
+
+.research-table table {
+  display: table;
+  margin-bottom: 0;
 }
 
 /* --- Reader's Guide callout --- */
