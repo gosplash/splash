@@ -1,4 +1,4 @@
-"""Run the same invoice behavior oracle against a trusted Go or Splash source file."""
+"""Run the same invoice oracle against a trusted Rust, Go, or Splash source file."""
 
 import argparse
 import json
@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 SPLASH_DRIVER = "probe.splash"
+RUST_MANIFEST = Path(__file__).resolve().parent / "rust"
 
 
 def read_cases(path):
@@ -62,9 +63,20 @@ def splash_driver(cases):
     return "\n".join(lines + ["}", ""])
 
 
-def run(command, directory, timeout):
+def rust_driver(cases):
+    lines = ["mod invoice;", "use invoice::invoice_totals;", "fn main() {"]
+    for index, case in enumerate(cases):
+        values = ", ".join(map(str, case["inputs"]))
+        result = f"result_{index}"
+        lines.append(f"    let {result} = invoice_totals({values});")
+        for field in ("subtotal", "discount", "due"):
+            lines.append(f'    println!("{{}}", {result}.{field});')
+    return "\n".join(lines + ["}", ""])
+
+
+def run(command, directory, timeout, *, env=None):
     result = subprocess.run(
-        command, cwd=directory, capture_output=True, text=True, timeout=timeout
+        command, cwd=directory, capture_output=True, text=True, timeout=timeout, env=env,
     )
     if result.returncode != 0:
         diagnostic = result.stderr.strip() or result.stdout.strip()
@@ -73,8 +85,20 @@ def run(command, directory, timeout):
     return result.stdout
 
 
-def stage_candidate(lane, candidate_source, cases, splash, directory):
+def stage_candidate(lane, candidate_source, cases, splash, directory, *, release=False):
     artifact = directory / ("probe.exe" if os.name == "nt" else "probe")
+    if lane == "rust":
+        for name in ("Cargo.toml", "Cargo.lock"):
+            shutil.copyfile(RUST_MANIFEST / name, directory / name)
+        src = directory / "src"
+        src.mkdir()
+        (src / "main.rs").write_text(rust_driver(cases))
+        shutil.copyfile(candidate_source, src / "invoice.rs")
+        profile = "release" if release else "debug"
+        build = ["cargo", "build", "--offline", "--locked", "--quiet"]
+        if release:
+            build.append("--release")
+        return build, [str(directory / "target" / profile / artifact.name)]
     if lane == "go":
         driver = directory / "probe.go"
         driver.write_text(go_driver(cases))
@@ -95,7 +119,8 @@ def run_candidate(lane, candidate_source, cases, splash):
         if lane == "splash":
             run([str(splash), "check", SPLASH_DRIVER], directory, 30)
         if build is not None:
-            run(build, directory, 90)
+            env = {**os.environ, "CARGO_TARGET_DIR": str(directory / "target")} if lane == "rust" else None
+            run(build, directory, 90, env=env)
         return run(execute, directory, 30 if build is None else 5).splitlines()
 
 
@@ -113,12 +138,12 @@ def output_mismatch(actual, cases):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lane", choices=("go", "splash", "splash-vm"), required=True)
+    parser.add_argument("--lane", choices=("rust", "go", "splash", "splash-vm"), required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--splash", type=Path, help="path to the trusted Splash compiler")
     args = parser.parse_args(argv)
-    if args.lane != "go" and args.splash is None:
+    if args.lane.startswith("splash") and args.splash is None:
         parser.error("--splash is required for the Splash lanes")
     try:
         cases = read_cases(args.cases)

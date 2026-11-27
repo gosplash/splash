@@ -1,6 +1,6 @@
 # TTCS invoice fixture
 
-The same [task](task/TASK.md) and public inputs apply to the Go and Splash starters. The independent grader stages a single candidate source file and a driver for its language. One table of expected results grades native Go and both Splash backends. Cases exercise exact cents, half-cent ties, aggregation before rounding, zero, and maximum inputs.
+The same [task](task/TASK.md) and public inputs apply to the Rust, Go, and Splash starters. The independent grader stages a single candidate source file and a driver for its language. One table of expected results grades native Rust, native Go, and both Splash backends. Cases exercise exact cents, half-cent ties, aggregation before rounding, zero, and maximum inputs.
 
 Run the reference and negative controls from the repository root with Python 3.9+ and Go on PATH:
 
@@ -8,7 +8,7 @@ Run the reference and negative controls from the repository root with Python 3.9
 python3 -B -m unittest discover -s benchmarks/ttcs/invoice -p test_grade.py
 ```
 
-The tests build the current Splash compiler. Both starters pass the published exact-cent cases and fail the full table at the half-cent case. Both reference implementations pass the full table on their respective backends.
+The tests build the current Splash compiler. With Rust and Cargo on PATH, they also exercise the Rust lane and the full comparison runner. Each truncating starter passes the published exact-cent cases and fails the full table at the half-cent case. Each reference implementation passes all nine cases.
 
 Grade a known, trusted Go snapshot directly:
 
@@ -18,30 +18,40 @@ python3 benchmarks/ttcs/invoice/grade.py --lane go \
   --cases benchmarks/ttcs/invoice/oracle/cases.json
 ```
 
+For Rust, use `--lane rust --candidate benchmarks/ttcs/invoice/oracle/testdata/rust/invoice.rs` with the same cases. The runner stages a dependency-free Cargo package.
+
 For Splash, supply `--splash /path/to/splash` and select the corresponding `.splash` source. Use `--lane splash` for Go transpilation or `--lane splash-vm` for `splash run probe.splash --backend vm`. The VM lane can use a prebuilt Splash binary on a host without Go.
 
 Each case contains a name, input integers in quantity/unit-cents/discount-percent order, and expected integers in subtotal/discount/due order. Exit 0 means all cases passed. Exit 1 means observable output differed. Exit 2 reports input, compilation, execution, or grader failure.
 
 ## CLI execution benchmark
 
-Run the benchmark from the repository root with Python 3.9+ and Go on PATH.
+Run on one host with Python 3.9+, Go, Rust, and Cargo on PATH. Build the Splash frontend at the pinned baseline in a separate checkout. Run the comparator from this checkout.
 
 ```sh
-go build -o /tmp/splash-invoice ./cmd/splash
-python3 -B benchmarks/ttcs/invoice/benchmark.py --splash /tmp/splash-invoice --samples 12
+baseline=$(mktemp -d)
+git archive e15ec6d | tar -x -C "$baseline"
+(cd "$baseline" && go build -o "$baseline/splash" ./cmd/splash)
+python3 -B benchmarks/ttcs/invoice/benchmark.py --splash "$baseline/splash" \
+  --splash-revision e15ec6de9706c5c084d577c43bace12361566800 --samples 12 --hardware 'Apple M5'
 ```
 
-| Condition | Timed commands |
+The [VM-004 baseline](results/vm-004-apple-m5.json) measured one startup-inclusive source-to-result path per toolchain at `5a5f075`. The comparison reuses its nine-case oracle, reference Go and Splash sources, and fresh-process timing convention. It runs the unchanged Splash driver against both Splash backends.
+
+| Workflow | Setup and timed commands |
 | --- | --- |
-| `go` | `go build` from the reference Go source and Go driver, then launch the new binary |
-| `splash-go` | `splash build` to analyze the reference Splash source and driver, emit Go and build, then launch the new binary |
-| `splash-vm` | `splash run probe.splash --backend vm` to analyze, lower, validate, and execute the same Splash source and driver |
+| Static verification | Fresh workspace. Rust runs `cargo check --offline --locked --quiet`, Go runs `go vet invoice.go probe.go` with a warm per-lane Go cache, and both Splash paths run `splash check probe.splash`. These commands provide different checks. Go vet includes analyzers and may reuse cached package data. Rust has a fresh Cargo target directory. Splash check performs frontend and safety analysis without running VM admission or native lowering. |
+| Cold build-to-result | Fresh workspace and empty `GOCACHE` or Cargo target directory. Rust and Go build then launch a fresh artifact. Splash through Go runs `splash build` then launches its artifact. Splash VM runs `splash run probe.splash --backend vm` in one process. Rust uses the standard library shipped with its toolchain. The Go cold path may compile its standard library. OS caches remain inherited. |
+| Warm build-to-result | Prepare and verify the reference in the same workspace. Remove the native output file before timing while retaining build intermediates and caches. Run the same build and launch commands as in the cold path. Cargo may restore an artifact from its existing target state. |
+| Incremental edit-to-result | Prepare and verify the reference, then replace the candidate in the same workspace. The edit uses quotient-and-remainder rounding instead of an offset and division while preserving the nine expected results. Time build and launch immediately after the edit. The source file write is outside timing. The Rust dev profile reuses incremental compiler state. Go reuses its build cache, and the Splash frontend reanalyzes the program. |
+| Unchanged-source execution | Prepare and verify the reference. Preserve the workspace, source, compiler caches, and artifact. Time `cargo run` for Rust, `go run` for Go, `splash build` and launch for the Go-backed Splash path, and `splash run` for the VM. These are developer rerun commands, each with its own validation or build behavior. |
+| Previously compiled native binary | Prepare, build, and launch once outside timing. Time another direct launch of the already-built executable. The VM has no prebuilt artifact in this comparison. |
 
-Every sample uses a fresh directory, fresh processes, and a new output path for native binaries. The runner records wall-clock time from launch through captured output and process exit. Staging, oracle validation, and the Splash compiler build occur outside the timed window. The runner checks every invocation against the nine independent expected results before reporting timings. It reports individual samples and medians in milliseconds, with separate build and executable launch-through-exit timings for the native conditions. The VM command reports a single elapsed time across its internal phases.
+The primary Rust condition uses Cargo's normal dev profile with incremental compilation enabled. A separate Rust release condition uses Cargo's optimized release profile with incremental compilation disabled. See the [Cargo profiles reference](https://doc.rust-lang.org/cargo/reference/profiles.html) and [`cargo check` behavior](https://doc.rust-lang.org/cargo/commands/cargo-check.html).
 
-The runner makes one unreported warm-up pass and rotates the starting condition on each measured pass. The two native builds use the Go caches and toolchain settings inherited from the environment. File system caches also persist across processes. This measures the invoice fixture's startup-inclusive source-to-result latency with a prebuilt compiler and warmed caches. TTCS measures how long an authoring system takes to produce an independently accepted change.
+Timing includes process launch, captured output, and exit. Staging, preparation, oracle comparison, and the Splash compiler build are outside timing. The runner rotates condition order within each workflow and makes an unreported warm-up pass. Each executable sample and preparation run must pass the unchanged oracle. A failure aborts the report. The runner preserves each timing, records versions and the oracle digest, and reports median, nearest-rank p95, minimum, maximum, and sample count. With 12 samples the p95 is the maximum.
 
-The [VM-004 Apple M5 run](results/vm-004-apple-m5.json) records the exact tested revision, reproduction commands, oracle digest, and all 12 samples per condition. Its median source-to-result latencies were 248.7 ms for native Go, 254.1 ms for Splash through Go, and 6.35 ms for Splash VM. The native measurements include building and launching a fresh executable. The VM measurement includes loading and running the source through the prebuilt Splash CLI. These timings describe the end-to-end workflow for one fixture and host.
+The VM repeats analysis, lowering, validation, and execution for each timed run. Separate build and launch phase timings are available for workflows that explicitly split those commands. In-process native throughput is outside this comparison. It uses one small workload, inherited OS caches, and a prebuilt Splash compiler, with tool-specific cold and warm cache behavior. [The authoring protocol](../../../docs/design/time-to-correct-software.md) defines a future matched Rust agent arm with its own outcome measures.
 
 ## Grader boundary
 
