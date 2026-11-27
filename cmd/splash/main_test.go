@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,6 +115,22 @@ fn main() { println(local.answer()) }
 	writeSplashFile(t, dir, "lib.splash", "module lib\nfn answer() -> Int { return 99 }\n")
 	if program.sources[lib] != original || !strings.Contains(program.sources[entry], "use lib as local") {
 		t.Fatal("expected captured source from both modules, including the original imported bytes")
+	}
+
+	goSrc, err := program.emitGo()
+	if err != nil {
+		t.Fatalf("emit captured program: %v", err)
+	}
+	generated := filepath.Join(dir, "generated.go")
+	if err := os.WriteFile(generated, []byte(goSrc), 0644); err != nil {
+		t.Fatalf("write generated Go: %v", err)
+	}
+	output, err := exec.Command("go", "run", generated).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run generated Go: %v\n%s", err, output)
+	}
+	if got := strings.TrimSpace(string(output)); got != "42" {
+		t.Fatalf("expected captured program to print 42, got %q", got)
 	}
 }
 

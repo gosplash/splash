@@ -195,13 +195,21 @@ func runEmit(path string) error {
 		return err
 	}
 
-	if program.reportSafetyErrors() {
-		return fmt.Errorf("safety errors")
+	goSrc, err := program.emitGo()
+	if err != nil {
+		return err
 	}
-	fmt.Print(codegen.NewGoBackend().Emit(program.merged, codegen.Options{
-		ApprovalCallers: program.graph.Callers(collectApproveFns(program.merged)),
-	}))
+	fmt.Print(goSrc)
 	return nil
+}
+
+func (p *analyzedProgram) emitGo() (string, error) {
+	if p.reportSafetyErrors() {
+		return "", fmt.Errorf("safety errors")
+	}
+	return codegen.NewGoBackend().Emit(p.merged, codegen.Options{
+		ApprovalCallers: p.graph.Callers(collectApproveFns(p.merged)),
+	}), nil
 }
 
 // mergeFiles builds a combined ast.File where all imported files' declarations
@@ -238,13 +246,10 @@ func runBuild(path, out string) error {
 		return err
 	}
 
-	if program.reportSafetyErrors() {
-		return fmt.Errorf("safety errors")
+	goSrc, err := program.emitGo()
+	if err != nil {
+		return err
 	}
-
-	goSrc := codegen.NewGoBackend().Emit(program.merged, codegen.Options{
-		ApprovalCallers: program.graph.Callers(collectApproveFns(program.merged)),
-	})
 
 	// splash build always produces an executable — package must be main
 	if module := program.merged.Module; module != nil && module.Name != "main" {
