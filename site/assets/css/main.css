@@ -87,6 +87,7 @@ body {
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text);
+  text-decoration: none;
 }
 
 .header-right {
@@ -112,15 +113,23 @@ body {
   font-family: var(--font-mono);
 }
 
-.translate-link {
+.translate-link,
+.header-text-link {
   font-size: 0.8125rem;
   color: var(--text-muted);
   text-decoration: none;
   font-family: var(--font-sans);
 }
 
-.translate-link:hover {
+.translate-link:hover,
+.header-text-link:hover,
+.header-text-link[aria-current="page"] {
   color: var(--text);
+}
+
+.header-text-link[aria-current="page"] {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* --- Main content area --- */
@@ -277,6 +286,10 @@ body {
 
 /* --- Code blocks --- */
 
+.content p code {
+  overflow-wrap: anywhere;
+}
+
 .content pre {
   background: var(--bg-code);
   border: 1px solid var(--border);
@@ -345,6 +358,26 @@ pre[class*="language-"]       { background: none; text-shadow: none; }
 
 .content tr:last-child td {
   border-bottom: none;
+}
+
+.research-table {
+  margin-bottom: 1.75rem;
+  overflow-x: auto;
+}
+
+.research-table:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 3px;
+}
+
+.research-table table {
+  display: table;
+  margin-bottom: 0;
+  min-width: 33rem;
+}
+
+.research-table th {
+  white-space: normal;
 }
 
 /* --- Reader's Guide callout --- */
@@ -436,5 +469,15 @@ pre[class*="language-"]       { background: none; text-shadow: none; }
   .content pre {
     padding: 1rem 1rem;
     border-radius: 4px;
+  }
+}
+
+@media (max-width: 380px) {
+  .header-right {
+    gap: 1rem;
+  }
+
+  .site-header .site-domain {
+    display: none;
   }
 }
