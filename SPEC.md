@@ -504,7 +504,7 @@ Applied to struct fields:
 ```splash
 type User {
     id:    Int
-    email: @sensitive String
+    @sensitive email: String
     name:  String
 }
 ```
@@ -517,7 +517,7 @@ Applied to struct fields:
 
 ```splash
 type Config {
-    db_url: @restricted String
+    @restricted db_url: String
 }
 ```
 
@@ -530,7 +530,7 @@ Applied to struct fields:
 ```splash
 type Report {
     content:   String
-    cost_cents: @internal Int
+    @internal cost_cents: Int
 }
 ```
 
@@ -729,9 +729,9 @@ The generated wrapper prints errors returned by `run()` and exits with status 1.
 Go output for programs with approval gates includes these runtime helpers.
 
 - `splashApprove(name string) error` — dispatches to the registered `ApprovalAdapter`
-- `ApprovalAdapter` interface — `Approve(name string) error`
+- `ApprovalAdapter` interface — `Request(name string) error`
 - `SetApprovalAdapter(a ApprovalAdapter)` — register before agent startup
-- Default `StdinApprovalAdapter` prompts standard input
+- The injected `splashStdinApproval` prompts standard input until the operator approves
 
 Source verification checks the supported approval call paths. The adapter enforces each generated gate at runtime. Go lowering also emits helpers required by other supported constructs, such as optional-value coalescing.
 
@@ -775,6 +775,6 @@ Source verification checks the supported approval call paths. The adapter enforc
 | Classification  | Field Annotation | `tool fn` returnable? | `Loggable`? |
 |-----------------|-----------------|---------------------|-------------|
 | `public`        | (none)          | Yes                 | Yes         |
-| `@internal`     | `@internal`     | Yes                 | No          |
+| `@internal`     | `@internal`     | Yes                 | Yes         |
 | `@sensitive`    | `@sensitive`    | No                  | No          |
 | `@restricted`   | `@restricted`   | No                  | No          |

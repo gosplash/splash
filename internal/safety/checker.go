@@ -52,8 +52,10 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 	}) {
 		agentCallees = make(map[string]bool)
 		for caller := range agentReachable {
-			for _, callee := range g.Node(caller).Callees() {
-				agentCallees[callee] = true
+			if node := g.Node(caller); node != nil {
+				for _, callee := range node.Callees() {
+					agentCallees[callee] = true
+				}
 			}
 		}
 	}
@@ -237,8 +239,8 @@ func checkToolReturnType(fn *ast.FunctionDecl, returnType types.Type, owners map
 			seen[record] = true
 			if fields := sensitiveFields(record); len(fields) > 0 {
 				violations = append(violations, diagnostic.Errorf(fn.Position,
-					"tool fn %q returns type %s which contains sensitive or restricted fields (%s)",
-					fn.Name, record.Name, strings.Join(fields, ", "),
+					"tool fn %q returns type %s which contains sensitive or restricted fields (%s), declared at %s",
+					fn.Name, record.Name, strings.Join(fields, ", "), record.Pos(),
 				))
 			}
 			fieldTypes := owners[record]
