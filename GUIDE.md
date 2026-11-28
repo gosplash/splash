@@ -254,10 +254,10 @@ Three policies:
 | Policy | What agents can do |
 |--------|--------------------|
 | `"none"` | Nothing — agents cannot reach any function in this module |
-| `"read_only"` | Only functions with `DB.read` effects |
+| `"read_only"` | Functions may declare at most the `DB.read` capability |
 | `"approved_only"` | Only functions annotated with `approve fn` or `@agent_allowed` |
 
-`"approved_only"` is the most useful: it lets agents call billing functions, but every call goes through the approval gate. The module is open to automation but never uncontrolled.
+`approved_only` permits calls into the module when the target has `approve fn` or `@agent_allowed`. A function marked `Agent` can be a standalone root. Calls to that root from agent-reachable code require explicit permission. A tool-only root also requires permission.
 
 `@agent_allowed` is the escape hatch inside `"approved_only"` containment — for read functions that don't need a gate:
 

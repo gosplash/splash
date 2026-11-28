@@ -102,7 +102,7 @@ func buildToolSchema(fn *ast.FunctionDecl, signature *types.FunctionType) (ToolS
 
 	for i, p := range fn.Params {
 		paramType := signature.Params[i]
-		if !supportedParameterSyntax(p.Type, paramType) {
+		if !types.RetainsTypeArguments(p.Type, paramType) {
 			return ToolSchema{}, fmt.Errorf("%s: tool %q parameter %q has unsupported type arguments", p.Pos, fn.Name, p.Name)
 		}
 		prop, err := TypeToSchema(paramType)
