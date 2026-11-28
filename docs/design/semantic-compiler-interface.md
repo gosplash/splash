@@ -278,6 +278,63 @@ go test ./cmd/splash -run '^$' \
   -bench '^Benchmark(SemanticJSONCLI|CapturedIdentity)$' -benchtime=10x -count=5
 ```
 
+## Compact semantic context
+
+Use a compact view for navigation and request individual contracts or full call-site witnesses when needed.
+
+```sh
+splash summary app/main.splash --json --module inventory --limit 10
+splash callers app/main.splash inventory.reconcile --json --compact --transitive --limit 10
+splash callees app/main.splash inventory.reconcile --json --compact --depth 2
+```
+
+### Module summary
+
+`splash summary <entry.splash> --json [--module NAME] [--limit N]` selects the entry file by default, including an unnamed entry. `--module` selects a declared module name from the loaded closure. Ambiguous and unknown names return a null result and structured diagnostics. Import aliases remain local to their file.
+
+The v1 envelope contains `entryPath`, `identity` when analysis succeeds, `result`, and `diagnostics`. A successful result contains the declared `module` name, the capture-relative `sourcePath`, and a prefix of exported `declarations` in source order. An empty module name denotes an unnamed entry. Splash's `expose` rules apply. An absent or empty expose list makes all top-level functions, records, enums, and constraints eligible.
+
+- Each row contains `kind`, `name`, and one-based `line` and `column` in the selected file. Function rows include the checked signature, declared authority, known inferred effects, and that function's effect coverage. A gap location inherits the selected file when its `file` is omitted.
+- `totalDeclarations` counts eligible declarations and `omittedDeclarations` counts rows outside the returned prefix. The limit defaults to 20 and accepts 1–100. The report omits bodies and detailed relationships. Use `inspect`, `callers`, or `callees` for detail.
+- The summary describes a captured analysis. It answers contract and coverage questions independently of source verification.
+
+### Compact dependency queries
+
+The compact dependency report is opt-in and identifies itself with `view: "compact"`. It carries the same entry, query, direction, analysis identity and diagnostics as the full report.
+
+| Field | Meaning |
+| --- | --- |
+| `root` | Symbol, capture-relative declaration path, and one-based line. |
+| `maxDepth` | Requested depth, or null for transitive traversal. |
+| `matches` | Prefix of the full breadth-first traversal. Each row includes a symbol, capture-relative declaration path, one-based line, and distance. Paths distinguish identically named declarations in different files. |
+| `limit` | Requested maximum number of returned rows. Defaults to 20 and accepts 1–100. |
+| `total` and `omitted` | Number of known relationships within the requested scope, and how many of those rows the limit excluded. |
+| `omittedFields` | `via` and call-site `source`, which the full query provides. |
+| `coverage` | Scoped call evidence over the whole query, including functions excluded from the returned prefix. |
+
+A compact query caps result rows. Counting and coverage still traverse the requested scope. Row size depends on the source identifiers, and analysis costs depend on the closure. A nonzero `omitted` count concerns the presentation. Coverage independently describes the available semantic evidence. Use the full query to recover call-site witnesses and compare `identity.analysisId` between captures if source may have changed. Queries without `--compact` retain their v1 shape.
+
+### Compact context measurements
+
+Measured at `a3a97ca` on an Apple M5 with macOS 27.0.1 (26A434) and Go 1.26.3 arm64. Values are medians of five benchmark runs. Timed queries reuse captured analysis. Dependency queries also reuse the adjacency index. Source analysis, digest computation, and process startup are outside the timed operations.
+
+| Workload | Time | JSON bytes | Allocated bytes / allocations per operation |
+| --- | ---: | ---: | ---: |
+| Full caller report encoding, 80 relationships | 39.70 µs | 53,764 | 73 / 0 |
+| Compact caller report encoding, 20 of 80 matches | 1.90 µs | 1,966 | 0 / 0 |
+| Compact caller report encoding, all 80 matches | 6.06 µs | 5,786 | 1 / 0 |
+| Full caller query, 80 returned | 10.14 µs | — | 67,752 / 185 |
+| Compact caller query, 20 returned | 11.65 µs | — | 24,264 / 64 |
+| Compact caller query, 80 returned | 48.05 µs | — | 71,848 / 186 |
+| Module summary query, 20 of 33 declarations | 20.95 µs | — | 9,120 / 65 |
+| Module summary projection and encoding | 10.45 µs | 7,258 | 6,181 / 22 |
+
+The dependency workload traverses the same 40 branching modules at each limit. Its full report includes call-site witnesses and repeated absolute source paths, so exact sizes vary by checkout and fixture path. Returning all 80 compact matches isolates the effect of the projection from the row limit. The module fixture loads 40 modules with 32 functions each and summarizes one module. These are byte counts and local latency measurements. Pilot 003 will measure the context actually consumed by agents.
+
+```sh
+go test ./cmd/splash -run '^$' -bench '^Benchmark(DependencyContext|ModuleSummary)$' -benchmem -benchtime=100ms -count=5
+```
+
 ## Snapshot and artifact provenance
 
 Check, inspect, and dependency reports expose `identity.sourceId` and `identity.analysisId` for one successful capture. The analysis computes them lazily from captured data.

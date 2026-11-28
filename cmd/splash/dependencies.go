@@ -9,13 +9,14 @@ import (
 	"gosplash.dev/splash/internal/compiler"
 )
 
-type dependencyReport struct {
+type dependencyReport[Projection any] struct {
 	SchemaVersion int                          `json:"schemaVersion"`
 	EntryPath     string                       `json:"entryPath"`
 	Query         string                       `json:"query"`
 	Direction     compiler.DependencyDirection `json:"direction"`
 	Identity      *compiler.AnalysisIdentity   `json:"identity,omitempty"`
-	Result        *dependencyProjection        `json:"result"`
+	View          string                       `json:"view,omitempty"`
+	Result        *Projection                  `json:"result"`
 	Diagnostics   []checkDiagnostic            `json:"diagnostics"`
 }
 
@@ -54,6 +55,17 @@ func runDependencyCommand(direction compiler.DependencyDirection, args []string,
 	if len(args) < 3 || args[0] == "" || args[1] == "" || args[2] != "--json" {
 		return false, dependencyUsage(direction)
 	}
+	if len(args) > 3 && args[3] == "--compact" {
+		depth, limit, err := compactDependencyOptions(args[4:])
+		if err != nil {
+			return false, err
+		}
+		report := makeCompactDependencyReport(args[0], args[1], direction, depth, limit)
+		if err := json.NewEncoder(output).Encode(report); err != nil {
+			return false, fmt.Errorf("write dependency report: %w", err)
+		}
+		return report.Result != nil, nil
+	}
 	depth := 1
 	switch {
 	case len(args) == 3:
@@ -77,12 +89,12 @@ func runDependencyCommand(direction compiler.DependencyDirection, args []string,
 }
 
 func dependencyUsage(direction compiler.DependencyDirection) error {
-	return fmt.Errorf("usage: splash %s <file.splash> <module.function> --json [--transitive | --depth N]", direction)
+	return fmt.Errorf("usage: splash %s <file.splash> <module.function> --json [--compact [--limit N]] [--transitive | --depth N]", direction)
 }
 
-func makeDependencyReport(path, query string, direction compiler.DependencyDirection, depth int) dependencyReport {
+func makeDependencyReport(path, query string, direction compiler.DependencyDirection, depth int) dependencyReport[dependencyProjection] {
 	program, diagnostics := analyzeForInspection(path)
-	report := dependencyReport{
+	report := dependencyReport[dependencyProjection]{
 		SchemaVersion: 1, EntryPath: path, Query: query, Direction: direction, Diagnostics: diagnostics,
 	}
 	if program == nil {
@@ -103,13 +115,10 @@ func projectDependencies(result compiler.DependencyResult, direction compiler.De
 	out := &dependencyProjection{
 		Root:          projectDependencyFunction(result.Root),
 		Relationships: make([]dependencyRelationship, 0, len(result.Relationships)),
-		Coverage:      dependencyCoverage{Scope: "expandedFunctions", Status: "complete"},
+		Coverage:      dependencyCoverageFor(direction, result.Gap),
 	}
 	if depth != 0 {
 		out.MaxDepth = &depth
-	}
-	if direction == compiler.Callers {
-		out.Coverage.Scope = "entryClosure"
 	}
 	for _, relationship := range result.Relationships {
 		out.Relationships = append(out.Relationships, dependencyRelationship{
@@ -117,13 +126,21 @@ func projectDependencies(result compiler.DependencyResult, direction compiler.De
 			Distance: relationship.Distance, Source: checkSourceRange(relationship.Position, relationship.End),
 		})
 	}
-	if gap := result.Gap; gap != nil {
-		out.Coverage.Status = "incomplete"
-		out.Coverage.Gap = &dependencyGap{
+	return out
+}
+
+func dependencyCoverageFor(direction compiler.DependencyDirection, gap *compiler.DependencyGap) dependencyCoverage {
+	coverage := dependencyCoverage{Scope: "expandedFunctions", Status: "complete"}
+	if direction == compiler.Callers {
+		coverage.Scope = "entryClosure"
+	}
+	if gap != nil {
+		coverage.Status = "incomplete"
+		coverage.Gap = &dependencyGap{
 			Function: projectDependencyFunction(gap.Function), Reason: gap.Reason, Source: checkSourceRange(gap.Position, gap.End),
 		}
 	}
-	return out
+	return coverage
 }
 
 func projectDependencyFunction(fn compiler.DependencyFunction) dependencyFunction {
