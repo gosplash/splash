@@ -35,38 +35,47 @@ type Period { duration: Int }
 tool fn choose(value: cal.Period) -> Int { return 1 }
 tool fn record_input(value: Period) -> Int { return 1 }
 `)
-		output, err := exec.Command(binary, "tools", path).CombinedOutput()
-		if err != nil {
-			t.Fatalf("export tools: %v\n%s", err, output)
-		}
-		type property struct {
-			Type  string
-			Enum  []string
-			Items *property
-		}
-		var schemas []struct {
-			Function struct {
-				Name       string
-				Parameters struct{ Properties map[string]property }
+		for _, format := range []string{"openai", "anthropic"} {
+			output, err := exec.Command(binary, "tools", path, "--format", format).CombinedOutput()
+			if err != nil {
+				t.Fatalf("export tools: %v\n%s", err, output)
 			}
-		}
-		if err := json.Unmarshal(output, &schemas); err != nil {
-			t.Fatalf("invalid schema JSON: %v\n%s", err, output)
-		}
-		got := make(map[string]map[string]property)
-		for _, schema := range schemas {
-			got[schema.Function.Name] = schema.Function.Parameters.Properties
-		}
-		calendar := []string{"morning", "evening"}
-		if !reflect.DeepEqual(got["choose"]["value"].Enum, calendar) ||
-			!reflect.DeepEqual(got["calendar_options"]["value"].Enum, calendar) ||
-			!reflect.DeepEqual(got["freight_options"]["value"].Enum, []string{"pickup", "delivery"}) {
-			t.Fatalf("enum variants must follow their checked type:\n%s", output)
-		}
-		alternatives := got["calendar_options"]["alternatives"]
-		if alternatives.Type != "array" || alternatives.Items == nil || !reflect.DeepEqual(alternatives.Items.Enum, calendar) ||
-			got["record_input"]["value"].Type != "object" || len(got["record_input"]["value"].Enum) != 0 {
-			t.Fatalf("list and record schemas must use their checked types:\n%s", output)
+			type property struct {
+				Type  string
+				Enum  []string
+				Items *property
+			}
+			type parameters struct{ Properties map[string]property }
+			var schemas []struct {
+				Name        string
+				InputSchema parameters `json:"input_schema"`
+				Function    struct {
+					Name       string
+					Parameters parameters
+				}
+			}
+			if err := json.Unmarshal(output, &schemas); err != nil {
+				t.Fatalf("invalid schema JSON: %v\n%s", err, output)
+			}
+			got := make(map[string]map[string]property)
+			for _, schema := range schemas {
+				if format == "openai" {
+					got[schema.Function.Name] = schema.Function.Parameters.Properties
+				} else {
+					got[schema.Name] = schema.InputSchema.Properties
+				}
+			}
+			calendar := []string{"morning", "evening"}
+			if !reflect.DeepEqual(got["choose"]["value"].Enum, calendar) ||
+				!reflect.DeepEqual(got["calendar_options"]["value"].Enum, calendar) ||
+				!reflect.DeepEqual(got["freight_options"]["value"].Enum, []string{"pickup", "delivery"}) {
+				t.Fatalf("enum variants must follow their checked type:\n%s", output)
+			}
+			alternatives := got["calendar_options"]["alternatives"]
+			if alternatives.Type != "array" || alternatives.Items == nil || !reflect.DeepEqual(alternatives.Items.Enum, calendar) ||
+				got["record_input"]["value"].Type != "object" || len(got["record_input"]["value"].Enum) != 0 {
+				t.Fatalf("list and record schemas must use their checked types:\n%s", output)
+			}
 		}
 	}
 }
@@ -82,14 +91,40 @@ enum Period {
 }
 fn helper() {}
 `)
-	for _, typ := range []string{"cal.Period", "List<cal.Period>"} {
-		path := writeSplashFile(t, dir, "main.splash", "module main\nuse calendar as cal\ntool fn choose(value: "+typ+") -> Int { return 1 }\n")
-		command := exec.Command(binary, "tools", path)
-		var stdout, stderr bytes.Buffer
-		command.Stdout, command.Stderr = &stdout, &stderr
-		err := command.Run()
-		if err == nil || stdout.Len() != 0 || !strings.Contains(stderr.String(), "parameter") {
-			t.Fatalf("want parameter error before output for %s, got %v, stdout %q, stderr %q", typ, err, &stdout, &stderr)
+	for _, typ := range []string{"cal.Period", "List<cal.Period>", "Int<Missing>", "List<String<Missing>>", "Empty", "Payload"} {
+		path := writeSplashFile(t, dir, "main.splash", "module main\nuse calendar as cal\n"+`
+enum Empty {}
+enum Payload { item(Int) }
+tool fn valid(value: Int) -> Int { return value }
+`+"tool fn choose(value: "+typ+") -> Int { return 1 }\n")
+		for _, format := range []string{"openai", "anthropic"} {
+			command := exec.Command(binary, "tools", path, "--format", format)
+			var stdout, stderr bytes.Buffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			err := command.Run()
+			if err == nil || stdout.Len() != 0 || !strings.Contains(stderr.String(), "parameter") {
+				t.Fatalf("want parameter error before output for %s (%s), got %v, stdout %q, stderr %q", typ, format, err, &stdout, &stderr)
+			}
 		}
+	}
+}
+
+func TestQualifiedEnumWithBuiltinNameKeepsGoSignature(t *testing.T) {
+	binary := buildSplashCLI(t)
+	dir := t.TempDir()
+	writeSplashFile(t, dir, "calendar.splash", `module calendar
+enum String {
+    morning
+    evening
+}
+`)
+	entry := writeSplashFile(t, dir, "main.splash", `module main
+use calendar as cal
+tool fn choose(value: cal.String) -> Int { return 1 }
+fn main() {}
+`)
+	output, err := exec.Command(binary, "emit", entry).CombinedOutput()
+	if err != nil || !bytes.Contains(output, []byte("func choose(value String) int")) {
+		t.Fatalf("Go output must preserve the qualified nominal type: %v\n%s", err, output)
 	}
 }

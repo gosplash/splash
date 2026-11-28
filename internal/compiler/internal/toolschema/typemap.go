@@ -3,6 +3,7 @@ package toolschema
 import (
 	"fmt"
 
+	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/types"
 )
 
@@ -25,6 +26,9 @@ func TypeToSchema(typ types.Type) (*SchemaProperty, error) {
 	case *types.EnumType:
 		if typ.Declaration == nil {
 			return nil, fmt.Errorf("unresolved enum")
+		}
+		if len(typ.Declaration.Variants) == 0 {
+			return nil, fmt.Errorf("enum %s has no variants", typ.TypeName())
 		}
 		variants := make([]string, 0, len(typ.Declaration.Variants))
 		for _, variant := range typ.Declaration.Variants {
@@ -49,4 +53,21 @@ func TypeToSchema(typ types.Type) (*SchemaProperty, error) {
 		return &SchemaProperty{Type: "array", Items: elem}, nil
 	}
 	return nil, fmt.Errorf("unsupported type %s", typ.TypeName())
+}
+
+// supportedParameterSyntax detects type arguments the current checker can
+// erase. Schema types still come exclusively from the checked signature.
+func supportedParameterSyntax(expr ast.TypeExpr, typ types.Type) bool {
+	switch expr := expr.(type) {
+	case *ast.NamedTypeExpr:
+		if len(expr.TypeArgs) != 0 {
+			list, ok := typ.(*types.ListType)
+			return ok && len(expr.TypeArgs) == 1 && supportedParameterSyntax(expr.TypeArgs[0], list.Element)
+		}
+	case *ast.OptionalTypeExpr:
+		if optional, ok := typ.(*types.OptionalType); ok {
+			return supportedParameterSyntax(expr.Inner, optional.Inner)
+		}
+	}
+	return true
 }

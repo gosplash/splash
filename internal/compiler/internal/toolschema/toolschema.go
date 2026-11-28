@@ -74,7 +74,7 @@ func Extract(modules []*typechecker.TypedFile) ([]ToolSchema, error) {
 				continue
 			}
 			signature, ok := module.Types[fn].(*types.FunctionType)
-			if !ok || len(signature.Params) != len(fn.Params) {
+			if !ok || signature == nil || len(signature.Params) != len(fn.Params) {
 				return nil, fmt.Errorf("%s: tool %q has no checked signature", fn.Pos(), fn.Name)
 			}
 			schema, err := buildToolSchema(fn, signature)
@@ -102,6 +102,9 @@ func buildToolSchema(fn *ast.FunctionDecl, signature *types.FunctionType) (ToolS
 
 	for i, p := range fn.Params {
 		paramType := signature.Params[i]
+		if !supportedParameterSyntax(p.Type, paramType) {
+			return ToolSchema{}, fmt.Errorf("%s: tool %q parameter %q has unsupported type arguments", p.Pos, fn.Name, p.Name)
+		}
 		prop, err := TypeToSchema(paramType)
 		if err != nil {
 			return ToolSchema{}, fmt.Errorf("%s: tool %q parameter %q: %w", p.Pos, fn.Name, p.Name, err)
