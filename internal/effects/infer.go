@@ -20,17 +20,20 @@ type FunctionFacts struct {
 type ResolvedCall struct {
 	Target   *ast.FunctionDecl
 	Position token.Position
+	End      token.Position
 }
 
 type Operation struct {
 	Effects  EffectSet
 	Name     string
 	Position token.Position
+	End      token.Position
 }
 
 type CoverageGap struct {
 	Reason   string
 	Position token.Position
+	End      token.Position
 	// ApprovalBoundary identifies the compiler-injected Go host boundary.
 	// Source verification accounts for approval call edges independently.
 	ApprovalBoundary bool
@@ -44,15 +47,21 @@ type Summary struct {
 	Inferred           EffectSet
 	Gap                *CoverageGap // first representative transitive gap for inspection
 	DirectGaps         []CoverageGap
-	contractViolations []diagnostic.Diagnostic
+	contractViolations []contractViolation
 	requiredByCalls    EffectSet
 	witness            map[EffectSet]effectStep
+}
+
+type contractViolation struct {
+	call    ResolvedCall
+	missing EffectSet
 }
 
 type effectStep struct {
 	next   *Summary
 	origin Operation
 	at     token.Position
+	end    token.Position
 }
 
 // Infer propagates known effects and coverage gaps in separate worklists. A
@@ -73,6 +82,7 @@ func Infer(facts []FunctionFacts) []*Summary {
 	type callerEdge struct {
 		caller *Summary
 		at     token.Position
+		end    token.Position
 	}
 	callers := make(map[*Summary][]callerEdge)
 	type knownEffect struct {
@@ -86,13 +96,12 @@ func Infer(facts []FunctionFacts) []*Summary {
 		for _, call := range fact.Calls {
 			if target := byFunction[call.Target]; target != nil {
 				summary.requiredByCalls |= target.Declared
-				callers[target] = append(callers[target], callerEdge{summary, call.Position})
+				callers[target] = append(callers[target], callerEdge{summary, call.Position, call.End})
 				if missing := target.Declared &^ (summary.Declared | Agent); missing != None {
-					summary.contractViolations = append(summary.contractViolations, diagnostic.Errorf(call.Position,
-						"missing declared effect %s for call to %q (declared at %s)", missing, call.Target.Name, call.Target.Pos()))
+					summary.contractViolations = append(summary.contractViolations, contractViolation{call, missing})
 				}
 			} else {
-				summary.DirectGaps = append(summary.DirectGaps, CoverageGap{Reason: "resolved target has no effect summary", Position: call.Position})
+				summary.DirectGaps = append(summary.DirectGaps, CoverageGap{Reason: "resolved target has no effect summary", Position: call.Position, End: call.End})
 				if summary.Gap == nil || summary.Gap.ApprovalBoundary {
 					summary.Gap = &summary.DirectGaps[len(summary.DirectGaps)-1]
 				}
@@ -104,7 +113,7 @@ func Infer(facts []FunctionFacts) []*Summary {
 		for _, operation := range fact.Operations {
 			for _, effect := range atomicEffects {
 				if operation.Effects.Has(effect.flag) && !summary.Inferred.Has(effect.flag) {
-					summary.add(effect.flag, effectStep{origin: operation, at: operation.Position})
+					summary.add(effect.flag, effectStep{origin: operation, at: operation.Position, end: operation.End})
 					pending = append(pending, knownEffect{summary, effect.flag})
 				}
 			}
@@ -114,7 +123,7 @@ func Infer(facts []FunctionFacts) []*Summary {
 		current := pending[head]
 		for _, edge := range callers[current.summary] {
 			if !edge.caller.Inferred.Has(current.effect) {
-				edge.caller.add(current.effect, effectStep{next: current.summary, at: edge.at})
+				edge.caller.add(current.effect, effectStep{next: current.summary, at: edge.at, end: edge.end})
 				pending = append(pending, knownEffect{edge.caller, current.effect})
 			}
 		}
@@ -155,27 +164,46 @@ func (s *Summary) add(effect EffectSet, step effectStep) {
 // unknown. Each witness follows a shortest resolved path to a modeled origin.
 func (s *Summary) Diagnostics() []diagnostic.Diagnostic {
 	missing := s.Inferred &^ s.Declared
-	diags := append([]diagnostic.Diagnostic(nil), s.contractViolations...)
+	var diags []diagnostic.Diagnostic
+	for _, violation := range s.contractViolations {
+		call := violation.call
+		diag := diagnostic.Errorf(call.Position,
+			"missing declared effect %s for call to %q (declared at %s)",
+			violation.missing, call.Target.Name, call.Target.Pos()).WithCode(diagnostic.DeclaredEffectMissing)
+		diag.End = call.End
+		diag.Effects = violation.missing.labels()
+		diag.Witness = []diagnostic.WitnessStep{{
+			Target: call.Target.Name, Site: call.Position, End: call.End, Declaration: call.Target.Pos(),
+		}}
+		diags = append(diags, diag)
+	}
 	for _, effect := range atomicEffects {
 		if !missing.Has(effect.flag) {
 			continue
 		}
-		var chain []string
+		chain := []string{s.Function.Name}
+		var witness []diagnostic.WitnessStep
 		current := s
 		step := current.witness[effect.flag]
-		start := step.at
-		for {
-			chain = append(chain, current.Function.Name)
-			if step.next == nil {
-				chain = append(chain, step.origin.Name)
-				break
-			}
+		start, end := step.at, step.end
+		for step.next != nil {
 			current = step.next
+			chain = append(chain, current.Function.Name)
+			witness = append(witness, diagnostic.WitnessStep{
+				Target: current.Function.Name, Site: step.at, End: step.end, Declaration: current.Function.Pos(),
+			})
 			step = current.witness[effect.flag]
 		}
-		diags = append(diags, diagnostic.Errorf(start,
+		chain = append(chain, step.origin.Name)
+		witness = append(witness, diagnostic.WitnessStep{Target: step.origin.Name, Site: step.at, End: step.end})
+		diag := diagnostic.Errorf(start,
 			"inferred effect %s exceeds %q's declared authority: %s (origin at %s)",
-			effect.flag, s.Function.Name, strings.Join(chain, " -> "), step.origin.Position))
+			effect.flag, s.Function.Name, strings.Join(chain, " -> "), step.origin.Position).
+			WithCode(diagnostic.InferredEffectExceedsAuthority)
+		diag.End = end
+		diag.Effects = []string{effect.name}
+		diag.Witness = witness
+		diags = append(diags, diag)
 	}
 	return diags
 }

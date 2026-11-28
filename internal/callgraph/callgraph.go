@@ -15,6 +15,7 @@ import (
 type CallSite struct {
 	Target   string
 	Position token.Position
+	End      token.Position
 }
 
 // Node represents a single function in the call graph.
@@ -341,7 +342,7 @@ func walkExprContext(expr ast.Expr, node *Node, target func(*ast.CallExpr) (stri
 		if key != "" {
 			node.callees[key] = true
 			if !wholeStatementValue {
-				node.NestedCalls = append(node.NestedCalls, CallSite{Target: key, Position: e.Pos()})
+				node.NestedCalls = append(node.NestedCalls, CallSite{Target: key, Position: e.Pos(), End: e.End})
 			}
 		}
 		if unresolved {

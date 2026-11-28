@@ -496,7 +496,7 @@ func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, type
 			if declType == types.Unknown {
 				tc.errorf(s.Type.Pos(), "unknown type %q", s.Type.String())
 			} else if !valType.IsAssignableTo(declType) {
-				tc.errorf(s.Pos(), "cannot assign %s to %s", valType.TypeName(), declType.TypeName())
+				tc.typeMismatch(s.Pos(), declType, valType, "cannot assign %s to %s")
 			}
 			env.symbols[s.Name] = binding{typ: declType, local: LocalBinding{Let: s}}
 		} else {
@@ -506,7 +506,7 @@ func (tc *TypeChecker) checkStmt(stmt ast.Stmt, env *Env, typed *TypedFile, type
 		if s.Value != nil {
 			valType := tc.checkExpr(s.Value, env, typed, typeParamEnv)
 			if returnType != types.Void && returnType != types.Unknown && valType != types.Unknown && !valType.IsAssignableTo(returnType) {
-				tc.errorf(s.Pos(), "cannot return %s from function returning %s", valType.TypeName(), returnType.TypeName())
+				tc.typeMismatch(s.Pos(), returnType, valType, "cannot return %s from function returning %s")
 			}
 		}
 	case *ast.ExprStmt:
@@ -668,7 +668,7 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 		if ident, ok := mem.Object.(*ast.Ident); ok {
 			if adapter, ok := env.lookup(ident.Name); ok && adapter.stdlibAI && !adapter.ambiguous {
 				tc.currentFacts.Operations = append(tc.currentFacts.Operations, effects.Operation{
-					Effects: effects.AI, Name: "std/ai.prompt", Position: e.Pos(),
+					Effects: effects.AI, Name: "std/ai.prompt", Position: e.Pos(), End: e.End,
 				})
 				typed.Types[mem.Object] = adapter.typ
 				typed.Types[e.Callee] = types.Unknown
@@ -696,11 +696,13 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 	}
 	fnDecl := typed.FunctionReferences[e.Callee]
 	if fnDecl != nil {
-		tc.currentFacts.Calls = append(tc.currentFacts.Calls, effects.ResolvedCall{Target: fnDecl, Position: e.Pos()})
+		tc.currentFacts.Calls = append(tc.currentFacts.Calls, effects.ResolvedCall{Target: fnDecl, Position: e.Pos(), End: e.End})
 	}
 	if fnDecl == nil && !println {
 		typed.UnresolvedCalls[e] = true
-		tc.markEffectGap(e.Pos(), "unresolved call target")
+		tc.currentFacts.Gaps = append(tc.currentFacts.Gaps, effects.CoverageGap{
+			Reason: "unresolved call target", Position: e.Pos(), End: e.End,
+		})
 	}
 
 	ft, ok := calleeType.(*types.FunctionType)
@@ -844,7 +846,14 @@ func (tc *TypeChecker) resolveTypeName(name string, pos token.Position, reportAm
 }
 
 func (tc *TypeChecker) errorf(pos token.Position, format string, args ...any) {
-	tc.diags = append(tc.diags, diagnostic.Errorf(pos, format, args...))
+	tc.diags = append(tc.diags, diagnostic.Errorf(pos, format, args...).WithCode(diagnostic.TypeError))
+}
+
+func (tc *TypeChecker) typeMismatch(pos token.Position, expected, actual types.Type, format string) {
+	expectedName, actualName := expected.TypeName(), actual.TypeName()
+	diag := diagnostic.Errorf(pos, format, actualName, expectedName).WithCode(diagnostic.TypeMismatch)
+	diag.ExpectedType, diag.ActualType = expectedName, actualName
+	tc.diags = append(tc.diags, diag)
 }
 
 func classificationOf(annotations []ast.Annotation) types.Classification {

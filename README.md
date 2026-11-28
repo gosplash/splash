@@ -16,6 +16,7 @@ Splash is an early statically typed language for backend and control-plane softw
 | Required policy coverage | `check`, `emit`, `build`, `tools`, and VM `run` report indeterminate verification when required source coverage is missing. The shared gate preserves known violations and leaves effect inspection available. |
 | Approval and classification | Implemented for selected checks and lowering forms. Request-bound approval and general classified-data flow enforcement are proposed. |
 | Verified source artifact boundary | The compiler requires an encapsulated `VerifiedProgram` for Go emission, VM lowering, and tool export. It authorizes the captured source under the shared policy checks. |
+| Structured check diagnostics | `splash check <file.splash> --json` emits a versioned source verdict with diagnostic codes, source locations, and resolved effect witnesses. [JSON report v1](docs/design/semantic-compiler-interface.md#check-json-v1) |
 | Semantic queries and authority comparisons | Proposed. Graph, effect, and approval inspection use detached projections of the analyzed program. |
 | TTCS and cost evaluation | Experimental methodology. Comparative authoring results are pending. |
 

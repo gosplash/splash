@@ -126,7 +126,7 @@ func (p *Parser) eat(k token.Kind) token.Token {
 
 // errorf records a parse error diagnostic.
 func (p *Parser) errorf(pos token.Position, format string, args ...any) {
-	p.diags = append(p.diags, diagnostic.Errorf(pos, format, args...))
+	p.diags = append(p.diags, diagnostic.Errorf(pos, format, args...).WithCode(diagnostic.ParseError))
 }
 
 // sync advances past tokens until a top-level declaration keyword or EOF is found.
@@ -917,7 +917,7 @@ func (p *Parser) parseExpr(minPrec precedence) ast.Expr {
 		case token.DOT, token.OPT_CHAIN:
 			left = p.parseMemberExpr(left)
 		case token.LPAREN:
-			left = p.parseCallExpr(left)
+			left = p.parseCallExpr(left, nil)
 		case token.LBRACKET:
 			left = p.parseIndexExpr(left)
 		case token.NULL_COAL:
@@ -940,18 +940,7 @@ func (p *Parser) parseExpr(minPrec precedence) ast.Expr {
 					p.advance()
 				}
 				p.eat(token.GT)
-				callPos := p.current().Pos
-				p.eat(token.LPAREN)
-				var args []ast.Expr
-				for !p.check(token.RPAREN) && !p.check(token.EOF) {
-					args = append(args, p.parseExpr(precLowest))
-					if !p.check(token.COMMA) {
-						break
-					}
-					p.advance()
-				}
-				p.eat(token.RPAREN)
-				left = &ast.CallExpr{Callee: left, Args: args, TypeArgs: typeArgs, Position: callPos}
+				left = p.parseCallExpr(left, typeArgs)
 			} else {
 				// Comparison: left < right
 				p.advance()
@@ -1058,7 +1047,7 @@ func (p *Parser) parseMemberExpr(obj ast.Expr) ast.Expr {
 	}
 }
 
-func (p *Parser) parseCallExpr(callee ast.Expr) ast.Expr {
+func (p *Parser) parseCallExpr(callee ast.Expr, typeArgs []ast.TypeExpr) ast.Expr {
 	pos := p.current().Pos
 	p.eat(token.LPAREN)
 	var args []ast.Expr
@@ -1069,8 +1058,14 @@ func (p *Parser) parseCallExpr(callee ast.Expr) ast.Expr {
 		}
 		p.advance()
 	}
-	p.eat(token.RPAREN)
-	return &ast.CallExpr{Callee: callee, Args: args, Position: pos}
+	close := p.eat(token.RPAREN)
+	var end token.Position
+	if close.Kind == token.RPAREN {
+		end = close.Pos
+		end.Column++
+		end.Offset++
+	}
+	return &ast.CallExpr{Callee: callee, Args: args, TypeArgs: typeArgs, Position: pos, End: end}
 }
 
 // isGenericCallAhead returns true if the token sequence from the current position

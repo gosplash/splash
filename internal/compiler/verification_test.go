@@ -185,8 +185,13 @@ agent fn report(callback: fn() -> Int) -> Int { return read() + callback() }
 	}
 	result := check()
 	result.Violations[0].Message = "changed"
+	result.Violations[0].Effects[0] = "changed"
+	result.Violations[0].Witness[0].Target = "changed"
 	result.Incomplete[0].Message = "changed"
-	check()
+	again := check().Violations[0]
+	if again.Effects[0] != "DB.read" || again.Witness[0].Target != "read" {
+		t.Fatalf("report metadata changed retained evidence: %+v", again)
+	}
 }
 
 func TestArtifactResultsAreDetached(t *testing.T) {

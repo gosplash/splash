@@ -2,7 +2,7 @@
 
 Central compiler architecture proposal. Splash's language defines types, contracts and effects. The semantic compiler resolves those facts and exposes them to humans and agents. The trust architecture governs which verified facts can authorize artifact production and release. The [repository assessment](repository-assessment.md) describes the current implementation. This proposal extends the [April analyzed-program design](../superpowers/specs/2026-04-07-splash-language-positioning.md#L294).
 
-The [kickoff decision](../decisions/2026-11-26-analyzed-program-and-verification.md) adopts this direction. The implemented compiler retains captured source and typed modules, resolves named calls, and requires an in-process `VerifiedProgram` after checking required source policies. Go emission, tool export, and VM lowering consume this handle. Public schema versioning, identities stable across revisions, and persisted artifact provenance remain proposed. [Verification implementation](../../internal/compiler/verification.go)
+The [kickoff decision](../decisions/2026-11-26-analyzed-program-and-verification.md) adopts this direction. The implemented compiler retains captured source and typed modules, resolves named calls, and requires an in-process `VerifiedProgram` after checking required source policies. Go emission, tool export, and VM lowering consume this handle. The `check` command now has a [versioned JSON report](#check-json-v1). Identities stable across revisions and persisted artifact provenance remain proposed. [Verification implementation](../../internal/compiler/verification.go)
 
 ## The analyzed program
 
@@ -68,7 +68,7 @@ Show declared grants, inferred effects and coverage separately. With complete ev
 
 ## Commands and status
 
-Keep a file-first CLI while adding machine output. Exact spelling is proposed.
+The CLI uses file-first commands. JSON verification is implemented. The remaining machine interfaces below describe proposed commands.
 
 ```text
 splash check app/main.splash --json
@@ -94,6 +94,28 @@ A report can show type conformance as passed, call-graph completeness, effect co
 
 A full result applies to the selected entry plus all reachable imports resolved for that snapshot and policy. Whole-repository coverage needs an explicit complete entry set. A diagnostic-only partial result can serve navigation and repair but cannot authorize codegen, attest a snapshot, or serve as a green CI result. Where current analysis supports only a subset, disclose both the rules run and coverage limits. A successful invocation of an informational command carries no stronger claim than its reported phases.
 
+### Check JSON v1
+
+`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, and a `diagnostics` array. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its existing success and diagnostic messages.
+
+The verdict is `rejected` when the current compiler identifies a language or policy error. It is `indeterminate` when the verifier reports missing required policy coverage without an established violation. If both are present, the verdict is `rejected` and the array includes both findings. Failure to read the entry source has a null verdict and a `SOURCE_READ_ERROR` diagnostic. Import resolution errors reported by the front end are source diagnostics under the current rules. CLI usage errors and errors returned by the JSON encoder are reported on stderr.
+
+Diagnostic records have `code`, `phase`, `severity`, and a human-readable `message`. Consumers should branch on codes. Records are sorted by file, line, column, code, and message. Optional `source.start` has `file`, a one-based `line`, and a one-based Unicode code-point `column`. Call-site diagnostics can include an exclusive `source.end` just after the closing parenthesis. The start uses the compiler's diagnostic anchor, which is the opening parenthesis for a call. Other locations may be point-only.
+
+| Code | Phase | Evidence |
+| --- | --- | --- |
+| `PARSE_ERROR` | `parse` | Parser diagnostic, including imported files. |
+| `TYPE_ERROR` | `type` | Other front-end type or binding diagnostic. |
+| `TYPE_MISMATCH` | `type` | Assignment or return mismatch with `expectedType` and `actualType` display names. |
+| `DECLARED_EFFECT_MISSING` | `effect` | Missing atomic `effects` and the resolved call to the declaration requiring them. |
+| `INFERRED_EFFECT_EXCEEDS_AUTHORITY` | `effect` | The modeled effect and an ordered `witness` from resolved calls to its operation. |
+| `POLICY_VIOLATION` | `policy` | A violation of the current source safety checks. |
+| `POLICY_COVERAGE_INCOMPLETE` | `policy` | Source site where required policy evidence is missing. |
+| `SOURCE_READ_ERROR` | `input` | Entry source read failed before a program verdict could be determined. |
+| `COMPILER_ERROR` | `verification` | Unexpected compiler failure without a program verdict. |
+
+A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. The report currently omits phase-level coverage, snapshot identities, causal diagnostic links, and repair suggestions. Clients should tolerate additive fields and codes within v1.
+
 ## Snapshot and artifact provenance
 
 | Identity | Inputs it binds |
@@ -110,12 +132,10 @@ A digest identifies content. Authenticity comes from trusted reanalysis or authe
 
 Extend `diagnostic.Diagnostic` at its producers. Attach a stable code and phase with typed evidence, then render readable text from the same record. Human text may improve independently. Preserve severity and notes as the migration begins. Source locations use file-relative UTF-8 byte offsets with half-open ranges. A source table maps them to lines and columns, and an LSP adapter can negotiate the editor’s position encoding. Where a token end is unavailable, represent a point honestly. Validate ranges against the input digest.
 
-A hypothetical effect diagnostic after implementing the underlying invariant could look like this excerpt. The enclosing result also carries the envelope metadata defined above.
+This research sketch illustrates possible future diagnostic evidence for the same effect invariant. The implemented v1 report is documented above.
 
 ```json
 {
-  "schemaVersion": 1,
-  "verdict": "rejected",
   "scope": {"kind": "entryClosure", "entry": "app/main.splash"},
   "diagnostics": [{
     "code": "SPLASH_EFFECT_CALL_NEEDS",

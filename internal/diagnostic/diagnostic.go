@@ -2,6 +2,7 @@ package diagnostic
 
 import (
 	"fmt"
+
 	"gosplash.dev/splash/internal/token"
 )
 
@@ -26,11 +27,43 @@ func (s Severity) String() string {
 	}
 }
 
+type Code string
+
+const (
+	ParseError                     Code = "PARSE_ERROR"
+	TypeError                      Code = "TYPE_ERROR"
+	TypeMismatch                   Code = "TYPE_MISMATCH"
+	PolicyViolation                Code = "POLICY_VIOLATION"
+	PolicyCoverageIncomplete       Code = "POLICY_COVERAGE_INCOMPLETE"
+	DeclaredEffectMissing          Code = "DECLARED_EFFECT_MISSING"
+	InferredEffectExceedsAuthority Code = "INFERRED_EFFECT_EXCEEDS_AUTHORITY"
+)
+
+// WitnessStep is an edge at a source site, ending in a resolved declaration or
+// modeled operation. End is exclusive. Declaration is set for resolved calls.
+type WitnessStep struct {
+	Target      string
+	Site        token.Position
+	End         token.Position
+	Declaration token.Position
+}
+
 type Diagnostic struct {
-	Severity Severity
-	Message  string
-	Pos      token.Position
-	Notes    []string
+	Code         Code
+	End          token.Position
+	Effects      []string
+	Witness      []WitnessStep
+	ExpectedType string
+	ActualType   string
+	Severity     Severity
+	Message      string
+	Pos          token.Position
+	Notes        []string
+}
+
+func (d Diagnostic) WithCode(code Code) Diagnostic {
+	d.Code = code
+	return d
 }
 
 func (d Diagnostic) String() string {

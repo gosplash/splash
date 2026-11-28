@@ -94,6 +94,7 @@ type CallExpr struct {
 	Args     []Expr
 	TypeArgs []TypeExpr
 	Position token.Position
+	End      token.Position // exclusive end after the closing parenthesis, when present
 }
 
 func (n *CallExpr) Pos() token.Position { return n.Position }

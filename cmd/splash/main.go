@@ -27,7 +27,22 @@ func main() {
 
 	switch cmd {
 	case "check":
-		if err := runCheck(file); err != nil {
+		path, jsonMode, err := parseCheckArgs(os.Args[2:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if jsonMode {
+			ok, err := runCheckJSON(path, os.Stdout)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			if !ok {
+				os.Exit(1)
+			}
+			return
+		}
+		if err := runCheck(path); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
