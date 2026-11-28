@@ -280,16 +280,23 @@ func TestAuthorityDiffReportsSeparateGrantsAndScopedEffectCoverage(t *testing.T)
 
 func TestAuthorityDiffKeepsConcreteChangesWithinSymbolicTypes(t *testing.T) {
 	binary := buildSplashCLI(t)
-	const source = "module app\nfn handle<T>(callback: fn(T) -> %s) {}"
-	base := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, "Int"))
-	head := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, "Bool"))
-	report, raw := runTestAuthorityDiff(t, binary, base, head, 0)
-	if report.Comparison == nil {
-		t.Fatalf("expected verified comparison: %s", raw)
-	}
-	signatures := report.Comparison.PublicSignatures
-	if signatures.Status != "changed" || signatures.Complete || len(signatures.Changes) != 1 ||
-		signatures.Changes[0].Kind != "modified" || signatures.Changes[0].Reason == "" {
-		t.Fatalf("expected concrete callback result change and generic uncertainty: %s", raw)
+	for _, tc := range []struct{ name, baseType, headType string }{
+		{"callback results", "fn(T) -> Int", "fn(T) -> Bool"},
+		{"result type arguments", "Result<T, Int>", "Result<T, Bool>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const source = "module app\nfn handle<T>(value: %s) {}"
+			base := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, tc.baseType))
+			head := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, tc.headType))
+			report, raw := runTestAuthorityDiff(t, binary, base, head, 0)
+			if report.Comparison == nil {
+				t.Fatalf("expected verified comparison: %s", raw)
+			}
+			signatures := report.Comparison.PublicSignatures
+			if signatures.Status != "changed" || signatures.Complete || len(signatures.Changes) != 1 ||
+				signatures.Changes[0].Kind != "modified" || signatures.Changes[0].Reason == "" {
+				t.Fatalf("expected a concrete type change and generic uncertainty: %s", raw)
+			}
+		})
 	}
 }
