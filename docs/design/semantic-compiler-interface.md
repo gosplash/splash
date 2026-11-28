@@ -142,7 +142,7 @@ go test ./cmd/splash -run '^$' -bench 'Benchmark(RejectedPolicyChain|Overlapping
 
 The sandbox checker skips a root's walk when the union of declared graph effects contains no possible violation of its policy. The exact reachable-set check still runs when that test finds a possible violation. This optimization leaves required coverage checks in place.
 
-With the overlapping-policy harness above, comparing `4ba7f72` to `37cf52e` on Apple M5 and Go 1.26.3, the 256-root, 128-layer fixture's median verification time fell from 12.53 ms to 0.51 ms. Allocated bytes per verification fell from 11,645,462 to 567,701. Each median uses three 200 ms benchmark runs. This fixture declares no effect outside its sandbox allow list. The measurement excludes source analysis and does not characterize mixed graphs that need exact walks.
+With the overlapping-policy harness above, comparing `4ba7f72` to `ce1d14f` on Apple M5 and Go 1.26.3, the 256-root, 128-layer fixture's median verification time fell from 12.89 ms to 0.53 ms. Allocated bytes per verification fell from 11,645,440 to 567,700. The separate 2,000-function check pipeline without sandbox annotations measured 6.13 ms and 6.16 ms, with the same median allocation count. Each median uses three 200 ms benchmark runs. This fixture declares no effect outside its sandbox allow list. The measurement excludes source analysis and does not characterize mixed graphs that need exact walks.
 
 ### Inspect JSON v1
 
