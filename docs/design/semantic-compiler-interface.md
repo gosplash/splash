@@ -98,13 +98,13 @@ A full result applies to the selected entry plus all reachable imports resolved 
 
 ### Check JSON v1
 
-`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, `effectCoverage`, and a `diagnostics` array. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its existing success and diagnostic messages.
+`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, `effectCoverage`, and a `diagnostics` array. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its success and diagnostic messages, with long diagnostic paths abbreviated as described below.
 
 The verdict is `rejected` when the current compiler identifies a language or policy error. It is `indeterminate` when the verifier reports missing required policy coverage without an established violation. If both are present, the verdict is `rejected` and the array includes both findings. Failure to read the entry source has a null verdict and a `SOURCE_READ_ERROR` diagnostic. Import resolution errors reported by the front end are source diagnostics under the current rules. CLI usage errors and errors returned by the JSON encoder are reported on stderr.
 
 `effectCoverage` has a `status` of `complete` when every function summary in the analyzed entry and its imports is complete under the current effect model. The status is `incomplete` when any summary has an effect gap, including ordinary callbacks and the trusted Go approval adapter. The field is `null` when source analysis cannot produce a snapshot. Coverage describes the effect summaries independently of policy outcomes. A `verified` verdict can accompany `incomplete` summaries outside the required source scope. Use `splash effects` or `splash inspect` to find affected functions and see known effects.
 
-Diagnostic records have `code`, `phase`, `severity`, and a human-readable `message`. Consumers should branch on codes. Records are sorted by file, line, column, code, and message. Optional `source.start` has `file`, a one-based `line`, and a one-based Unicode code-point `column`. Call-site diagnostics can include an exclusive `source.end` just after the closing parenthesis. The start uses the compiler's diagnostic anchor, which is the opening parenthesis for a call. Other locations may be point-only.
+Diagnostic records have `code`, `phase`, `severity`, and a human-readable `message`. Consumers should branch on codes. Records are sorted by file, line, column, code, message, and policy rule ID. Optional `source.start` has `file`, a one-based `line`, and a one-based Unicode code-point `column`. Call-site diagnostics can include an exclusive `source.end` just after the closing parenthesis. The start uses the compiler's diagnostic anchor, which is the opening parenthesis for a call. Other locations may be point-only.
 
 | Code | Phase | Evidence |
 | --- | --- | --- |
@@ -118,7 +118,27 @@ Diagnostic records have `code`, `phase`, `severity`, and a human-readable `messa
 | `SOURCE_READ_ERROR` | `input` | Entry source read failed before a program verdict could be determined. |
 | `COMPILER_ERROR` | `verification` | Unexpected compiler failure without a program verdict. |
 
-A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. Clients should tolerate additive fields and codes within v1.
+Policy producers also attach a stable `policyRuleId` to `POLICY_VIOLATION` and `POLICY_COVERAGE_INCOMPLETE`. The broad code continues to identify the category. Use the rule ID to distinguish findings within that category.
+
+| Policy | Rule IDs |
+| --- | --- |
+| Approval | `approval.call_context`, `approval.required` |
+| Redline | `redline.agent_reachable` |
+| Containment | `containment.none`, `containment.read_only`, `containment.approved_only` |
+| Tool data classification | `tool.classified_return`, `tool.return_coverage` |
+| Sandbox | `sandbox.duplicate`, `sandbox.invalid_effect_list`, `sandbox.denied_effect`, `sandbox.effect_not_allowed` |
+| Budget | `budget.max_cost_literal`, `budget.max_calls_literal` |
+| Required coverage | `coverage.required_source` |
+
+Path diagnostics report `witnessLength` and `witnessTruncated`. An effect witness counts call or operation steps and shows at most eight, keeping the first seven calls and the origin operation when truncated. A redline path counts function names, including both endpoints, and appears in the message. When truncated, it shows the agent root and the seven names nearest the violation. Messages identify how many entries were omitted. Every individual finding still appears in the report.
+
+A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. The report currently omits phase-level coverage, snapshot identities, causal diagnostic links, and repair suggestions. Clients should tolerate additive fields and codes within v1.
+
+The policy scaling benchmarks cover a rejected chain and overlapping sandbox, agent, and approval closures. The chain includes analysis, verification, and JSON encoding, with the writer counting bytes only. The overlapping-roots benchmark reuses captured analysis and times verification. In the `7b757c3` baseline profile on Apple M5 and Go 1.26.3, sandbox checks accounted for 1.23 s of 1.45 s sampled within verification and 82.13% of total sampled allocation space. The sandbox traversal still visits each root's reachable set independently.
+
+```sh
+go test ./cmd/splash -run '^$' -bench 'Benchmark(RejectedPolicyChain|OverlappingPolicyRoots)$' -benchtime 300ms -count 3 -benchmem
+```
 
 ### Inspect JSON v1
 

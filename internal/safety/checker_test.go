@@ -483,3 +483,63 @@ fn run_agent() needs Agent -> String { return "ok" }
 		t.Error("expected error: @budget max_calls must be an integer literal")
 	}
 }
+
+func TestPolicyRuleIdentifiesProducer(t *testing.T) {
+	for _, tc := range []struct{ rule, source, message string }{
+		{"approval.call_context", "module m\napprove fn save() -> Int { return 1 }\nfn main() { println(1 + save()) }", "must be a standalone statement"},
+		{"approval.required", "module m\nagent fn entry() needs DB.write, Net {}", "combines DB.write and Net"},
+		{"redline.agent_reachable", "module m\nagent fn entry() { target() }\nredline fn target() {}", "call path: entry → target"},
+		{"containment.none", "@containment(agent: \"none\")\nmodule m\nagent fn entry() {}", "has @containment"},
+		{"containment.read_only", "@containment(agent: \"read_only\")\nmodule m\nagent fn entry() needs Net {}", "has Net"},
+		{"containment.approved_only", "@containment(agent: \"approved_only\")\nmodule m\nagent fn entry() { target() }\nfn target() {}", "add approve fn or @agent_allowed"},
+		{"tool.classified_return", "module m\ntype Account {\n@sensitive\nsecret: Int\n}\ntool fn get() -> Account { return Account { secret: 1 } }", "contains sensitive or restricted fields"},
+		{"sandbox.duplicate", "module m\n@sandbox(deny: [Net])\n@sandbox(allow: [])\nfn entry() {}", "duplicate @sandbox annotation"},
+		{"sandbox.invalid_effect_list", "module m\n@sandbox(deny: Net)\nfn entry() {}", "requires a list of effect labels"},
+		{"sandbox.invalid_effect_list", "module m\n@sandbox(deny: [1])\nfn entry() {}", "requires an effect label"},
+		{"sandbox.invalid_effect_list", "module m\n@sandbox(deny: [Unknown])\nfn entry() {}", "unknown effect"},
+		{"sandbox.denied_effect", "module m\n@sandbox(deny: [Net])\nfn entry() needs Net {}", "uses denied effect"},
+		{"sandbox.effect_not_allowed", "module m\n@sandbox(allow: [])\nfn entry() needs Net {}", "not in allow list"},
+		{"budget.max_cost_literal", "module m\n@budget(max_cost: \"bad\")\nfn entry() {}", "must be a numeric literal"},
+		{"budget.max_calls_literal", "module m\n@budget(max_calls: 1.5)\nfn entry() {}", "must be an integer literal"},
+	} {
+		t.Run(tc.rule, func(t *testing.T) {
+			diags := check(tc.source)
+			if len(diags) != 1 || diags[0].Code != diagnostic.PolicyViolation ||
+				!strings.Contains(diags[0].Message, tc.message) {
+				t.Fatalf("expected policy violation containing %q, got %v", tc.message, diags)
+			}
+			if got := diags[0].PolicyRuleID; got != tc.rule {
+				t.Fatalf("policy rule ID = %q, want %q", got, tc.rule)
+			}
+		})
+	}
+}
+
+func TestSandboxFindingsHaveStableTextOrder(t *testing.T) {
+	const source = `module m
+@sandbox(allow: [DB.read], deny: [Net])
+fn root() {
+    z()
+    a()
+}
+fn z() needs Net {}
+fn a() needs Net {}
+`
+	want := []string{
+		`@sandbox on "root": reachable function "a" uses denied effect Net`,
+		`@sandbox on "root": reachable function "a" uses effect Net not in allow list`,
+		`@sandbox on "root": reachable function "z" uses denied effect Net`,
+		`@sandbox on "root": reachable function "z" uses effect Net not in allow list`,
+	}
+	for range 20 {
+		diags := check(source)
+		if len(diags) != len(want) {
+			t.Fatalf("got %d diagnostics, want %d", len(diags), len(want))
+		}
+		for i, diag := range diags {
+			if diag.Message != want[i] {
+				t.Fatalf("diagnostic %d = %q, want %q", i, diag.Message, want[i])
+			}
+		}
+	}
+}

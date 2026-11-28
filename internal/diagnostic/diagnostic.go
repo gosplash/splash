@@ -39,6 +39,9 @@ const (
 	InferredEffectExceedsAuthority Code = "INFERRED_EFFECT_EXCEEDS_AUTHORITY"
 )
 
+// WitnessLimit is the maximum number of entries rendered per diagnostic path.
+const WitnessLimit = 8
+
 // WitnessStep is an edge at a source site, ending in a resolved declaration or
 // modeled operation. End is exclusive. Declaration is set for resolved calls.
 type WitnessStep struct {
@@ -49,16 +52,19 @@ type WitnessStep struct {
 }
 
 type Diagnostic struct {
-	Code         Code
-	End          token.Position
-	Effects      []string
-	Witness      []WitnessStep
-	ExpectedType string
-	ActualType   string
-	Severity     Severity
-	Message      string
-	Pos          token.Position
-	Notes        []string
+	Code             Code
+	PolicyRuleID     string
+	WitnessLength    int
+	WitnessTruncated bool
+	End              token.Position
+	Effects          []string
+	Witness          []WitnessStep
+	ExpectedType     string
+	ActualType       string
+	Severity         Severity
+	Message          string
+	Pos              token.Position
+	Notes            []string
 }
 
 func (d Diagnostic) WithCode(code Code) Diagnostic {

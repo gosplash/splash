@@ -29,15 +29,18 @@ type checkEffectCoverage struct {
 }
 
 type checkDiagnostic struct {
-	Code         string         `json:"code"`
-	Phase        string         `json:"phase"`
-	Severity     string         `json:"severity"`
-	Message      string         `json:"message"`
-	ExpectedType string         `json:"expectedType,omitempty"`
-	ActualType   string         `json:"actualType,omitempty"`
-	Source       *checkRange    `json:"source,omitempty"`
-	Effects      []string       `json:"effects,omitempty"`
-	Witness      []checkWitness `json:"witness,omitempty"`
+	Code             string         `json:"code"`
+	PolicyRuleID     string         `json:"policyRuleId,omitempty"`
+	WitnessLength    int            `json:"witnessLength,omitempty"`
+	WitnessTruncated *bool          `json:"witnessTruncated,omitempty"`
+	Phase            string         `json:"phase"`
+	Severity         string         `json:"severity"`
+	Message          string         `json:"message"`
+	ExpectedType     string         `json:"expectedType,omitempty"`
+	ActualType       string         `json:"actualType,omitempty"`
+	Source           *checkRange    `json:"source,omitempty"`
+	Effects          []string       `json:"effects,omitempty"`
+	Witness          []checkWitness `json:"witness,omitempty"`
 }
 
 type checkPoint struct {
@@ -126,11 +129,11 @@ func runCheckJSON(path string, output io.Writer) (bool, error) {
 }
 
 func appendCheckDiagnostics(output []checkDiagnostic, diagnostics []diagnostic.Diagnostic) []checkDiagnostic {
-	// Some safety checks enumerate reachable functions through maps.
-	// Canonicalize output order independently of the text renderer.
+	// Canonicalize output order independently of policy pass order.
 	slices.SortStableFunc(diagnostics, func(a, b diagnostic.Diagnostic) int {
 		return cmp.Or(cmp.Compare(a.Pos.File, b.Pos.File), cmp.Compare(a.Pos.Line, b.Pos.Line),
-			cmp.Compare(a.Pos.Column, b.Pos.Column), cmp.Compare(a.Code, b.Code), cmp.Compare(a.Message, b.Message))
+			cmp.Compare(a.Pos.Column, b.Pos.Column), cmp.Compare(a.Code, b.Code),
+			cmp.Compare(a.Message, b.Message), cmp.Compare(a.PolicyRuleID, b.PolicyRuleID))
 	})
 	for _, diag := range diagnostics {
 		output = append(output, projectCheckDiagnostic(diag))
@@ -163,6 +166,14 @@ func projectCheckDiagnostic(d diagnostic.Diagnostic) checkDiagnostic {
 		Code: string(d.Code), Phase: phase, Severity: d.Severity.String(),
 		Message: d.Message, Source: checkSourceRange(d.Pos, d.End), Effects: d.Effects,
 		ExpectedType: d.ExpectedType, ActualType: d.ActualType,
+		PolicyRuleID: d.PolicyRuleID, WitnessLength: d.WitnessLength,
+	}
+	if d.WitnessLength > 0 {
+		truncated := d.WitnessTruncated
+		result.WitnessTruncated = &truncated
+	}
+	if len(d.Witness) != 0 {
+		result.Witness = make([]checkWitness, 0, len(d.Witness))
 	}
 	for _, step := range d.Witness {
 		kind := "operation"

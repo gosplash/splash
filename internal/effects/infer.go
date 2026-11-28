@@ -1,6 +1,7 @@
 package effects
 
 import (
+	"fmt"
 	"strings"
 
 	"gosplash.dev/splash/internal/ast"
@@ -60,6 +61,7 @@ type contractViolation struct {
 type effectStep struct {
 	next   *Summary
 	origin Operation
+	length int
 	at     token.Position
 	end    token.Position
 }
@@ -113,7 +115,7 @@ func Infer(facts []FunctionFacts) []*Summary {
 		for _, operation := range fact.Operations {
 			for _, effect := range atomicEffects {
 				if operation.Effects.Has(effect.flag) && !summary.Inferred.Has(effect.flag) {
-					summary.add(effect.flag, effectStep{origin: operation, at: operation.Position, end: operation.End})
+					summary.add(effect.flag, effectStep{origin: operation, length: 1, at: operation.Position, end: operation.End})
 					pending = append(pending, knownEffect{summary, effect.flag})
 				}
 			}
@@ -121,9 +123,13 @@ func Infer(facts []FunctionFacts) []*Summary {
 	}
 	for head := 0; head < len(pending); head++ {
 		current := pending[head]
+		downstream := current.summary.witness[current.effect]
 		for _, edge := range callers[current.summary] {
 			if !edge.caller.Inferred.Has(current.effect) {
-				edge.caller.add(current.effect, effectStep{next: current.summary, at: edge.at, end: edge.end})
+				edge.caller.add(current.effect, effectStep{
+					next: current.summary, origin: downstream.origin, length: downstream.length + 1,
+					at: edge.at, end: edge.end,
+				})
 				pending = append(pending, knownEffect{edge.caller, current.effect})
 			}
 		}
@@ -161,7 +167,8 @@ func (s *Summary) add(effect EffectSet, step effectStep) {
 }
 
 // Diagnostics rejects established violations even when other effects remain
-// unknown. Each witness follows a shortest resolved path to a modeled origin.
+// unknown. Each witness shows the start of a shortest resolved path and its
+// modeled origin, with an explicit count of any omitted steps.
 func (s *Summary) Diagnostics() []diagnostic.Diagnostic {
 	missing := s.Inferred &^ s.Declared
 	var diags []diagnostic.Diagnostic
@@ -172,6 +179,7 @@ func (s *Summary) Diagnostics() []diagnostic.Diagnostic {
 			violation.missing, call.Target.Name, call.Target.Pos()).WithCode(diagnostic.DeclaredEffectMissing)
 		diag.End = call.End
 		diag.Effects = violation.missing.Labels()
+		diag.WitnessLength = 1
 		diag.Witness = []diagnostic.WitnessStep{{
 			Target: call.Target.Name, Site: call.Position, End: call.End, Declaration: call.Target.Pos(),
 		}}
@@ -181,28 +189,36 @@ func (s *Summary) Diagnostics() []diagnostic.Diagnostic {
 		if !missing.Has(effect.flag) {
 			continue
 		}
-		chain := []string{s.Function.Name}
-		var witness []diagnostic.WitnessStep
-		current := s
-		step := current.witness[effect.flag]
+		step := s.witness[effect.flag]
+		origin := step.origin
+		length := step.length
+		shown := min(length, diagnostic.WitnessLimit)
+		chain := make([]string, 1, shown+2)
+		chain[0] = s.Function.Name
+		witness := make([]diagnostic.WitnessStep, 0, shown)
 		start, end := step.at, step.end
-		for step.next != nil {
-			current = step.next
-			chain = append(chain, current.Function.Name)
+		for range shown - 1 {
+			target := step.next
+			chain = append(chain, target.Function.Name)
 			witness = append(witness, diagnostic.WitnessStep{
-				Target: current.Function.Name, Site: step.at, End: step.end, Declaration: current.Function.Pos(),
+				Target: target.Function.Name, Site: step.at, End: step.end, Declaration: target.Function.Pos(),
 			})
-			step = current.witness[effect.flag]
+			step = target.witness[effect.flag]
 		}
-		chain = append(chain, step.origin.Name)
-		witness = append(witness, diagnostic.WitnessStep{Target: step.origin.Name, Site: step.at, End: step.end})
+		if length > shown {
+			chain = append(chain, fmt.Sprintf("… (omitted %d of %d steps) …", length-shown, length))
+		}
+		chain = append(chain, origin.Name)
+		witness = append(witness, diagnostic.WitnessStep{Target: origin.Name, Site: origin.Position, End: origin.End})
 		diag := diagnostic.Errorf(start,
 			"inferred effect %s exceeds %q's declared authority: %s (origin at %s)",
-			effect.flag, s.Function.Name, strings.Join(chain, " -> "), step.origin.Position).
+			effect.flag, s.Function.Name, strings.Join(chain, " -> "), origin.Position).
 			WithCode(diagnostic.InferredEffectExceedsAuthority)
 		diag.End = end
 		diag.Effects = []string{effect.name}
 		diag.Witness = witness
+		diag.WitnessLength = length
+		diag.WitnessTruncated = length > shown
 		diags = append(diags, diag)
 	}
 	return diags

@@ -168,26 +168,63 @@ func (g *Graph) Callers(targets map[string]bool) map[string]bool {
 // spanning-tree parent map: each reachable function name maps to the name of
 // the function that first reached it. Roots map to the empty string.
 func (g *Graph) Parents(roots []string) map[string]string {
-	parents := make(map[string]string)
-	queue := append([]string(nil), roots...)
-	for _, r := range roots {
-		parents[r] = ""
+	tree := g.ShortestPaths(roots)
+	parents := make(map[string]string, len(tree))
+	for name, link := range tree {
+		parents[name] = link.parent
 	}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
+	return parents
+}
+
+type pathLink struct {
+	parent string
+	root   string
+	length int
+}
+
+// PathTree records shortest paths from a set of roots. Lengths count both
+// endpoints, and ties follow the supplied root order and sorted callee order.
+type PathTree map[string]pathLink
+
+// ShortestPaths builds a breadth-first tree rooted at the supplied functions.
+func (g *Graph) ShortestPaths(roots []string) PathTree {
+	tree := make(PathTree)
+	queue := append([]string(nil), roots...)
+	for _, root := range roots {
+		tree[root] = pathLink{root: root, length: 1}
+	}
+	for head := 0; head < len(queue); head++ {
+		cur := queue[head]
 		node := g.nodes[cur]
 		if node == nil {
 			continue
 		}
+		link := tree[cur]
 		for _, callee := range node.Callees() {
-			if _, seen := parents[callee]; !seen {
-				parents[callee] = cur
+			if _, seen := tree[callee]; !seen {
+				tree[callee] = pathLink{parent: cur, root: link.root, length: link.length + 1}
 				queue = append(queue, callee)
 			}
 		}
 	}
-	return parents
+	return tree
+}
+
+// PathExcerpt returns the root and the suffix nearest target, plus the full
+// length. The caller supplies a positive limit. An unreachable target has
+// length zero.
+func (tree PathTree) PathExcerpt(target string, limit int) ([]string, int) {
+	link, ok := tree[target]
+	if !ok {
+		return nil, 0
+	}
+	path := make([]string, min(link.length, limit))
+	path[0] = link.root
+	for i := len(path) - 1; i > 0; i-- {
+		path[i] = target
+		target = tree[target].parent
+	}
+	return path, link.length
 }
 
 // PathTo reconstructs the call path from an agent root to target using the
