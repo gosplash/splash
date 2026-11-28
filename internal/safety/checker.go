@@ -70,7 +70,7 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 		diags = append(diags, c.checkSandbox(file, g)...)
 		diags = append(diags, c.checkBudget(file)...)
 	}
-	toolViolations, toolGaps := checkToolDataClassification(modules)
+	toolViolations, toolGaps := c.checkToolDataClassification(modules)
 	diags = append(diags, toolViolations...)
 	for i := range diags {
 		diags[i].Code = diagnostic.PolicyViolation
@@ -167,7 +167,7 @@ func sensitiveFields(decl *ast.TypeDecl) []string {
 
 // checkToolDataClassification follows data-bearing return types using resolved
 // declaration identities and the owning modules' type evidence.
-func checkToolDataClassification(modules []Module) (violations, incomplete []diagnostic.Diagnostic) {
+func (c *Checker) checkToolDataClassification(modules []Module) (violations, incomplete []diagnostic.Diagnostic) {
 	var owners map[*ast.TypeDecl]map[ast.Node]types.Type
 	for _, module := range modules {
 		for _, declaration := range module.File.Declarations {
