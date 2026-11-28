@@ -65,7 +65,13 @@ func main() {
 			os.Exit(1)
 		}
 	case "emit":
-		if err := runEmit(file); err != nil {
+		var err error
+		if len(os.Args) == 4 && os.Args[3] == "--json" {
+			err = runEmitJSON(file, os.Stdout)
+		} else {
+			err = runEmit(file)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

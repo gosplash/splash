@@ -16,7 +16,8 @@ var (
 type VerifiedProgram struct {
 	// Keep a different struct shape from AnalyzedProgram. Go allows explicit
 	// conversions between named structs with identical underlying types.
-	verified *analysis
+	verified        *analysis
+	effectsComplete bool
 }
 
 // Verify issues a handle only after all required source policy checks pass.
@@ -38,6 +39,6 @@ func Verify(program *AnalyzedProgram) (*VerifiedProgram, safety.Result, error) {
 	case len(result.Incomplete) > 0:
 		return nil, result, safety.ErrIndeterminate
 	default:
-		return &VerifiedProgram{verified: snapshot}, result, nil
+		return &VerifiedProgram{verified: snapshot, effectsComplete: result.EffectsComplete}, result, nil
 	}
 }

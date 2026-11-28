@@ -287,7 +287,20 @@ Check, inspect, and dependency reports expose `identity.sourceId` and `identity.
 
 Each v1 manifest starts with its full ID prefix as a domain marker. Strings use an unsigned base-128 varint byte length followed by their bytes. The source manifest appends each locator in byte order, followed by the 32 raw bytes of its SHA-256 content digest. The analysis manifest appends the source ID string, entry locator, and rules version string in that order. Each final digest is lowercase hex. The analysis rules version is `2`, reflecting stricter containment annotation parsing. Update it whenever front-end semantics, import binding, or the modeled call and effect rules change. A manifest encoding or normalization change requires a new corresponding format version. Add any future configurable analysis inputs to the manifest before claiming that it binds those inputs.
 
-These digests support content and input comparison. Authenticity requires trusted reanalysis or authenticated evidence from a protected verifier. Persisted artifact provenance remains proposed. It would also bind the concrete compiler and backend builds, artifact kind and digest, and applicable build inputs such as generated source, Go toolchain, target, flags, and native dependencies.
+These digests support content and input comparison. Authenticity requires trusted reanalysis or authenticated evidence from a protected verifier.
+
+### Go source emission provenance
+
+`splash emit <entry.splash> --json` produces a v1 report after the shared verification gate admits the captured input. `verification` records the capture's source and analysis IDs, the executable file's measured SHA-256 digest, the source verification rules version, and the scope `required-source-policies`. `effectCoverage` reports overall modeled effect-summary completeness separately from the required policy gate. A permitted source can have incomplete summaries outside required scopes.
+
+The `artifact` contains kind `go-source`, the generated source as a UTF-8 string, and the SHA-256 digest of the decoded source bytes. The new identities use the same length-prefixed UTF-8 field encoding as the source manifest:
+
+| Identity | Fields in order |
+| --- | --- |
+| `splash-verification-v1:sha256:<hex>` | Full version prefix, analysis ID, compiler digest, rules version, scope, effect coverage |
+| `splash-artifact-v1:sha256:<hex>` | Full version prefix, verification ID, artifact kind, artifact digest |
+
+Digest fields use `sha256:<hex>`. All hex is lowercase. Increment the source verification rules version when required policies or their scope change. The compiler measures the file at its executable path. A protected workflow must launch a pinned executable from a stable, protected location and validate evidence independently. These manifests are informational until trusted reanalysis or authenticated evidence establishes provenance. Native binaries, VM execution, and tool schemas have distinct build and runtime inputs that future provenance formats must bind separately.
 
 ## Diagnostic contract
 
