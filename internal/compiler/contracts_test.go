@@ -28,6 +28,8 @@ async fn inspect<T: Loggable>(value: T, cb: fn() -> Int, limit: Int = 1, ...item
 	signature := contract.Signature
 	if !signature.Async || signature.ReturnType != "Int" || len(signature.Parameters) != 4 ||
 		signature.Parameters[0].Type != "T" || signature.Parameters[1].Type != "() -> Int" ||
+		signature.Parameters[0].TypeIdentity.Kind != "typeParameter" || signature.Parameters[0].TypeIdentity.Name != "T" ||
+		signature.Parameters[1].TypeIdentity.ReturnType == nil || signature.Parameters[1].TypeIdentity.ReturnType.Name != "Int" ||
 		!signature.Parameters[2].HasDefault || !signature.Parameters[3].Variadic ||
 		len(signature.TypeParameters) != 1 || !reflect.DeepEqual(signature.TypeParameters[0].Constraints, []string{"Loggable"}) {
 		t.Fatalf("wrong captured signature: %+v", signature)
@@ -40,10 +42,12 @@ async fn inspect<T: Loggable>(value: T, cb: fn() -> Int, limit: Int = 1, ...item
 		t.Fatalf("verification disagrees with the inspected effect gap: %v, %+v", err, result)
 	}
 	contract.Signature.Parameters[0].Type = "changed"
+	contract.Signature.Parameters[1].TypeIdentity.ReturnType.Name = "changed"
 	contract.Signature.TypeParameters[0].Constraints[0] = "changed"
 	contract.Gap.Reason = "changed"
 	again, err := program.InspectFunction("library.inspect")
 	if err != nil || again.Signature.Parameters[0].Type != "T" ||
+		again.Signature.Parameters[1].TypeIdentity.ReturnType.Name != "Int" ||
 		again.Signature.TypeParameters[0].Constraints[0] != "Loggable" || again.Gap.Reason != "unresolved call target" {
 		t.Fatalf("returned contract changed the analysis: %v, %+v", err, again)
 	}

@@ -14,6 +14,7 @@ type dependencyReport struct {
 	EntryPath     string                       `json:"entryPath"`
 	Query         string                       `json:"query"`
 	Direction     compiler.DependencyDirection `json:"direction"`
+	Identity      *compiler.AnalysisIdentity   `json:"identity,omitempty"`
 	Result        *dependencyProjection        `json:"result"`
 	Diagnostics   []checkDiagnostic            `json:"diagnostics"`
 }
@@ -87,6 +88,8 @@ func makeDependencyReport(path, query string, direction compiler.DependencyDirec
 	if program == nil {
 		return report
 	}
+	identity := program.Identity()
+	report.Identity = &identity
 	result, err := program.Dependencies(query, direction, depth)
 	if err != nil {
 		report.Diagnostics = append(report.Diagnostics, inspectionFailure(err))

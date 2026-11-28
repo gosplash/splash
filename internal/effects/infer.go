@@ -68,7 +68,8 @@ type effectStep struct {
 
 // Infer propagates known effects and coverage gaps in separate worklists. A
 // function/effect pair enters the worklist once, including within recursive
-// groups. Input and call order break ties between equally short witnesses.
+// groups. Summaries are returned in input order. Input and call order break
+// ties between equally short witnesses.
 func Infer(facts []FunctionFacts) []*Summary {
 	summaries := make([]*Summary, 0, len(facts))
 	byFunction := make(map[*ast.FunctionDecl]*Summary, len(facts))

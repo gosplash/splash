@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -14,14 +15,17 @@ type inspectTestReport struct {
 	SchemaVersion int
 	EntryPath     string
 	Query         string
+	Identity      struct{ SourceID, AnalysisID string }
 	Contract      *struct {
 		Symbol      string
 		Declaration checkTestPoint
 		Signature   struct {
 			Parameters []struct {
-				Name, Type string
+				Name, Type   string
+				TypeIdentity *testTypeIdentity
 			}
-			ReturnType string
+			ReturnType         string
+			ReturnTypeIdentity *testTypeIdentity
 		}
 		DeclaredAuthority, InferredEffects []string
 		EffectCoverage                     struct {
@@ -105,12 +109,102 @@ func TestInspectJSONUnavailableContract(t *testing.T) {
 		if len(report.Diagnostics) == 0 {
 			t.Fatalf("want %s with no contract, got %+v", tc.code, report)
 		}
+		hasIdentity := report.Identity.SourceID != "" && report.Identity.AnalysisID != ""
+		if hasIdentity != (tc.phase == "inspection") {
+			t.Errorf("identity presence should follow capture success: %+v", report)
+		}
 		for _, diag := range report.Diagnostics {
 			if diag.Code != tc.code || diag.Phase != tc.phase || diag.Severity != "error" {
 				t.Errorf("want %s/%s error, got %+v", tc.code, tc.phase, diag)
 			}
 		}
 	}
+}
+
+func TestInspectIdentitiesAcrossInvocations(t *testing.T) {
+	binary := buildSplashCLI(t)
+	fixture := func(dir string) string {
+		writeSplashFile(t, dir, "left.splash", "module shared\ntype Item { count: Int }\nfn read(x: Item) -> Item { return x }\n")
+		writeSplashFile(t, dir, "right.splash", "module shared\ntype Item { label: String }\nfn lookup(x: Item) -> Item { return x }\n")
+		writeSplashFile(t, dir, "bridge.splash", "module bridge\nuse left as local\nfn pass(x: local.Item) -> local.Item { return x }\n")
+		return writeSplashFile(t, dir, "main.splash", `module app
+use left as one
+use right as two
+use bridge
+fn nested(cb: fn(List<one.Item?>) -> Result<one.Item, two.Item>) {}
+fn opaque(x: Mystery) {}
+fn main() {}
+`)
+	}
+	dir := t.TempDir()
+	entry := fixture(dir)
+	report, _ := readInspectJSON(t, binary, entry, "shared.read", true)
+	alias, _ := readInspectJSON(t, binary, entry, "bridge.pass", true)
+	other, _ := readInspectJSON(t, binary, entry, "shared.lookup", true)
+	copy, _ := readInspectJSON(t, binary, fixture(t.TempDir()), "shared.read", true)
+
+	identity := report.Identity
+	if identity.SourceID == "" || identity.AnalysisID == "" || identity.SourceID == identity.AnalysisID ||
+		identity != alias.Identity || identity != other.Identity || identity != copy.Identity {
+		t.Fatalf("identity depends on selector or checkout: %+v, %+v, %+v, %+v", identity, alias.Identity, other.Identity, copy.Identity)
+	}
+	relative := exec.Command(binary, "inspect", "./main.splash", "shared.read", "--json")
+	relative.Dir = dir
+	out, err := relative.Output()
+	var relativeReport inspectTestReport
+	if err != nil || json.Unmarshal(out, &relativeReport) != nil || relativeReport.Identity != identity {
+		t.Fatalf("relative path changed identity: %v, %s", err, out)
+	}
+
+	left := report.Contract.Signature.Parameters[0]
+	right := other.Contract.Signature.Parameters[0]
+	if left.Type != "Item" || right.Type != "Item" || left.TypeIdentity == nil || right.TypeIdentity == nil ||
+		left.TypeIdentity.Kind != "record" || left.TypeIdentity.Path != "left.splash" || left.TypeIdentity.Name != "Item" ||
+		right.TypeIdentity.Kind != "record" || right.TypeIdentity.Path != "right.splash" ||
+		!reflect.DeepEqual(left.TypeIdentity, report.Contract.Signature.ReturnTypeIdentity) ||
+		!reflect.DeepEqual(left.TypeIdentity, alias.Contract.Signature.Parameters[0].TypeIdentity) ||
+		!reflect.DeepEqual(left.TypeIdentity, copy.Contract.Signature.Parameters[0].TypeIdentity) {
+		t.Fatalf("wrong nominal identities for same-name records and aliases: %+v, %+v", left, right)
+	}
+	nested, _ := readInspectJSON(t, binary, entry, "app.nested", true)
+	wantNested := &testTypeIdentity{
+		Kind: "function",
+		Parameters: []*testTypeIdentity{{Kind: "list", Arguments: []*testTypeIdentity{
+			{Kind: "optional", Arguments: []*testTypeIdentity{left.TypeIdentity}},
+		}}},
+		ReturnType: &testTypeIdentity{Kind: "result", Arguments: []*testTypeIdentity{left.TypeIdentity, right.TypeIdentity}},
+	}
+	if got := nested.Contract.Signature.Parameters[0].TypeIdentity; !reflect.DeepEqual(got, wantNested) {
+		t.Errorf("wrong nested type identity: got %+v, want %+v", got, wantNested)
+	}
+	opaque, _ := readInspectJSON(t, binary, entry, "app.opaque", true)
+	if got := opaque.Contract.Signature.Parameters[0]; got.Type != "Unknown" || got.TypeIdentity != nil {
+		t.Errorf("expected display only for unsupported checked type: %+v", got)
+	}
+	dependencyOut, err := exec.Command(binary, "callees", entry, "app.main", "--json").Output()
+	var dependency inspectTestReport
+	if err != nil || json.Unmarshal(dependencyOut, &dependency) != nil || dependency.Identity != identity {
+		t.Fatalf("dependency query identity disagrees with inspect: %v, %s", err, dependencyOut)
+	}
+
+	lib := filepath.Join(dir, "left.splash")
+	src, err := os.ReadFile(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSplashFile(t, dir, "left.splash", string(src)+"// changed bytes only\n")
+	changed, _ := readInspectJSON(t, binary, entry, "shared.read", true)
+	if changed.Identity.SourceID == identity.SourceID || changed.Identity.AnalysisID == identity.AnalysisID ||
+		!reflect.DeepEqual(changed.Contract.Signature.Parameters[0].TypeIdentity, left.TypeIdentity) {
+		t.Fatalf("source edit failed to change the digests or moved the declaration identity: %+v", changed)
+	}
+}
+
+type testTypeIdentity struct {
+	Kind, Name, Path string
+	Arguments        []*testTypeIdentity
+	Parameters       []*testTypeIdentity
+	ReturnType       *testTypeIdentity
 }
 
 func readInspectJSON(t *testing.T, binary, path, query string, success bool) (inspectTestReport, []byte) {
