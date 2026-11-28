@@ -68,17 +68,19 @@ Show declared grants, inferred effects and coverage separately. With complete ev
 
 ## Commands and status
 
-The CLI uses file-first commands. Versioned JSON is implemented for `check` and one-function `inspect`. The authority commands below are proposals.
+The CLI uses file-first commands. Versioned JSON is implemented for `check`, one-function `inspect`, and `callers` and `callees`. The authority commands below are proposals.
 
 ```text
 splash check app/main.splash --json
 splash inspect app/main.splash billing.refund_customer --json
+splash callers app/main.splash billing.refund_customer --json --depth 2
+splash callees app/main.splash billing.refund_customer --json --transitive
 splash graph app/main.splash
 splash authority snapshot app/main.splash --json
 splash authority diff base.json head.json --json
 ```
 
-The first two commands cover source verification diagnostics and one function contract. Resolved direct edges, roots, approval facts, and richer source ranges are candidates for later queries. The manifest and diff follow once binding, policy completeness and lowering agree. The agent-facing schema stays separate from provider-specific tool formats.
+Machine queries cover source verification diagnostics, one function contract, and resolved caller and callee relationships. Root classification, approval facts, and richer declaration ranges are candidates for later queries. The manifest and diff follow once binding, policy completeness and lowering agree. The agent-facing schema stays separate from provider-specific tool formats.
 
 The full verification report design includes a schema version, source and analysis identities, entry scope, loaded files, phase status, property evidence, and an overall verdict. Report each property with its scope, status, and supporting or blocking evidence. Use `passed`, `failed`, `incomplete` and `notRun` for both phases and properties. One phase can establish several properties with different statuses.
 
@@ -153,6 +155,25 @@ The first launch is a separate single invocation per run and excludes the preced
 ```sh
 go test ./cmd/splash -run '^$' -bench 'Benchmark(Inspect|CheckDiagnosticFeedback)$' -benchtime 300ms -count 5 -benchmem
 ```
+
+### Dependency JSON v1
+
+`splash callers <file.splash> <module.function> --json` and `splash callees <file.splash> <module.function> --json` use the same selectors as [inspect](#inspect-json-v1). The default depth is one call. Append `--depth N` for a positive maximum distance or `--transitive` to traverse the full modeled component in the chosen direction.
+
+The envelope carries `schemaVersion: 1`, `entryPath`, `query`, `direction`, `result`, and `diagnostics`. The result has these fields.
+
+| Field | Meaning |
+| --- | --- |
+| `root` | Selected function, identified by its symbol and declaration location within this capture. |
+| `maxDepth` | Requested upper bound in edges, or null for a transitive query. |
+| `relationships` | Functions in breadth-first discovery order with one shortest-path witness edge each. Empty results use an empty array. |
+| `coverage` | `complete` or `incomplete` for the stated scope of the modeled call evidence. Incomplete coverage includes a representative gap and its owner and source location. |
+
+Each relationship contains `function`, `via`, `distance`, and `source`. The function and via fields each include the symbol and declaration position. Locations distinguish functions whose loaded files declare the same module name. The witness call runs from `via` to `function` for callees and from `function` to `via` for callers. Follow via through the shorter-distance records to reconstruct a path. A recursive root has one positive-distance relationship when a modeled cycle leads back to it. Ties follow captured module order, declaration order, and typed call traversal order. Multiple call sites between the same declarations contribute a single representative witness. Known edges come from the checked call evidence used by effect analysis.
+
+Callee coverage has scope `expandedFunctions`. At a finite depth, this includes the root and discovered functions at distances strictly less than the bound. Caller coverage has scope `entryClosure`. A source gap anywhere in the closure can hide a caller, including in a function outside the known reverse graph. Modeled built-in operations and injected approval hosts are outside the relation between Splash declarations. These are static relationships within loaded source and its current analysis model. The report does not describe runtime call frequency or external callers.
+
+A returned result exits 0 even when coverage is incomplete. Source and lookup failures exit 1 and produce a null result with diagnostics. CLI usage errors go to stderr. The dependency index is built once on first use for a captured analysis. Source checking and contract inspection can run without building it.
 
 ## Snapshot and artifact provenance
 

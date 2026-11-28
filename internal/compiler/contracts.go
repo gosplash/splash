@@ -51,46 +51,12 @@ type TypeParameter struct {
 // InspectFunction accepts a declared module-qualified name, or a bare
 // function name in the entry file. Import aliases are local to their file.
 func (p *AnalyzedProgram) InspectFunction(query string) (FunctionContract, error) {
-	if p == nil || p.snapshot == nil {
-		return FunctionContract{}, ErrInvalidAnalysis
+	owner, declaration, err := p.resolveFunction(query)
+	if err != nil {
+		return FunctionContract{}, err
 	}
-	snapshot := p.snapshot
-	qualifier, name, qualified := strings.Cut(query, ".")
-	modules := snapshot.modules
-	if !qualified {
-		name = qualifier
-		modules = modules[len(modules)-1:]
-	}
-
-	var owner *typechecker.TypedFile
-	var declaration *ast.FunctionDecl
-	var symbol string
-	for _, module := range modules {
-		moduleName := ""
-		if module.File.Module != nil {
-			moduleName = module.File.Module.Name
-		}
-		if qualified && (moduleName == "" || moduleName != qualifier) {
-			continue
-		}
-		for _, fact := range module.EffectFacts {
-			if fact.Function.Name != name {
-				continue
-			}
-			if declaration != nil {
-				return FunctionContract{}, fmt.Errorf("%w: %q", ErrAmbiguousFunction, query)
-			}
-			owner, declaration = module, fact.Function
-			symbol = name
-			if moduleName != "" {
-				symbol = moduleName + "." + name
-			}
-		}
-	}
-	if declaration == nil {
-		return FunctionContract{}, fmt.Errorf("%w: %q", ErrFunctionNotFound, query)
-	}
-	for _, summary := range snapshot.effects {
+	symbol := functionSymbol(owner.File.Module, declaration)
+	for _, summary := range p.snapshot.effects {
 		if summary.Function != declaration {
 			continue
 		}
@@ -112,6 +78,51 @@ func (p *AnalyzedProgram) InspectFunction(query string) (FunctionContract, error
 		return contract, nil
 	}
 	return FunctionContract{}, fmt.Errorf("missing effect summary for %q", symbol)
+}
+
+func (p *AnalyzedProgram) resolveFunction(query string) (*typechecker.TypedFile, *ast.FunctionDecl, error) {
+	if p == nil || p.snapshot == nil {
+		return nil, nil, ErrInvalidAnalysis
+	}
+	snapshot := p.snapshot
+	qualifier, name, qualified := strings.Cut(query, ".")
+	modules := snapshot.modules
+	if !qualified {
+		name = qualifier
+		modules = modules[len(modules)-1:]
+	}
+
+	var owner *typechecker.TypedFile
+	var declaration *ast.FunctionDecl
+	for _, module := range modules {
+		moduleName := ""
+		if module.File.Module != nil {
+			moduleName = module.File.Module.Name
+		}
+		if qualified && (moduleName == "" || moduleName != qualifier) {
+			continue
+		}
+		for _, fact := range module.EffectFacts {
+			if fact.Function.Name != name {
+				continue
+			}
+			if declaration != nil {
+				return nil, nil, fmt.Errorf("%w: %q", ErrAmbiguousFunction, query)
+			}
+			owner, declaration = module, fact.Function
+		}
+	}
+	if declaration == nil {
+		return nil, nil, fmt.Errorf("%w: %q", ErrFunctionNotFound, query)
+	}
+	return owner, declaration, nil
+}
+
+func functionSymbol(module *ast.ModuleDecl, declaration *ast.FunctionDecl) string {
+	if module == nil {
+		return declaration.Name
+	}
+	return module.Name + "." + declaration.Name
 }
 
 func functionSignature(fnType *types.FunctionType, declaration *ast.FunctionDecl) Signature {
