@@ -133,15 +133,15 @@ func (tc *TypeChecker) pass1(file *ast.File, typed *TypedFile) {
 	for _, u := range file.Uses {
 		tc.processUseDecl(u)
 	}
-	recordNames := make(map[string]bool)
+	typeNames := make(map[string]bool)
 	for _, decl := range file.Declarations {
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
-			if recordNames[d.Name] {
+			if typeNames[d.Name] {
 				tc.errorf(d.Position, "duplicate type %q in module", d.Name)
 				continue
 			}
-			recordNames[d.Name] = true
+			typeNames[d.Name] = true
 			nt := tc.buildNamedType(d)
 			tc.globals.Set(d.Name, nt)
 			typed.Types[d] = nt
@@ -149,7 +149,14 @@ func (tc *TypeChecker) pass1(file *ast.File, typed *TypedFile) {
 		case *ast.ConstraintDecl:
 			tc.constraintDecls[d.Name] = d
 		case *ast.EnumDecl:
-			tc.globals.Set(d.Name, types.Named(d.Name))
+			if typeNames[d.Name] {
+				tc.errorf(d.Position, "duplicate type %q in module", d.Name)
+				continue
+			}
+			typeNames[d.Name] = true
+			et := &types.EnumType{Declaration: d}
+			tc.globals.Set(d.Name, et)
+			typed.Types[d] = et
 		}
 	}
 	// Resolve signatures after all local type names are available.
@@ -269,6 +276,12 @@ func (tc *TypeChecker) injectModule(typed *TypedFile, u *ast.UseDecl) {
 				nt := typed.Types[d]
 				tc.setImportedBinding(d.Name, binding{typ: nt, imported: d})
 				namespaceExports[d.Name] = nt
+			}
+		case *ast.EnumDecl:
+			if exportAll || exposed[d.Name] {
+				et := typed.Types[d]
+				tc.setImportedBinding(d.Name, binding{typ: et, imported: d})
+				namespaceExports[d.Name] = et
 			}
 		case *ast.FunctionDecl:
 			if exportAll || exposed[d.Name] {

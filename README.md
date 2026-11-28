@@ -30,7 +30,7 @@ Core authority concepts now have first-class syntax:
 - `approve fn` for human-gated operations
 - `agent fn` for agent entrypoints
 
-`splash tools` emits argument JSON Schema for tool declarations. `splash check` evaluates the current static checks. Use `splash build` and run the program to verify native behavior.
+`splash tools` emits argument JSON Schema from checked tool signatures. It accepts scalar parameters, optionals, lists, payload-free enums, and resolved record parameters projected as objects. Unresolved or unsupported parameter types stop export. `splash check` evaluates the current static checks. Use `splash build` and run the program to verify native behavior.
 
 ---
 

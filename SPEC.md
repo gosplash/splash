@@ -422,7 +422,7 @@ Annotations appear immediately before declarations. Multiple annotations may be 
 tool fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> { ... }
 ```
 
-Marks a function as AI-callable. `splash tools` emits a JSON Schema entry for every `tool fn` function. `tool fn` functions may not return a type whose data classification exceeds `@internal` (see [Section 7](#7-data-classification)).
+Marks a function as AI-callable. `splash tools` emits JSON Schema for `tool fn` parameters from their resolved callable signatures. It supports scalar types, optionals, lists, payload-free enums, and nominal records projected as objects. Unresolved parameter types and unsupported parameter shapes fail schema export. `tool fn` functions may not return a type whose data classification exceeds `@internal` (see [Section 7](#7-data-classification)).
 
 ### 6.2 `redline fn`
 
