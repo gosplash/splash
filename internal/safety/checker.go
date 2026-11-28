@@ -3,7 +3,9 @@
 package safety
 
 import (
+	"cmp"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -45,7 +47,7 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 
 	roots := g.AgentRoots()
 	agentReachable := g.Reachable(roots)
-	agentParents := g.Parents(roots)
+	agentPaths := g.ShortestPaths(roots)
 	var agentCallees map[string]bool
 	if slices.ContainsFunc(modules, func(module Module) bool {
 		return moduleContainment(module.File) == containmentApprovedOnly
@@ -64,7 +66,7 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 	diags = append(diags, c.checkApprovalCallContexts(g, gated)...)
 	for _, module := range modules {
 		file := module.File
-		diags = append(diags, c.checkRedline(file, g, agentParents)...)
+		diags = append(diags, c.checkRedline(file, g, agentPaths)...)
 		diags = append(diags, c.checkApprove(file, g, agentReachable)...)
 		diags = append(diags, c.checkContainment(file, g, agentReachable, agentCallees)...)
 		diags = append(diags, c.checkSandbox(file, g)...)
@@ -72,9 +74,6 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 	}
 	toolViolations, toolGaps := c.checkToolDataClassification(modules)
 	diags = append(diags, toolViolations...)
-	for i := range diags {
-		diags[i].Code = diagnostic.PolicyViolation
-	}
 	effectsComplete := true
 	for _, summary := range inferred {
 		diags = append(diags, summary.Diagnostics()...)
@@ -86,6 +85,12 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 		Incomplete:      append(requiredCoverage(g, inferred, len(gated) != 0), toolGaps...),
 		EffectsComplete: effectsComplete,
 	}
+}
+
+func policyErrorf(ruleID string, pos token.Position, format string, args ...any) diagnostic.Diagnostic {
+	diag := diagnostic.Errorf(pos, format, args...).WithCode(diagnostic.PolicyViolation)
+	diag.PolicyRuleID = ruleID
+	return diag
 }
 
 // requiredCoverage reports direct coverage gaps in the resolved closure of policy roots.
@@ -119,7 +124,7 @@ func requiredCoverage(g *callgraph.Graph, summaries []*effects.Summary, hasAppro
 		}
 		for _, gap := range summary.DirectGaps {
 			if !gap.ApprovalBoundary && !seen[gap] {
-				diag := diagnostic.Errorf(gap.Position, "incomplete policy coverage: %s", gap.Reason).
+				diag := policyErrorf("coverage.required_source", gap.Position, "incomplete policy coverage: %s", gap.Reason).
 					WithCode(diagnostic.PolicyCoverageIncomplete)
 				diag.End = gap.End
 				diags = append(diags, diag)
@@ -141,7 +146,7 @@ func (c *Checker) checkApprovalCallContexts(g *callgraph.Graph, gated map[string
 	for _, node := range g.Nodes() {
 		for _, call := range node.NestedCalls {
 			if withErrorChannel[call.Target] {
-				diag := diagnostic.Errorf(call.Position,
+				diag := policyErrorf("approval.call_context", call.Position,
 					"approval call to %q must be a standalone statement, let value, or return value", call.Target)
 				diag.End = call.End
 				diags = append(diags, diag)
@@ -187,7 +192,7 @@ func (c *Checker) checkToolDataClassification(modules []Module) (violations, inc
 			found, gap := checkToolReturnType(fn, returnType, owners)
 			violations = append(violations, found...)
 			if gap != (token.Position{}) {
-				incomplete = append(incomplete, diagnostic.Errorf(gap,
+				incomplete = append(incomplete, policyErrorf("tool.return_coverage", gap,
 					"incomplete policy coverage: tool fn %q return classification lacks supported resolved type evidence", fn.Name,
 				).WithCode(diagnostic.PolicyCoverageIncomplete))
 			}
@@ -238,7 +243,7 @@ func checkToolReturnType(fn *ast.FunctionDecl, returnType types.Type, owners map
 			}
 			seen[record] = true
 			if fields := sensitiveFields(record); len(fields) > 0 {
-				violations = append(violations, diagnostic.Errorf(fn.Position,
+				violations = append(violations, policyErrorf("tool.classified_return", fn.Position,
 					"tool fn %q returns type %s which contains sensitive or restricted fields (%s), declared at %s",
 					fn.Name, record.Name, strings.Join(fields, ", "), record.Pos(),
 				))
@@ -276,8 +281,8 @@ func checkToolReturnType(fn *ast.FunctionDecl, returnType types.Type, owners map
 }
 
 // checkRedline emits an error for every redline function that is agent-reachable.
-// The error message includes the full call path from the agent entry point to the violation.
-func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentParents map[string]string) []diagnostic.Diagnostic {
+// The message shows the agent root and the portion of the path nearest the violation.
+func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentPaths callgraph.PathTree) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 
 	for _, decl := range file.Declarations {
@@ -292,15 +297,21 @@ func (c *Checker) checkRedline(file *ast.File, g *callgraph.Graph, agentParents 
 		if !node.HasAnnotation(ast.AnnotRedline) {
 			continue
 		}
-		if _, reachable := agentParents[g.FunctionKey(fn)]; reachable {
-			path := callgraph.PathTo(agentParents, g.FunctionKey(fn))
-			diags = append(diags, diagnostic.Errorf(
-				fn.Position,
-				"redline fn %q is reachable from an agent context\n  call path: %s",
-				fn.Name,
-				strings.Join(path, " → "),
-			))
+		path, length := agentPaths.PathExcerpt(node.Name, diagnostic.WitnessLimit)
+		if length == 0 {
+			continue
 		}
+		truncated := length > len(path)
+		if truncated {
+			gap := fmt.Sprintf("… (omitted %d of %d functions) …", length-len(path), length)
+			path = slices.Insert(path, 1, gap)
+		}
+		diag := policyErrorf("redline.agent_reachable", fn.Position,
+			"redline fn %q is reachable from an agent context\n  call path: %s",
+			fn.Name, strings.Join(path, " → "))
+		diag.WitnessLength = length
+		diag.WitnessTruncated = truncated
+		diags = append(diags, diag)
 	}
 
 	return diags
@@ -369,14 +380,14 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 
 		switch policy {
 		case containmentNone:
-			diags = append(diags, diagnostic.Errorf(
+			diags = append(diags, policyErrorf("containment.none",
 				fn.Position,
 				"function %q is agent-reachable but module has @containment(agent: \"none\")",
 				fn.Name,
 			))
 		case containmentReadOnly:
 			if disallowed := node.Effects &^ (effects.DBRead | effects.Agent); disallowed != effects.None {
-				diags = append(diags, diagnostic.Errorf(
+				diags = append(diags, policyErrorf("containment.read_only",
 					fn.Position,
 					"function %q has %s but module has @containment(agent: \"read_only\")",
 					fn.Name, disallowed,
@@ -388,7 +399,7 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 				continue
 			}
 			if !node.HasAnnotation(ast.AnnotApprove) && !node.HasAnnotation(ast.AnnotAgentAllowed) {
-				diags = append(diags, diagnostic.Errorf(
+				diags = append(diags, policyErrorf("containment.approved_only",
 					fn.Position,
 					"function %q is agent-reachable but module has @containment(agent: \"approved_only\") — add approve fn or @agent_allowed",
 					fn.Name,
@@ -418,18 +429,18 @@ func exprToEffectName(expr ast.Expr) string {
 func parseEffectListArg(expr ast.Expr) (effects.EffectSet, []diagnostic.Diagnostic) {
 	list, ok := expr.(*ast.ListLiteral)
 	if !ok {
-		return effects.None, []diagnostic.Diagnostic{diagnostic.Errorf(expr.Pos(), "@sandbox requires a list of effect labels")}
+		return effects.None, []diagnostic.Diagnostic{policyErrorf("sandbox.invalid_effect_list", expr.Pos(), "@sandbox requires a list of effect labels")}
 	}
 	var set effects.EffectSet
 	var diags []diagnostic.Diagnostic
 	for _, elem := range list.Elements {
 		name := exprToEffectName(elem)
 		if name == "" {
-			diags = append(diags, diagnostic.Errorf(elem.Pos(), "@sandbox requires an effect label"))
+			diags = append(diags, policyErrorf("sandbox.invalid_effect_list", elem.Pos(), "@sandbox requires an effect label"))
 		} else if flag, known := effects.Lookup(name); known {
 			set |= flag
 		} else {
-			diags = append(diags, diagnostic.Errorf(elem.Pos(), "unknown effect %q in @sandbox", name))
+			diags = append(diags, policyErrorf("sandbox.invalid_effect_list", elem.Pos(), "unknown effect %q in @sandbox", name))
 		}
 	}
 	return set, diags
@@ -451,7 +462,7 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.
 		for i := range fn.Annotations {
 			if fn.Annotations[i].Kind == ast.AnnotSandbox {
 				if sandboxAnn != nil {
-					diags = append(diags, diagnostic.Errorf(fn.Annotations[i].Pos, "duplicate @sandbox annotation"))
+					diags = append(diags, policyErrorf("sandbox.duplicate", fn.Annotations[i].Pos, "duplicate @sandbox annotation"))
 					continue
 				}
 				sandboxAnn = &fn.Annotations[i]
@@ -475,6 +486,7 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.
 			diags = append(diags, errors...)
 		}
 
+		firstFinding := len(diags)
 		reachable := g.Reachable([]string{g.FunctionKey(fn)})
 		for name := range reachable {
 			node := g.Node(name)
@@ -489,7 +501,7 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.
 
 			if denySet != effects.None {
 				if violated := nodeEffects & denySet; violated != effects.None {
-					diags = append(diags, diagnostic.Errorf(
+					diags = append(diags, policyErrorf("sandbox.denied_effect",
 						fn.Position,
 						"@sandbox on %q: reachable function %q uses denied effect %s",
 						fn.Name, name, violated.String(),
@@ -498,7 +510,7 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.
 			}
 			if hasAllow {
 				if disallowed := nodeEffects &^ allowSet; disallowed != effects.None {
-					diags = append(diags, diagnostic.Errorf(
+					diags = append(diags, policyErrorf("sandbox.effect_not_allowed",
 						fn.Position,
 						"@sandbox on %q: reachable function %q uses effect %s not in allow list",
 						fn.Name, name, disallowed.String(),
@@ -506,6 +518,9 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph) []diagnostic.
 				}
 			}
 		}
+		slices.SortFunc(diags[firstFinding:], func(a, b diagnostic.Diagnostic) int {
+			return cmp.Compare(a.Message, b.Message)
+		})
 	}
 
 	return diags
@@ -530,7 +545,7 @@ func (c *Checker) checkBudget(file *ast.File) []diagnostic.Diagnostic {
 				case *ast.FloatLiteral, *ast.IntLiteral:
 					// valid
 				default:
-					diags = append(diags, diagnostic.Errorf(
+					diags = append(diags, policyErrorf("budget.max_cost_literal",
 						fn.Position,
 						"@budget max_cost on %q must be a numeric literal (e.g. 1.0)",
 						fn.Name,
@@ -539,7 +554,7 @@ func (c *Checker) checkBudget(file *ast.File) []diagnostic.Diagnostic {
 			}
 			if maxCalls, ok := ann.Args["max_calls"]; ok {
 				if _, ok := maxCalls.(*ast.IntLiteral); !ok {
-					diags = append(diags, diagnostic.Errorf(
+					diags = append(diags, policyErrorf("budget.max_calls_literal",
 						fn.Position,
 						"@budget max_calls on %q must be an integer literal (e.g. 20)",
 						fn.Name,
@@ -572,7 +587,7 @@ func (c *Checker) checkApprove(file *ast.File, g *callgraph.Graph, agentReachabl
 		// Policy: DB.write + Net in agent context requires explicit approval.
 		if node.Effects.Has(effects.DBWrite) && node.Effects.Has(effects.Net) {
 			if !node.HasAnnotation(ast.AnnotApprove) && !node.HasAnnotation(ast.AnnotAgentAllowed) {
-				diags = append(diags, diagnostic.Errorf(
+				diags = append(diags, policyErrorf("approval.required",
 					fn.Position,
 					"function %q combines DB.write and Net effects in an agent context — add approve fn or @agent_allowed",
 					fn.Name,

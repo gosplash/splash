@@ -23,6 +23,7 @@ type checkTestRange struct {
 type checkTestDiagnostic struct {
 	Code, Phase, Severity, Message string
 	ExpectedType, ActualType       string
+	PolicyRuleID                   string
 	Source                         *checkTestRange
 	Effects                        []string
 	Witness                        []struct {
@@ -67,6 +68,12 @@ func TestCheckJSONVerdicts(t *testing.T) {
 				}
 				if !found {
 					t.Errorf("missing %s diagnostic with phase %s: %+v", code, tc.phases[i], diagnostics)
+				}
+			}
+			for _, diag := range diagnostics {
+				want := map[string]string{"POLICY_VIOLATION": "redline.agent_reachable", "POLICY_COVERAGE_INCOMPLETE": "coverage.required_source"}[diag.Code]
+				if diag.PolicyRuleID != want {
+					t.Errorf("code %s has policy rule ID %q, want %q", diag.Code, diag.PolicyRuleID, want)
 				}
 			}
 			if tc.name == "type violation" && (len(diagnostics) != 1 ||
@@ -273,7 +280,7 @@ approve fn save() -> Int { return 1 }
 fn main() { println(1 + save()) }
 `)
 		diagnostics, _ := readCheckJSON(t, binary, path, "rejected")
-		if len(diagnostics) != 1 || diagnostics[0].Code != "POLICY_VIOLATION" {
+		if len(diagnostics) != 1 || diagnostics[0].Code != "POLICY_VIOLATION" || diagnostics[0].PolicyRuleID != "approval.call_context" {
 			t.Fatalf("expected approval policy diagnostic, got %+v", diagnostics)
 		}
 		site := diagnostics[0].Source
