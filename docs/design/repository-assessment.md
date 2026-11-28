@@ -2,7 +2,7 @@
 
 Evidence baseline for the [Agent Experience proposal](agent-experience.md). Audited tree `9bf9e3654387f7c381737ed89d4c9f1e4713eee5`, initially clean on `master`. Source links below refer to that tree. The November 26 discussion motivated the audit. Its engagement figures play no role in conclusions about demand, performance, or language design.
 
-**Kickoff update.** The working-tree compiler now applies its existing safety checks to `emit` and shares captured source and typed modules across the CLI. The findings below describe the pre-kickoff revision. Resolved-call coverage, full effect enforcement and typed verification remain open. [Architecture decision](../decisions/2026-11-26-analyzed-program-and-verification.md) · [Engineering plan](engineering-plan.md)
+**Implementation update.** The compiler now shares captured source and typed modules across the CLI. It resolves named calls, checks required source policy coverage and issues an in-process `VerifiedProgram` for source artifacts. Persisted provenance remains proposed. The findings below preserve the pre-kickoff audit baseline. [Architecture decision](../decisions/2026-11-26-analyzed-program-and-verification.md) · [Engineering plan](engineering-plan.md)
 
 ## Original intent and direction
 

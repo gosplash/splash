@@ -257,10 +257,10 @@ func TestSourceVerificationDoesNotClaimNativeBuildSuccess(t *testing.T) {
 		t.Fatalf("library should verify as source: %v", err)
 	}
 	binary := filepath.Join(dir, "library.exe")
-	err := runBuild(path, binary)
+	_, diagnostic, err := captureEffectCommand(t, func() error { return runBuild(path, binary) })
 	var nativeFailure *exec.ExitError
-	if !errors.As(err, &nativeFailure) {
-		t.Fatalf("want a native build failure for a library without main, got %v", err)
+	if !errors.As(err, &nativeFailure) || !strings.Contains(diagnostic, "function main is undeclared") {
+		t.Fatalf("want a native build failure for a library without main, got %v:\n%s", err, diagnostic)
 	}
 	if _, err := os.Stat(binary); !os.IsNotExist(err) {
 		t.Fatalf("native build left an artifact or unexpected stat result: %v", err)

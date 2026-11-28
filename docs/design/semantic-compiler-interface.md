@@ -2,7 +2,7 @@
 
 Central compiler architecture proposal. Splash's language defines types, contracts and effects. The semantic compiler resolves those facts and exposes them to humans and agents. The trust architecture governs which verified facts can authorize artifact production and release. The [repository assessment](repository-assessment.md) describes the current implementation. This proposal extends the [April analyzed-program design](../superpowers/specs/2026-04-07-splash-language-positioning.md#L294).
 
-The [kickoff decision](../decisions/2026-11-26-analyzed-program-and-verification.md) adopts this direction. The first slice shares the command analysis path, retains captured source and typed modules, and applies the current checks to `emit`. The flattened graph and Go lowering remain in use. The typed verification transition, canonical call identities and stronger completeness reporting below are implementation targets.
+The [kickoff decision](../decisions/2026-11-26-analyzed-program-and-verification.md) adopts this direction. The implemented compiler retains captured source and typed modules, resolves named calls, and requires an in-process `VerifiedProgram` after checking required source policies. Go emission, tool export, and VM lowering consume this handle. Public schema versioning, identities stable across revisions, and persisted artifact provenance remain proposed. [Verification implementation](../../internal/compiler/verification.go)
 
 ## The analyzed program
 
@@ -40,7 +40,7 @@ func Build(program *VerifiedProgram, config NativeBuildConfig) (NativeArtifact, 
 func ExportTools(program *VerifiedProgram) (*ToolManifest, error)
 ```
 
-These are internal signatures. Rejection and indeterminacy return a report and no verified value. The error return represents operational failures. Keep the verified state private and construct it only inside the verifier. Because Go callers can still pass nil or create a zero value of an exported struct, centralize rejection of invalid handles in the artifact implementation and keep raw lowering private. Expose read-only projections or copies, never mutable maps, slices or AST pointers. Changing the source snapshot or any trust input requires fresh analysis and verification. A serialized report cannot construct a verified value.
+These signatures illustrate the broader design. The current `Verify` returns a report and a typed error for a rejection or indeterminate result, with no verified value. Keep the verified state private and construct it only inside the verifier. Because Go callers can still pass nil or create a zero value of an exported struct, centralize rejection of invalid handles in the artifact implementation and keep raw lowering private. Expose read-only projections or copies, never mutable maps, slices or AST pointers. Changing the source snapshot or any trust input requires fresh analysis and verification. A serialized report cannot construct a verified value.
 
 Conformance tests should exercise these entry points and every artifact CLI command with passing, rejected and indeterminate fixtures. Include a test that changes source on disk between verification and emission. The artifact must come from the captured snapshot, or the operation must fail if its declared build inputs cannot be supplied. Native build and runtime test outcomes are separate from the static verifier's verdict.
 

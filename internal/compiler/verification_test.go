@@ -166,3 +166,55 @@ agent fn report(callback: fn() -> Int) -> Int { return callback() }
 		t.Fatalf("inspection changed verification, got %v, %v, %v", handle, err, result)
 	}
 }
+
+func TestVerificationReportsAreDetached(t *testing.T) {
+	path := writeSource(t, t.TempDir(), "service.splash", `module service
+fn read() needs DB.read -> Int { return 1 }
+agent fn report(callback: fn() -> Int) -> Int { return read() + callback() }
+`)
+	program := analyze(t, path)
+	check := func() safety.Result {
+		t.Helper()
+		handle, result, err := compiler.Verify(program)
+		if handle != nil || !errors.Is(err, safety.ErrRejected) ||
+			len(result.Violations) != 1 || !strings.Contains(result.Violations[0].Message, "missing declared effect DB.read") ||
+			len(result.Incomplete) != 1 || !strings.Contains(result.Incomplete[0].Message, "unresolved call target") {
+			t.Fatalf("want original rejection and coverage report, got %v, %v, %v", handle, result, err)
+		}
+		return result
+	}
+	result := check()
+	result.Violations[0].Message = "changed"
+	result.Incomplete[0].Message = "changed"
+	check()
+}
+
+func TestArtifactResultsAreDetached(t *testing.T) {
+	t.Run("IR", func(t *testing.T) {
+		path := writeSource(t, t.TempDir(), "vm.splash", "module vm_demo\nfn main() { println(42) }\n")
+		handle := verify(t, analyze(t, path))
+		program, err := handle.LowerVM()
+		if err != nil {
+			t.Fatal(err)
+		}
+		program.Functions[program.Entry].Blocks = nil
+		var output bytes.Buffer
+		if err := handle.RunVM(&output, vm.Limits{Instructions: 100, Frames: 4}); err != nil || output.String() != "42\n" {
+			t.Fatalf("altering returned IR changed execution, got %q, %v", output.String(), err)
+		}
+	})
+	t.Run("tool manifest", func(t *testing.T) {
+		path := writeSource(t, t.TempDir(), "tools.splash", "module tools\ntool fn report() -> Int { return 42 }\n")
+		handle := verify(t, analyze(t, path))
+		first, err := handle.ExportTools(compiler.FormatOpenAI)
+		if err != nil || !bytes.Contains(first, []byte(`"report"`)) {
+			t.Fatalf("want report manifest, got %q, %v", first, err)
+		}
+		expected := bytes.Clone(first)
+		clear(first)
+		second, err := handle.ExportTools(compiler.FormatOpenAI)
+		if err != nil || !bytes.Equal(second, expected) {
+			t.Fatalf("altering returned manifest changed export, got %q, %v", second, err)
+		}
+	})
+}
