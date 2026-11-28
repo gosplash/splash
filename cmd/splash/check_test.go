@@ -159,14 +159,111 @@ func readCheckJSON(t *testing.T, binary, path, verdict string) ([]checkTestDiagn
 	var report struct {
 		SchemaVersion int
 		EntryPath     string
-		Verdict       string
+		Verdict       json.RawMessage
 		Diagnostics   []checkTestDiagnostic
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("invalid report %q: %v", &stdout, err)
 	}
-	if report.SchemaVersion != 1 || report.EntryPath != path || report.Verdict != verdict || report.Diagnostics == nil {
+	expectedVerdict := "null"
+	if verdict != "" {
+		expectedVerdict = `"` + verdict + `"`
+	}
+	if report.SchemaVersion != 1 || report.EntryPath != path || string(report.Verdict) != expectedVerdict || report.Diagnostics == nil {
 		t.Fatalf("unexpected verification report: %+v", report)
 	}
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Code == "" || diagnostic.Phase == "" {
+			t.Fatalf("diagnostic missing classification: %+v", diagnostic)
+		}
+	}
 	return report.Diagnostics, stdout.Bytes()
+}
+
+func TestCheckCLIOptionsPreserveDashPath(t *testing.T) {
+	binary := buildSplashCLI(t)
+	dir := t.TempDir()
+	writeSplashFile(t, dir, "-draft.splash", "module draft\nfn main() {}\n")
+
+	command := exec.Command(binary, "check", "-draft.splash")
+	command.Dir = dir
+	if output, err := command.CombinedOutput(); err != nil || string(output) != "-draft.splash: ok\n" {
+		t.Fatalf("legacy check with a leading dash = %q, %v", output, err)
+	}
+
+	command = exec.Command(binary, "check", "--json", "--", "-draft.splash")
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err != nil || !json.Valid(output) || !bytes.Contains(output, []byte(`"verdict":"verified"`)) {
+		t.Fatalf("check with flag before an escaped path = %q, %v", output, err)
+	}
+}
+
+func TestCheckJSONCallProvenance(t *testing.T) {
+	binary := buildSplashCLI(t)
+	t.Run("recursive effect witness", func(t *testing.T) {
+		path := writeSplashFile(t, t.TempDir(), "recursion.splash", `module recursion
+use std/ai
+fn ask(n: Int) -> Int {
+    if n <= 0 { return ai.prompt<Int>("question") }
+    return repeat(n - 1)
+}
+fn repeat(n: Int) -> Int { return ask(n) }
+fn start() -> Int { return repeat(1) }
+`)
+		diagnostics, _ := readCheckJSON(t, binary, path, "rejected")
+		for _, diag := range diagnostics {
+			if diag.Code != "INFERRED_EFFECT_EXCEEDS_AUTHORITY" || diag.Source.Start.Line != 8 {
+				continue
+			}
+			if len(diag.Witness) != 3 {
+				t.Fatalf("want witness through two resolved calls and the operation, got %+v", diag.Witness)
+			}
+			for i, want := range []struct {
+				kind, target string
+				site, decl   int
+			}{{"call", "repeat", 8, 7}, {"call", "ask", 7, 3}, {"operation", "std/ai.prompt", 4, 0}} {
+				step := diag.Witness[i]
+				if step.Kind != want.kind || step.Target != want.target || step.Source.Start.Line != want.site ||
+					step.Source.End == nil || step.Source.End.Line != want.site {
+					t.Fatalf("wrong source for witness step %d: %+v", i, step)
+				}
+				if want.decl == 0 && step.Declaration != nil ||
+					want.decl != 0 && (step.Declaration == nil || step.Declaration.Line != want.decl) {
+					t.Fatalf("wrong target declaration for witness step %d: %+v", i, step)
+				}
+			}
+			return
+		}
+		t.Fatalf("missing diagnostic for start(): %+v", diagnostics)
+	})
+	t.Run("approval invocation", func(t *testing.T) {
+		path := writeSplashFile(t, t.TempDir(), "approval.splash", `module approval
+approve fn save() -> Int { return 1 }
+fn main() { println(1 + save()) }
+`)
+		diagnostics, _ := readCheckJSON(t, binary, path, "rejected")
+		if len(diagnostics) != 1 || diagnostics[0].Code != "POLICY_VIOLATION" {
+			t.Fatalf("expected approval policy diagnostic, got %+v", diagnostics)
+		}
+		site := diagnostics[0].Source
+		if site == nil || site.Start.Line != 3 || site.Start.Column != 29 ||
+			site.End == nil || site.End.Line != 3 || site.End.Column != 31 {
+			t.Fatalf("expected source range for the nested call, got %+v", site)
+		}
+	})
+}
+
+func TestCheckCLIRejectsEmptyOperand(t *testing.T) {
+	binary := buildSplashCLI(t)
+	path := writeSplashFile(t, t.TempDir(), "main.splash", "module main\nfn main() {}\n")
+	command := exec.Command(binary, "check", "", "--json", path)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err := command.Run()
+	var failure *exec.ExitError
+	if !errors.As(err, &failure) || failure.ExitCode() != 1 || stdout.Len() != 0 ||
+		!bytes.Contains(stderr.Bytes(), []byte("empty file path")) {
+		t.Fatalf("empty operand = %v, stdout %q, stderr %q", err, &stdout, &stderr)
+	}
 }

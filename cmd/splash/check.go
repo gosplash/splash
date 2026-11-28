@@ -54,6 +54,11 @@ type checkWitness struct {
 }
 
 func parseCheckArgs(args []string) (path string, jsonMode bool, err error) {
+	// Single file operands were accepted verbatim before check had flags.
+	if len(args) == 1 && args[0] != "" && args[0] != "--json" && args[0] != "--" {
+		return args[0], false, nil
+	}
+
 	positionalOnly := false
 	for _, arg := range args {
 		switch {
@@ -63,6 +68,8 @@ func parseCheckArgs(args []string) (path string, jsonMode bool, err error) {
 			jsonMode = true
 		case !positionalOnly && strings.HasPrefix(arg, "-"):
 			return "", false, fmt.Errorf("unexpected check option %q", arg)
+		case arg == "":
+			return "", false, errors.New("check requires a nonempty file path")
 		case path == "":
 			path = arg
 		default:

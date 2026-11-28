@@ -119,8 +119,10 @@ func (c *Checker) checkApprovalCallContexts(g *callgraph.Graph, gated map[string
 	for _, node := range g.Nodes() {
 		for _, call := range node.NestedCalls {
 			if withErrorChannel[call.Target] {
-				diags = append(diags, diagnostic.Errorf(call.Position,
-					"approval call to %q must be a standalone statement, let value, or return value", call.Target))
+				diag := diagnostic.Errorf(call.Position,
+					"approval call to %q must be a standalone statement, let value, or return value", call.Target)
+				diag.End = call.End
+				diags = append(diags, diag)
 			}
 		}
 	}
