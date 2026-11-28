@@ -62,8 +62,8 @@ type checkWitness struct {
 	Declaration *checkPoint `json:"declaration,omitempty"`
 }
 
-func parseCheckArgs(args []string) (path string, jsonMode bool, err error) {
-	// Single file operands were accepted verbatim before check had flags.
+func parseJSONFileArgs(command string, args []string) (path string, jsonMode bool, err error) {
+	// Single file operands were accepted verbatim before either command had flags.
 	if len(args) == 1 && args[0] != "" && args[0] != "--json" && args[0] != "--" {
 		return args[0], false, nil
 	}
@@ -76,17 +76,17 @@ func parseCheckArgs(args []string) (path string, jsonMode bool, err error) {
 		case !positionalOnly && arg == "--json" && !jsonMode:
 			jsonMode = true
 		case !positionalOnly && strings.HasPrefix(arg, "-"):
-			return "", false, fmt.Errorf("unexpected check option %q", arg)
+			return "", false, fmt.Errorf("unexpected %s option %q", command, arg)
 		case arg == "":
-			return "", false, errors.New("check requires a nonempty file path")
+			return "", false, fmt.Errorf("%s requires a nonempty file path", command)
 		case path == "":
 			path = arg
 		default:
-			return "", false, fmt.Errorf("unexpected check argument %q", arg)
+			return "", false, fmt.Errorf("unexpected %s argument %q", command, arg)
 		}
 	}
 	if path == "" {
-		return "", false, fmt.Errorf("usage: splash check <file.splash> [--json]")
+		return "", false, fmt.Errorf("usage: splash %s <file.splash> [--json]", command)
 	}
 	return path, jsonMode, nil
 }

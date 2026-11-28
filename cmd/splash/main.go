@@ -45,7 +45,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "check":
-		path, jsonMode, err := parseCheckArgs(os.Args[2:])
+		path, jsonMode, err := parseJSONFileArgs(cmd, os.Args[2:])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -65,11 +65,15 @@ func main() {
 			os.Exit(1)
 		}
 	case "emit":
-		var err error
-		if len(os.Args) == 4 && os.Args[3] == "--json" {
-			err = runEmitJSON(file, os.Stdout)
+		path, jsonMode, err := parseJSONFileArgs(cmd, os.Args[2:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if jsonMode {
+			err = runEmitJSON(path, os.Stdout)
 		} else {
-			err = runEmit(file)
+			err = runEmit(path)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
