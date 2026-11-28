@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"gosplash.dev/splash/internal/compiler"
 	"gosplash.dev/splash/internal/safety"
-	"gosplash.dev/splash/internal/toolschema"
 )
 
 func TestIncompletePolicyCoverageStopsArtifactCommands(t *testing.T) {
@@ -29,7 +29,7 @@ fn main() { println("output") }
 		{"check", func() error { return runCheck(path) }},
 		{"emit", func() error { return runEmit(path) }},
 		{"build", func() error { return runBuild(path, artifact) }},
-		{"tools", func() error { return runTools(path, toolschema.FormatOpenAI) }},
+		{"tools", func() error { return runTools(path, compiler.FormatOpenAI) }},
 		{"run", func() error { return runVMCommand([]string{path, "--backend", "vm"}, os.Stdout) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,7 +56,7 @@ fn main() { println("output") }
 	if err := runBuild(path, artifact); err != nil {
 		t.Fatalf("want a Go artifact for covered source: %v", err)
 	}
-	if output, err := captureStdout(t, func() error { return runTools(path, toolschema.FormatOpenAI) }); err != nil ||
+	if output, err := captureStdout(t, func() error { return runTools(path, compiler.FormatOpenAI) }); err != nil ||
 		!strings.Contains(output, `"quote"`) {
 		t.Fatalf("want tool manifest for covered source, got %v: %s", err, output)
 	}
@@ -244,8 +244,25 @@ func TestLiteralToolDefaultHasCompleteSourceCoverage(t *testing.T) {
 	path := writeSplashFile(t, t.TempDir(), "main.splash", `module main
 tool fn report(limit: Int = 5) -> Int { return limit }
 `)
-	out, diag, err := captureEffectCommand(t, func() error { return runTools(path, toolschema.FormatOpenAI) })
+	out, diag, err := captureEffectCommand(t, func() error { return runTools(path, compiler.FormatOpenAI) })
 	if err != nil || !strings.Contains(out, `"limit"`) || strings.Contains(out, `"required"`) {
 		t.Fatalf("want exportable tool with literal default, got %v: %q\n%s", err, out, diag)
+	}
+}
+
+func TestSourceVerificationDoesNotClaimNativeBuildSuccess(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSplashFile(t, dir, "library.splash", "module library\nfn count() -> Int { return 1 }\n")
+	if err := runCheck(path); err != nil {
+		t.Fatalf("library should verify as source: %v", err)
+	}
+	binary := filepath.Join(dir, "library.exe")
+	err := runBuild(path, binary)
+	var nativeFailure *exec.ExitError
+	if !errors.As(err, &nativeFailure) {
+		t.Fatalf("want a native build failure for a library without main, got %v", err)
+	}
+	if _, err := os.Stat(binary); !os.IsNotExist(err) {
+		t.Fatalf("native build left an artifact or unexpected stat result: %v", err)
 	}
 }

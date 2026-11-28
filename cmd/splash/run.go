@@ -52,5 +52,9 @@ func runVMCommand(args []string, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("source analysis: %w", err)
 	}
-	return program.runVM(output, vm.Limits{Instructions: *instructions, Frames: *frames})
+	verified, err := verifyProgram(program)
+	if err != nil {
+		return err
+	}
+	return verified.RunVM(output, vm.Limits{Instructions: *instructions, Frames: *frames})
 }

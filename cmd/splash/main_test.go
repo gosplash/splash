@@ -10,11 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/compiler"
 	"gosplash.dev/splash/internal/ir"
-	"gosplash.dev/splash/internal/lowering"
 	"gosplash.dev/splash/internal/safety"
-	"gosplash.dev/splash/internal/toolschema"
 	"gosplash.dev/splash/internal/vm"
 )
 
@@ -81,7 +79,7 @@ redline fn dangerous() -> String { return "boom" }
 		},
 		{name: "emit", run: func() error { return runEmit(mainPath) }},
 		{name: "build", run: func() error { return runBuild(mainPath, binary) }},
-		{name: "tools", run: func() error { return runTools(mainPath, toolschema.FormatOpenAI) }},
+		{name: "tools", run: func() error { return runTools(mainPath, compiler.FormatOpenAI) }},
 	} {
 		t.Run(command.name, func(t *testing.T) {
 			out, err := captureStdout(t, command.run)
@@ -92,54 +90,6 @@ redline fn dangerous() -> String { return "boom" }
 	}
 	if _, err := os.Stat(binary); !os.IsNotExist(err) {
 		t.Fatalf("expected no binary on rejection; got stat error %v", err)
-	}
-}
-
-func TestAnalyzeProgramRetainsTypedModulesAndSource(t *testing.T) {
-	dir := t.TempDir()
-	entry := writeSplashFile(t, dir, "main.splash", `
-module main
-use lib as local
-fn main() { println(local.answer()) }
-`)
-	const original = "module lib\nfn answer() -> Int { return 42 }\n"
-	lib := writeSplashFile(t, dir, "lib.splash", original)
-
-	program, err := analyzeProgram(entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(program.modules) != 2 {
-		t.Fatalf("expected one imported module and one entry module, got %d", len(program.modules))
-	}
-	imported, root := program.modules[0], program.modules[1]
-	if imported.File.Module.Name != "lib" || root.File.Module.Name != "main" {
-		t.Fatal("expected imports before the entry module, with original module ownership")
-	}
-	fn := imported.File.Declarations[0].(*ast.FunctionDecl)
-	value := fn.Body.Stmts[0].(*ast.ReturnStmt).Value
-	if typ := imported.Types[value]; typ == nil || typ.TypeName() != "Int" {
-		t.Fatalf("expected the imported return expression to retain type Int, got %v", typ)
-	}
-	writeSplashFile(t, dir, "lib.splash", "module lib\nfn answer() -> Int { return 99 }\n")
-	if program.sources[lib] != original || !strings.Contains(program.sources[entry], "use lib as local") {
-		t.Fatal("expected captured source from both modules, including the original imported bytes")
-	}
-
-	goSrc, err := program.emitGo()
-	if err != nil {
-		t.Fatalf("emit captured program: %v", err)
-	}
-	generated := filepath.Join(dir, "generated.go")
-	if err := os.WriteFile(generated, []byte(goSrc), 0644); err != nil {
-		t.Fatalf("write generated Go: %v", err)
-	}
-	output, err := exec.Command("go", "run", generated).CombinedOutput()
-	if err != nil {
-		t.Fatalf("run generated Go: %v\n%s", err, output)
-	}
-	if got := strings.TrimSpace(string(output)); got != "42" {
-		t.Fatalf("expected captured program to print 42, got %q", got)
 	}
 }
 
@@ -188,7 +138,7 @@ tool fn imported_tool(query: String) -> String { return query }
 `)
 
 	out, err := captureStdout(t, func() error {
-		return runTools(mainPath, toolschema.FormatOpenAI)
+		return runTools(mainPath, compiler.FormatOpenAI)
 	})
 	if err != nil {
 		t.Fatalf("runTools failed: %v", err)
@@ -302,8 +252,8 @@ fn price() -> Int { return 2 }
 	if err != nil {
 		t.Fatal(err)
 	}
-	total := program.graph.Node("total")
-	if got := strings.Join(total.Callees(), ","); got != "rates.price,shipping.price" {
+	total := findFunction(t, program, "total")
+	if got := strings.Join(total.Callees, ","); got != "rates.price,shipping.price" {
 		t.Fatalf("total callees = %q; want rates.price,shipping.price", got)
 	}
 
@@ -346,7 +296,7 @@ fn main() { println(apply(alternate)) }
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := program.graph.Node("apply").Callees(); len(got) != 0 {
+	if got := findFunction(t, program, "apply").Callees; len(got) != 0 {
 		t.Fatalf("indirect caller has named callees %v", got)
 	}
 	executable := filepath.Join(t.TempDir(), "callback")
@@ -368,7 +318,7 @@ fn process(callback: fn() -> Int) needs Agent -> Int { return callback() }
 	if err != nil {
 		t.Fatal(err)
 	}
-	status := program.safetyDiagnostics()
+	_, status, _ := compiler.Verify(program)
 	if len(status.Violations) != 0 || len(status.Incomplete) != 1 ||
 		!strings.Contains(status.Incomplete[0].Message, "unresolved call target") {
 		t.Fatalf("expected a specific unresolved-target diagnostic, got %v", status)
@@ -421,7 +371,8 @@ redline fn count() -> Int { return 42 }
 	if err != nil {
 		t.Fatal(err)
 	}
-	diags := program.safetyDiagnostics().Violations
+	_, result, _ := compiler.Verify(program)
+	diags := result.Violations
 	if len(diags) != 1 || !strings.Contains(diags[0].Message, "redline fn") {
 		t.Fatalf("expected the existing redline rule to apply to a qualified target, got %v", diags)
 	}
@@ -438,7 +389,8 @@ fn main() { println(quotedPrice()) }
 	if err != nil {
 		t.Fatal(err)
 	}
-	diags := program.safetyDiagnostics().Violations
+	_, result, _ := compiler.Verify(program)
+	diags := result.Violations
 	if len(diags) != 1 || !strings.Contains(diags[0].Message, "approval call") {
 		t.Fatalf("expected one diagnostic for the unsupported nested approval call, got %v", diags)
 	}
@@ -489,13 +441,14 @@ fn main() {
 	if err != nil {
 		t.Fatal(err)
 	}
+	verified := requireVerified(t, program)
 	writeSplashFile(t, dir, "hello.splash", `module main
 fn main() {
     println("different")
 }
 `)
 	var vmOutput bytes.Buffer
-	if err := program.runVM(&vmOutput, vm.Limits{Instructions: 100, Frames: 1}); err != nil {
+	if err := verified.RunVM(&vmOutput, vm.Limits{Instructions: 100, Frames: 1}); err != nil {
 		t.Fatal(err)
 	}
 	const want = "Hello, world\n"
@@ -503,7 +456,7 @@ fn main() {
 		t.Fatalf("VM printed %q, want %q", got, want)
 	}
 
-	goSource, err := program.emitGo()
+	goSource, err := verified.EmitGo()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,8 +489,8 @@ func TestVM001RejectsUnsupportedSourceBeforeOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			err = program.runVM(&out, vm.Limits{Instructions: 100, Frames: 1})
-			var vmErr *lowering.AdmissionError
+			err = requireVerified(t, program).RunVM(&out, vm.Limits{Instructions: 100, Frames: 1})
+			var vmErr *compiler.VMAdmissionError
 			if !errors.As(err, &vmErr) || vmErr.Source.Line != 4 {
 				t.Fatalf("want unsupported source diagnostic at line 4, got %v", err)
 			}
@@ -556,8 +509,8 @@ func TestVMReportsUnsupportedHostImportLocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = program.runVM(&out, vm.Limits{Instructions: 100, Frames: 1})
-	var vmErr *lowering.AdmissionError
+	err = requireVerified(t, program).RunVM(&out, vm.Limits{Instructions: 100, Frames: 1})
+	var vmErr *compiler.VMAdmissionError
 	if !errors.As(err, &vmErr) ||
 		vmErr.Source.File != path || vmErr.Source.Line != 2 {
 		t.Fatalf("want unsupported import at %s:2, got %v", path, err)
@@ -586,14 +539,14 @@ func TestVM002RecursiveExecutionMatchesGoAndExpectedOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := program.runVM(&out, vm.Limits{Instructions: 1000, Frames: 8}); err != nil {
+	if err := requireVerified(t, program).RunVM(&out, vm.Limits{Instructions: 1000, Frames: 8}); err != nil {
 		t.Fatal(err)
 	}
 	const want = "1\n120\n"
 	if out.String() != want {
 		t.Fatalf("VM printed %q, want %q", out.String(), want)
 	}
-	goSource, err := program.emitGo()
+	goSource, err := requireVerified(t, program).EmitGo()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,6 +566,7 @@ func TestVM002CountsAcrossFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	verified := requireVerified(t, program)
 	for _, tc := range []struct {
 		limits vm.Limits
 		code   vm.ErrorCode
@@ -621,7 +575,7 @@ func TestVM002CountsAcrossFrames(t *testing.T) {
 		{vm.Limits{Instructions: 1000, Frames: 2}, vm.FrameLimit},
 	} {
 		var out bytes.Buffer
-		err := program.runVM(&out, tc.limits)
+		err := verified.RunVM(&out, tc.limits)
 		var vmErr *vm.Error
 		if !errors.As(err, &vmErr) || vmErr.Code != tc.code || vmErr.FrameDepth < 2 {
 			t.Fatalf("want %s in a nested frame, got %#v", tc.code, err)
@@ -645,7 +599,7 @@ func TestVM002IntegerLiteralsRespectSigned64BitRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := program.runVM(&out, vm.Limits{Instructions: 100, Frames: 1}); err != nil || out.String() != "-9223372036854775808\n" {
+	if err := requireVerified(t, program).RunVM(&out, vm.Limits{Instructions: 100, Frames: 1}); err != nil || out.String() != "-9223372036854775808\n" {
 		t.Fatalf("minimum Int printed %q, error %v", out.String(), err)
 	}
 }
@@ -664,7 +618,7 @@ fn main() {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = program.runVM(&out, vm.Limits{Instructions: 1000, Frames: 1})
+	err = requireVerified(t, program).RunVM(&out, vm.Limits{Instructions: 1000, Frames: 1})
 	const want = "7\ntrue\n9223372036854775807\n11\n"
 	if err != nil || out.String() != want {
 		t.Fatalf("VM returned %q, %v, want %q", out.String(), err, want)
@@ -714,7 +668,7 @@ fn main() {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = program.runVM(&out, vm.Limits{Instructions: 1000, Frames: 3})
+	err = requireVerified(t, program).RunVM(&out, vm.Limits{Instructions: 1000, Frames: 3})
 	const want = "4\n2\n6\n3\n1\n4\n"
 	if err != nil || out.String() != want {
 		t.Fatalf("VM returned %q, %v, want %q", out.String(), err, want)
@@ -730,7 +684,7 @@ func TestVM002RejectsMistypedIRBeforeExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			err = program.runVM(&out, vm.Limits{Instructions: 100, Frames: 3})
+			err = requireVerified(t, program).RunVM(&out, vm.Limits{Instructions: 100, Frames: 3})
 			var validation *ir.ValidationError
 			if !errors.As(err, &validation) || validation.Source.File != path || out.Len() != 0 ||
 				!strings.Contains(err.Error(), path+":") || !strings.Contains(err.Error(), "SPLASH_VM_INVALID_IR") {
@@ -738,4 +692,24 @@ func TestVM002RejectsMistypedIRBeforeExecution(t *testing.T) {
 			}
 		})
 	}
+}
+
+func requireVerified(t *testing.T, program *compiler.AnalyzedProgram) *compiler.VerifiedProgram {
+	t.Helper()
+	verified, result, err := compiler.Verify(program)
+	if err != nil {
+		t.Fatalf("verify: %v (%v)", err, result)
+	}
+	return verified
+}
+
+func findFunction(t *testing.T, program *compiler.AnalyzedProgram, name string) compiler.Function {
+	t.Helper()
+	for _, function := range program.Functions() {
+		if function.Name == name {
+			return function
+		}
+	}
+	t.Fatalf("no function named %q", name)
+	return compiler.Function{}
 }

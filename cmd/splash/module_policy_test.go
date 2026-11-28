@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"gosplash.dev/splash/internal/toolschema"
+	"gosplash.dev/splash/internal/compiler"
 )
 
 func TestContainmentFollowsResolvedModuleOfNestedCall(t *testing.T) {
@@ -56,13 +56,13 @@ use private_data as hidden
 tool fn lookup(value: %s.Payload) -> %s.Payload? { return value }
 `
 	path := writeSplashFile(t, dir, "app.splash", fmt.Sprintf(entry, "visible", "visible"))
-	output, diagnostic, err := captureEffectCommand(t, func() error { return runTools(path, toolschema.FormatOpenAI) })
+	output, diagnostic, err := captureEffectCommand(t, func() error { return runTools(path, compiler.FormatOpenAI) })
 	if err != nil || !strings.Contains(output, `"lookup"`) {
 		t.Fatalf("public record should allow the tool export, got %v: %s", err, diagnostic)
 	}
 
 	writeSplashFile(t, dir, "app.splash", fmt.Sprintf(entry, "hidden", "hidden"))
-	output, diagnostic, err = captureEffectCommand(t, func() error { return runTools(path, toolschema.FormatOpenAI) })
+	output, diagnostic, err = captureEffectCommand(t, func() error { return runTools(path, compiler.FormatOpenAI) })
 	if err == nil || output != "" || !strings.Contains(diagnostic, "sensitive or restricted fields (secret)") {
 		t.Fatalf("want classified record rejection and no tool manifest, got %v, %q: %s", err, output, diagnostic)
 	}

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"gosplash.dev/splash/internal/compiler"
 	"gosplash.dev/splash/internal/safety"
-	"gosplash.dev/splash/internal/toolschema"
 )
 
 func TestMissingEffectRejectsArtifactPaths(t *testing.T) {
@@ -24,7 +24,7 @@ func TestMissingEffectRejectsArtifactPaths(t *testing.T) {
 		"emit":  func() error { return runEmit(path) },
 		"build": func() error { return runBuild(path, artifact) },
 		"run":   func() error { return runVMCommand([]string{path, "--backend", "vm"}, os.Stdout) },
-		"tools": func() error { return runTools(path, toolschema.FormatOpenAI) },
+		"tools": func() error { return runTools(path, compiler.FormatOpenAI) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			output, diag, err := captureEffectCommand(t, command)
