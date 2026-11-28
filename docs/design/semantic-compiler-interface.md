@@ -68,7 +68,7 @@ Show declared grants, inferred effects and coverage separately. With complete ev
 
 ## Commands and status
 
-The CLI uses file-first commands. JSON verification is implemented. The remaining machine interfaces below describe proposed commands.
+The CLI uses file-first commands. Versioned JSON is implemented for `check` and one-function `inspect`. The authority commands below are proposals.
 
 ```text
 splash check app/main.splash --json
@@ -78,9 +78,9 @@ splash authority snapshot app/main.splash --json
 splash authority diff base.json head.json --json
 ```
 
-The first two commands are the minimum interface. Start with representative parse, type and modeled-policy diagnostics, and a query that returns one function’s signature, declared effects, resolved direct edges, roots, approval status and file range. The manifest and diff follow once binding, policy completeness and lowering agree. Existing text commands remain valuable. An agent-facing schema stays separate from provider-specific tool schema formats.
+The first two commands cover source verification diagnostics and one function contract. Resolved direct edges, roots, approval facts, and richer source ranges are candidates for later queries. The manifest and diff follow once binding, policy completeness and lowering agree. The agent-facing schema stays separate from provider-specific tool formats.
 
-Every structured analysis result has a schema version, source and analysis identities, entry scope, loaded files, phase status, property evidence and an overall verdict. Report each property with its scope, status, and supporting or blocking evidence. Use `passed`, `failed`, `incomplete` and `notRun` for both phases and properties. One phase can establish several properties with different statuses.
+The full verification report design includes a schema version, source and analysis identities, entry scope, loaded files, phase status, property evidence, and an overall verdict. Report each property with its scope, status, and supporting or blocking evidence. Use `passed`, `failed`, `incomplete` and `notRun` for both phases and properties. One phase can establish several properties with different statuses.
 
 | Verdict | Meaning |
 | --- | --- |
@@ -115,6 +115,23 @@ Diagnostic records have `code`, `phase`, `severity`, and a human-readable `messa
 | `COMPILER_ERROR` | `verification` | Unexpected compiler failure without a program verdict. |
 
 A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. The report currently omits phase-level coverage, snapshot identities, causal diagnostic links, and repair suggestions. Clients should tolerate additive fields and codes within v1.
+
+### Inspect JSON v1
+
+`splash inspect app/main.splash inventory.reconcile --json` resolves one function in the analyzed entry and its loaded imports. A qualified selector uses the declared module name and the function name. A bare selector searches the entry file only, including an entry without a module declaration. Imported functions in files without a module declaration have no v1 selector. Import aliases belong to their source files. If two files with the same declared module name both define the requested function, inspection reports ambiguity. The function and its effects are linked by the resolved declaration, and the report uses the same captured snapshot and semantic facts that source verification consumes.
+
+The command writes one object to stdout with `schemaVersion: 1`, `entryPath`, `query`, `contract`, and `diagnostics`. A resolved contract exits 0. A missing or ambiguous selector returns exit 1 with a null contract and `FUNCTION_NOT_FOUND` or `FUNCTION_AMBIGUOUS` in the `inspection` phase. Front-end and input failures return exit 1 with the corresponding [check diagnostics](#check-json-v1). CLI usage errors go to stderr.
+
+| Contract field | Meaning |
+| --- | --- |
+| `symbol` | Function name qualified by its declared module where available. |
+| `declaration` | File and one-based position of the function declaration. |
+| `signature` | Ordered parameter names and checked type display names, return type, and applicable default-presence, variadic, async, and generic constraint information. Type display names can coincide for distinct declarations. `Unknown` marks missing type information in the existing analysis. |
+| `declaredAuthority` | Atomic authority labels from the declaration, including structural labels where applicable. |
+| `inferredEffects` | Known effects from modeled operations and resolved calls. |
+| `effectCoverage` | `complete` or `incomplete` under the current effect model. Incomplete coverage includes one representative gap with source provenance where available. |
+
+An empty inferred array with incomplete coverage means the analyzer established no modeled effects for the function and still has missing evidence. Inspection can report a contract even when source verification would reject the program or be indeterminate. Use `splash check --json` for a source verdict. Each inspector invocation captures its own snapshot. Persistent snapshot identities and public type identities remain proposed.
 
 ## Snapshot and artifact provenance
 

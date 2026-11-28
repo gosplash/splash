@@ -61,11 +61,12 @@ func (e EffectSet) String() string {
 	if e == None {
 		return "none"
 	}
-	return strings.Join(e.labels(), "|")
+	return strings.Join(e.Labels(), "|")
 }
 
-func (e EffectSet) labels() []string {
-	var parts []string
+// Labels returns the atomic effect labels in vocabulary order.
+func (e EffectSet) Labels() []string {
+	parts := []string{}
 	for _, effect := range atomicEffects {
 		if e.Has(effect.flag) {
 			parts = append(parts, effect.name)

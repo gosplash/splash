@@ -171,7 +171,7 @@ func (s *Summary) Diagnostics() []diagnostic.Diagnostic {
 			"missing declared effect %s for call to %q (declared at %s)",
 			violation.missing, call.Target.Name, call.Target.Pos()).WithCode(diagnostic.DeclaredEffectMissing)
 		diag.End = call.End
-		diag.Effects = violation.missing.labels()
+		diag.Effects = violation.missing.Labels()
 		diag.Witness = []diagnostic.WitnessStep{{
 			Target: call.Target.Name, Site: call.Position, End: call.End, Declaration: call.Target.Pos(),
 		}}

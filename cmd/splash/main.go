@@ -19,8 +19,18 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "inspect" {
+		ok, err := runInspectCommand(os.Args[2:], os.Stdout)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		if !ok {
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: splash <check|run|build|emit|tools|graph|effects|approvals> <file.splash>")
+		fmt.Fprintln(os.Stderr, "usage: splash <check|inspect|run|build|emit|tools|graph|effects|approvals> <file.splash>")
 		os.Exit(1)
 	}
 	cmd, file := os.Args[1], os.Args[2]
