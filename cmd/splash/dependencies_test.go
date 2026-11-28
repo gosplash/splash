@@ -15,9 +15,9 @@ type testDependencyFunction struct {
 }
 
 type testDependencyReport struct {
-	SchemaVersion    int
-	Query, Direction string
-	Result           *struct {
+	SchemaVersion               int
+	EntryPath, Query, Direction string
+	Result                      *struct {
 		Root          testDependencyFunction
 		MaxDepth      *int
 		Relationships []struct {
@@ -66,7 +66,8 @@ fn gap(cb: fn() -> Int) needs Net -> Int { return cb() }
 	d := direct.Result.Relationships
 	if len(d) != 2 || d[0].Function.Symbol != "left.bridge" || d[0].Function.Declaration.File != left ||
 		d[0].Distance != 1 || d[0].Via != direct.Result.Root ||
-		d[1].Function.Symbol != "right.finish" || d[1].Source.Start.Line != 6 || d[1].Source.End == nil {
+		d[1].Function.Symbol != "right.finish" || d[1].Source.Start.Line != 6 || d[1].Source.Start.Column != 16 ||
+		d[1].Source.End == nil || d[1].Source.End.Column != 18 {
 		t.Fatalf("wrong direct relationships: %+v", d)
 	}
 
@@ -104,16 +105,26 @@ func readDependencies(t *testing.T, bin, direction, path, query string, options 
 	command := exec.Command(bin, append([]string{direction, path, query, "--json"}, options...)...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
+	exitCode := 0
 	if err := command.Run(); err != nil {
 		var exit *exec.ExitError
-		if !errors.As(err, &exit) || exit.ExitCode() != 1 || stdout.Len() == 0 {
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
 			t.Fatalf("dependency command failed: %v, stdout %q, stderr %q", err, &stdout, &stderr)
 		}
+		exitCode = exit.ExitCode()
 	}
 	var report testDependencyReport
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || stderr.Len() != 0 ||
-		report.SchemaVersion != 1 || report.Query != query || report.Direction != direction || report.Diagnostics == nil {
+		report.SchemaVersion != 1 || report.EntryPath != path ||
+		report.Query != query || report.Direction != direction || report.Diagnostics == nil {
 		t.Fatalf("invalid dependency report %q: %v, stderr %q", &stdout, err, &stderr)
+	}
+	wantExit := 0
+	if report.Result == nil {
+		wantExit = 1
+	}
+	if exitCode != wantExit {
+		t.Fatalf("dependency report exited %d, want %d: %s", exitCode, wantExit, &stdout)
 	}
 	return report, stdout.Bytes()
 }
