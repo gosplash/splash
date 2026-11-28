@@ -55,6 +55,10 @@ func (p *AnalyzedProgram) InspectFunction(query string) (FunctionContract, error
 	if err != nil {
 		return FunctionContract{}, err
 	}
+	return p.snapshot.projectFunctionContract(selected)
+}
+
+func (a *analysis) projectFunctionContract(selected selectedFunction) (FunctionContract, error) {
 	owner, summary := selected.owner, selected.summary
 	declaration := summary.Function
 	symbol := functionSymbol(owner.File.Module, declaration)
@@ -66,7 +70,7 @@ func (p *AnalyzedProgram) InspectFunction(query string) (FunctionContract, error
 		return FunctionContract{}, fmt.Errorf("missing checked signature for %q", symbol)
 	}
 	contract := FunctionContract{
-		Symbol: symbol, Declaration: declaration.Pos(), Signature: p.snapshot.functionSignature(fnType, declaration),
+		Symbol: symbol, Declaration: declaration.Pos(), Signature: a.functionSignature(fnType, declaration),
 		Declared: summary.Declared, Inferred: summary.Inferred,
 	}
 	if summary.Gap != nil {

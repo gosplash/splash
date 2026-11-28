@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os/exec"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -55,6 +57,7 @@ fn gap(cb: fn() -> Int) needs Net -> Int { return cb() }
 `)
 
 	direct, raw := readDependencies(t, bin, "callees", entry, "root")
+	assertFullDependencyShape(t, raw, true)
 	if _, next := readDependencies(t, bin, "callees", entry, "root"); !bytes.Equal(raw, next) {
 		t.Fatalf("nondeterministic JSON:\n%s\n%s", raw, next)
 	}
@@ -173,13 +176,19 @@ func TestDependencyQueryFailures(t *testing.T) {
 	entry := writeSplashFile(t, dir, "main.splash", "module main\nuse x as xlib\nuse y as ylib\nfn main() {}\n")
 	for _, tc := range []struct{ query, code string }{{"same.target", "FUNCTION_AMBIGUOUS"}, {"unknown", "FUNCTION_NOT_FOUND"}} {
 		report, raw := readDependencies(t, bin, "callers", entry, tc.query)
+		assertFullDependencyShape(t, raw, false)
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err != nil || string(fields["result"]) != "null" ||
 			len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != tc.code {
 			t.Fatalf("wrong failure for %s: %s", tc.query, raw)
 		}
 	}
-	for _, args := range [][]string{{"--depth", "0"}, {"--depth", "-2"}, {"--transitive", "--depth", "2"}} {
+	for _, args := range [][]string{
+		{"--depth", "0"}, {"--depth", "-2"}, {"--transitive", "--depth", "2"},
+		{"--limit", "2"}, {"--compact", "--limit"}, {"--compact", "--limit", "0"},
+		{"--compact", "--limit", "101"}, {"--compact", "--limit", "2", "--limit", "3"},
+		{"--compact", "--transitive", "--depth", "2"}, {"--compact", "--compact"},
+	} {
 		command := exec.Command(bin, append([]string{"callers", entry, "main", "--json"}, args...)...)
 		var stdout, stderr bytes.Buffer
 		command.Stdout, command.Stderr = &stdout, &stderr
@@ -188,5 +197,130 @@ func TestDependencyQueryFailures(t *testing.T) {
 		if !errors.As(err, &exit) || exit.ExitCode() != 1 || stdout.Len() != 0 || stderr.Len() == 0 {
 			t.Fatalf("accepted invalid options %v: %v, %s, %s", args, err, &stdout, &stderr)
 		}
+	}
+}
+
+func assertFullDependencyShape(t *testing.T, raw []byte, success bool) {
+	t.Helper()
+	var report map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"diagnostics", "direction", "entryPath", "identity", "query", "result", "schemaVersion"}
+	if keys := slices.Sorted(maps.Keys(report)); !slices.Equal(keys, want) {
+		t.Fatalf("unexpected v1 envelope keys: %v", keys)
+	}
+	if success {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(report["result"], &result); err != nil {
+			t.Fatal(err)
+		}
+		if keys := slices.Sorted(maps.Keys(result)); !slices.Equal(keys, []string{"coverage", "maxDepth", "relationships", "root"}) {
+			t.Fatalf("unexpected v1 result keys: %v", keys)
+		}
+	} else if string(report["result"]) != "null" {
+		t.Fatalf("expected null v1 result: %s", raw)
+	}
+}
+
+func TestCompactDependenciesKeepCoverageBeyondLimit(t *testing.T) {
+	bin := buildSplashCLI(t)
+	dir := t.TempDir()
+	path := writeSplashFile(t, dir, "app.splash", `module app
+fn root(cb: fn() -> Int) -> Int { return middle(cb) }
+fn middle(cb: fn() -> Int) -> Int { return last(cb) }
+fn last(cb: fn() -> Int) -> Int { return cb() }
+`)
+	full, fullRaw := readDependencies(t, bin, "callees", path, "root", "--transitive")
+	args := []string{"callees", path, "root", "--json", "--compact", "--limit", "1", "--transitive"}
+	raw, err := exec.Command(bin, args...).Output()
+	if err != nil {
+		t.Fatalf("compact dependencies: %v, %s", err, raw)
+	}
+	type compactReport struct {
+		View     string
+		Identity struct{ AnalysisID string }
+		Result   *struct {
+			Root     struct{ Symbol, Path string }
+			MaxDepth *int
+			Matches  []struct {
+				Symbol, Path   string
+				Line, Distance int
+			}
+			Total, Omitted, Limit int
+			OmittedFields         []string
+			Coverage              struct {
+				Scope, Status string
+				Gap           struct{ Function testDependencyFunction }
+			}
+		}
+	}
+	var report compactReport
+	if err := json.Unmarshal(raw, &report); err != nil || report.View != "compact" ||
+		report.Identity.AnalysisID == "" || report.Result == nil {
+		t.Fatalf("invalid compact dependency report: %s (%v)", raw, err)
+	}
+	got := report.Result
+	if got.Root.Symbol != "app.root" || got.Root.Path != "app.splash" || got.MaxDepth != nil || !bytes.Contains(raw, []byte(`"maxDepth":null`)) ||
+		got.Total != len(full.Result.Relationships) || got.Total != 2 || got.Omitted != 1 ||
+		got.Limit != 1 || !reflect.DeepEqual(got.OmittedFields, []string{"via", "source"}) ||
+		len(got.Matches) != 1 || got.Matches[0].Symbol != full.Result.Relationships[0].Function.Symbol ||
+		got.Matches[0].Path != "app.splash" || got.Matches[0].Line != 3 || got.Matches[0].Distance != 1 ||
+		got.Coverage.Scope != full.Result.Coverage.Scope || got.Coverage.Status != "incomplete" ||
+		got.Coverage.Gap.Function.Symbol != "app.last" {
+		t.Fatalf("wrong compact result: %s", raw)
+	}
+	for _, tc := range []struct{ direction, scope, status string }{
+		{"callees", "expandedFunctions", "complete"}, // The gap is at the depth boundary.
+		{"callers", "entryClosure", "incomplete"},    // The gap is outside the reverse graph.
+	} {
+		output, err := exec.Command(bin, tc.direction, path, "root", "--json", "--compact", "--depth", "2", "--limit", "1").Output()
+		var report compactReport
+		if err != nil || json.Unmarshal(output, &report) != nil || report.Result == nil ||
+			report.Result.MaxDepth == nil || *report.Result.MaxDepth != 2 ||
+			report.Result.Coverage.Scope != tc.scope || report.Result.Coverage.Status != tc.status {
+			t.Fatalf("wrong coverage for bounded %s: %s (%v)", tc.direction, output, err)
+		}
+		full, _ := readDependencies(t, bin, tc.direction, path, "root", "--depth", "2")
+		if report.Result.Total != len(full.Result.Relationships) ||
+			len(report.Result.Matches) != min(1, report.Result.Total) {
+			t.Fatalf("wrong relationships count for bounded %s: %s", tc.direction, output)
+		}
+		for i, match := range report.Result.Matches {
+			if match.Symbol != full.Result.Relationships[i].Function.Symbol {
+				t.Fatalf("wrong traversal order for bounded %s: %s", tc.direction, output)
+			}
+		}
+	}
+	if next, err := exec.Command(bin, args...).Output(); err != nil || !bytes.Equal(raw, next) {
+		t.Fatalf("nondeterministic compact output: %s (%v)", next, err)
+	}
+	if _, after := readDependencies(t, bin, "callees", path, "root", "--transitive"); !bytes.Equal(fullRaw, after) {
+		t.Fatalf("full report changed: %s", after)
+	}
+}
+
+func TestCompactDependenciesKeepSameNamedDeclarationsDistinct(t *testing.T) {
+	bin := buildSplashCLI(t)
+	dir := t.TempDir()
+	writeSplashFile(t, dir, "left.splash", "module shared\nfn target() {}")
+	writeSplashFile(t, dir, "right.splash", "module shared\nfn target() {}")
+	path := writeSplashFile(t, dir, "main.splash", "module app\nuse left as left_mod\nuse right as right_mod\nfn main() { left_mod.target(); right_mod.target() }")
+	raw, err := exec.Command(bin, "callees", path, "main", "--json", "--compact").Output()
+	if err != nil {
+		t.Fatalf("compact dependencies: %v, %s", err, raw)
+	}
+	var report struct {
+		Result struct {
+			Matches []struct{ Symbol, Path string }
+			Limit   int
+			Omitted int
+		}
+	}
+	if err := json.Unmarshal(raw, &report); err != nil || report.Result.Limit != 20 || report.Result.Omitted != 0 ||
+		len(report.Result.Matches) != 2 || report.Result.Matches[0].Symbol != "shared.target" ||
+		report.Result.Matches[1].Symbol != "shared.target" || report.Result.Matches[0].Path != "left.splash" ||
+		report.Result.Matches[1].Path != "right.splash" {
+		t.Fatalf("nominal dependency locations lost: %s (%v)", raw, err)
 	}
 }

@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"errors"
+	"fmt"
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
@@ -41,6 +42,25 @@ type DependencyResult struct {
 	Root          DependencyFunction
 	Relationships []Relationship
 	Gap           *DependencyGap
+	total         int
+}
+
+type CompactDependencyFunction struct {
+	Symbol string `json:"symbol"`
+	Path   string `json:"path"`
+	Line   int    `json:"line"`
+}
+
+type CompactDependencyMatch struct {
+	CompactDependencyFunction
+	Distance int `json:"distance"`
+}
+
+type CompactDependencyResult struct {
+	Root    CompactDependencyFunction
+	Matches []CompactDependencyMatch
+	Total   int
+	Gap     *DependencyGap
 }
 
 type dependencyIndex struct {
@@ -119,6 +139,39 @@ func (p *analysis) indexDependencies() *dependencyIndex {
 // unbounded. A callers query conservatively reports gaps in the entry closure
 // because even a function outside the known reverse graph could call the root.
 func (p *AnalyzedProgram) Dependencies(query string, direction DependencyDirection, maxDepth int) (DependencyResult, error) {
+	return p.dependenciesWithin(query, direction, maxDepth, 0)
+}
+
+// CompactDependencies returns the first limit matches in traversal order.
+// Counting and coverage still describe the entire requested depth and scope.
+func (p *AnalyzedProgram) CompactDependencies(query string, direction DependencyDirection, maxDepth, limit int) (CompactDependencyResult, error) {
+	if limit < 1 || limit > MaxContextLimit {
+		return CompactDependencyResult{}, fmt.Errorf("dependency limit must be between 1 and %d", MaxContextLimit)
+	}
+	result, err := p.dependenciesWithin(query, direction, maxDepth, limit)
+	if err != nil {
+		return CompactDependencyResult{}, err
+	}
+	location := func(fn DependencyFunction) CompactDependencyFunction {
+		return CompactDependencyFunction{
+			Symbol: fn.Symbol,
+			Path:   p.snapshot.sourcePath(fn.Declaration.File),
+			Line:   fn.Declaration.Line,
+		}
+	}
+	compact := CompactDependencyResult{
+		Root: location(result.Root), Matches: make([]CompactDependencyMatch, 0, len(result.Relationships)),
+		Total: result.total, Gap: result.Gap,
+	}
+	for _, match := range result.Relationships {
+		compact.Matches = append(compact.Matches, CompactDependencyMatch{
+			CompactDependencyFunction: location(match.Function), Distance: match.Distance,
+		})
+	}
+	return compact, nil
+}
+
+func (p *AnalyzedProgram) dependenciesWithin(query string, direction DependencyDirection, maxDepth, limit int) (DependencyResult, error) {
 	if (direction != Callers && direction != Callees) || maxDepth < 0 {
 		return DependencyResult{}, errors.New("invalid dependency query")
 	}
@@ -157,10 +210,13 @@ func (p *AnalyzedProgram) Dependencies(query string, direction DependencyDirecti
 			}
 			seen[edge.node] = true
 			distance := current.distance + 1
-			result.Relationships = append(result.Relationships, Relationship{
-				Function: edge.node.function(), Via: current.node.function(), Distance: distance,
-				Position: edge.call.Position, End: edge.call.End,
-			})
+			result.total++
+			if limit == 0 || len(result.Relationships) < limit {
+				result.Relationships = append(result.Relationships, Relationship{
+					Function: edge.node.function(), Via: current.node.function(), Distance: distance,
+					Position: edge.call.Position, End: edge.call.End,
+				})
+			}
 			if edge.node != root {
 				queue = append(queue, visit{edge.node, distance})
 			}
