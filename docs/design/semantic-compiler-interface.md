@@ -316,17 +316,18 @@ A compact query caps result rows. Counting and coverage still traverse the reque
 
 ### Compact context measurements
 
-Measured at `7c2c880` on an Apple M5 with macOS 27.0.1 (26A434) and Go 1.26.3 arm64. Values are medians of five benchmark runs. Timed queries reuse captured analysis. Dependency queries also reuse the adjacency index. Source analysis, digest computation, and process startup are outside the timed operations.
+Measured at `a3a97ca` on an Apple M5 with macOS 27.0.1 (26A434) and Go 1.26.3 arm64. Values are medians of five benchmark runs. Timed queries reuse captured analysis. Dependency queries also reuse the adjacency index. Source analysis, digest computation, and process startup are outside the timed operations.
 
 | Workload | Time | JSON bytes | Allocated bytes / allocations per operation |
 | --- | ---: | ---: | ---: |
-| Full caller report encoding, 80 relationships | 39.63 µs | 53,764 | 74 / 0 |
-| Compact caller report encoding, 20 of 80 matches | 1.86 µs | 1,966 | 0 / 0 |
-| Compact caller report encoding, all 80 matches | 5.74 µs | 5,786 | 1 / 0 |
-| Compact caller query, 20 returned | 10.28 µs | — | 24,264 / 64 |
-| Compact caller query, 80 returned | 31.88 µs | — | 71,848 / 186 |
-| Module summary query, 20 of 33 declarations | 14.92 µs | — | 10,336 / 65 |
-| Module summary projection and encoding | 8.99 µs | 7,258 | 6,179 / 22 |
+| Full caller report encoding, 80 relationships | 39.70 µs | 53,764 | 73 / 0 |
+| Compact caller report encoding, 20 of 80 matches | 1.90 µs | 1,966 | 0 / 0 |
+| Compact caller report encoding, all 80 matches | 6.06 µs | 5,786 | 1 / 0 |
+| Full caller query, 80 returned | 10.14 µs | — | 67,752 / 185 |
+| Compact caller query, 20 returned | 11.65 µs | — | 24,264 / 64 |
+| Compact caller query, 80 returned | 48.05 µs | — | 71,848 / 186 |
+| Module summary query, 20 of 33 declarations | 20.95 µs | — | 9,120 / 65 |
+| Module summary projection and encoding | 10.45 µs | 7,258 | 6,181 / 22 |
 
 The dependency workload traverses the same 40 branching modules at each limit. Its full report includes call-site witnesses and repeated absolute source paths, so exact sizes vary by checkout and fixture path. Returning all 80 compact matches isolates the effect of the projection from the row limit. The module fixture loads 40 modules with 32 functions each and summarizes one module. These are byte counts and local latency measurements. Pilot 003 will measure the context actually consumed by agents.
 
