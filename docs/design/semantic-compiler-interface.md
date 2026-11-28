@@ -422,6 +422,27 @@ Use an immutable in-process Go representation, deterministic projections and a s
 
 ## Authority snapshots and diffs
 
+### Source authority comparison v1
+
+```sh
+splash authority diff base/app/main.splash head/app/main.splash --json
+```
+
+Use corresponding entries in two source trees. One compiler process captures and verifies each entry and its imports. The report embeds v1 `base` and `head` check reports with capture identity, verdict, effect coverage, and diagnostics. The command returns exit 1 and `comparison: null` when either source cannot be verified or comparison itself fails. A successfully evaluated report exits 0, including when differences or indeterminate signature details are present. Usage errors go to stderr.
+
+Functions match by capture-relative file locator, declared module name and function name. The report treats a move or rename as individual removal and addition. Changes are ordered by locator, module and name.
+
+| Property | Comparison scope |
+| --- | --- |
+| `declaredAuthority` | Atomic declared labels on every checked function in the closure, including private functions. Equivalent label spellings such as `DB` and `DB.read, DB.write` compare equal. Each change contains added and removed labels and one-based source points in the corresponding captures. `Agent` is a structural entry marker included in the declared labels. |
+| `publicSignatures` | Exposed functions, or all functions when the owner has no nonempty `expose` list. Compare checked parameter and return type identities, parameter names and order, default presence, variadic mode and async status. A change in nominal type owner is observable even when display names match. Generic signatures and unavailable checked identities leave signature evidence incomplete. |
+
+Each property reports `unchanged`, `changed`, or `indeterminate`. Public membership changes are established from the exposed declaration sets. A known change keeps the status `changed` when another signature is indeterminate. In that case `complete` is false and the report includes the uncertain entries and reasons alongside the known changes. Function body behavior, default expressions, type declaration layouts, inferred effects, approval paths, tool schemas and agent reachability require separate evidence.
+
+This command supports source review. A release gate still needs protected base and head acquisition, a pinned verifier, coverage of the properties it enforces, and linkage to the released artifact.
+
+### Further authority snapshot work
+
 Current graph facts can seed a labeled observational report of declarations, modeled direct reachability changes, tool declarations/schemas, and approval markers/caller sets. A verified diff requires the release gates in the [engineering plan](engineering-plan.md) and two comparable passing, complete analyses with matched rules and scope. Reject stale, failed, incompatible or missing result inputs. Compare canonical sets and policy-relevant relationships before choosing a shortest witness. Treat authority added to an existing root, newly reachable privileged functions, added tool membership, tool contract expansion and gate weakening as distinct events. A gate marker diff establishes a declaration change. Proving all paths remain gated requires a policy-specific path property, plus runtime request binding for an approval claim. Track removals and mixed changes, and flag renames or unknowns for review.
 
 Dependency grants and foreign summaries need a resolver and reviewed manifests. External destinations, resource IDs, classified flow paths and policy across delegation require models for those entities. Runtime configuration or external service actions remain boundary evidence. Absence of a model yields unavailable coverage. Public API changes can use a parallel contract comparison of signatures, exports and dependency edges. Behavioral compatibility still needs tests.

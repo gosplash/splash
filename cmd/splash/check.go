@@ -92,14 +92,24 @@ func parseJSONFileArgs(command string, args []string) (path string, jsonMode boo
 }
 
 func runCheckJSON(path string, output io.Writer) (bool, error) {
+	verified, report := makeCheckReport(path)
+	if err := json.NewEncoder(output).Encode(report); err != nil {
+		return false, fmt.Errorf("write check report: %w", err)
+	}
+	return verified != nil, nil
+}
+
+func makeCheckReport(path string) (*compiler.VerifiedProgram, checkReport) {
 	report := checkReport{SchemaVersion: 1, EntryPath: path, Diagnostics: []checkDiagnostic{}}
 	program, diagnostics, analysisErr := compiler.Analyze(path)
 	var verdict string
+	var verified *compiler.VerifiedProgram
 	switch {
 	case analysisErr == nil:
 		identity := program.Identity()
 		report.Identity = &identity
-		_, result, err := compiler.Verify(program)
+		handle, result, err := compiler.Verify(program)
+		verified = handle
 		report.EffectCoverage = &checkEffectCoverage{Status: "complete"}
 		if !result.EffectsComplete {
 			report.EffectCoverage.Status = "incomplete"
@@ -125,10 +135,7 @@ func runCheckJSON(path string, output io.Writer) (bool, error) {
 	}
 
 	report.Diagnostics = appendCheckDiagnostics(report.Diagnostics, diagnostics)
-	if err := json.NewEncoder(output).Encode(report); err != nil {
-		return false, fmt.Errorf("write check report: %w", err)
-	}
-	return verdict == "verified", nil
+	return verified, report
 }
 
 func appendCheckDiagnostics(output []checkDiagnostic, diagnostics []diagnostic.Diagnostic) []checkDiagnostic {
