@@ -56,6 +56,9 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 		diags = append(diags, c.checkSandbox(file, g)...)
 		diags = append(diags, c.checkBudget(file)...)
 	}
+	for i := range diags {
+		diags[i].Code = diagnostic.PolicyViolation
+	}
 	for _, summary := range inferred {
 		diags = append(diags, summary.Diagnostics()...)
 	}
@@ -94,7 +97,10 @@ func requiredCoverage(g *callgraph.Graph, summaries []*effects.Summary, hasAppro
 		}
 		for _, gap := range summary.DirectGaps {
 			if !gap.ApprovalBoundary && !seen[gap] {
-				diags = append(diags, diagnostic.Errorf(gap.Position, "incomplete policy coverage: %s", gap.Reason))
+				diag := diagnostic.Errorf(gap.Position, "incomplete policy coverage: %s", gap.Reason).
+					WithCode(diagnostic.PolicyCoverageIncomplete)
+				diag.End = gap.End
+				diags = append(diags, diag)
 				seen[gap] = true
 			}
 		}

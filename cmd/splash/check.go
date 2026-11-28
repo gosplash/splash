@@ -1,0 +1,172 @@
+package main
+
+import (
+	"cmp"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"slices"
+	"strings"
+
+	"gosplash.dev/splash/internal/compiler"
+	"gosplash.dev/splash/internal/diagnostic"
+	"gosplash.dev/splash/internal/safety"
+	"gosplash.dev/splash/internal/token"
+)
+
+type checkReport struct {
+	SchemaVersion int               `json:"schemaVersion"`
+	EntryPath     string            `json:"entryPath"`
+	Verdict       *string           `json:"verdict"`
+	Diagnostics   []checkDiagnostic `json:"diagnostics"`
+}
+
+type checkDiagnostic struct {
+	Code         string         `json:"code"`
+	Phase        string         `json:"phase"`
+	Severity     string         `json:"severity"`
+	Message      string         `json:"message"`
+	ExpectedType string         `json:"expectedType,omitempty"`
+	ActualType   string         `json:"actualType,omitempty"`
+	Source       *checkRange    `json:"source,omitempty"`
+	Effects      []string       `json:"effects,omitempty"`
+	Witness      []checkWitness `json:"witness,omitempty"`
+}
+
+type checkPoint struct {
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Column int    `json:"column"`
+}
+
+type checkRange struct {
+	Start checkPoint  `json:"start"`
+	End   *checkPoint `json:"end,omitempty"`
+}
+
+type checkWitness struct {
+	Kind        string      `json:"kind"`
+	Target      string      `json:"target"`
+	Source      *checkRange `json:"source,omitempty"`
+	Declaration *checkPoint `json:"declaration,omitempty"`
+}
+
+func parseCheckArgs(args []string) (path string, jsonMode bool, err error) {
+	positionalOnly := false
+	for _, arg := range args {
+		switch {
+		case !positionalOnly && arg == "--":
+			positionalOnly = true
+		case !positionalOnly && arg == "--json" && !jsonMode:
+			jsonMode = true
+		case !positionalOnly && strings.HasPrefix(arg, "-"):
+			return "", false, fmt.Errorf("unexpected check option %q", arg)
+		case path == "":
+			path = arg
+		default:
+			return "", false, fmt.Errorf("unexpected check argument %q", arg)
+		}
+	}
+	if path == "" {
+		return "", false, fmt.Errorf("usage: splash check <file.splash> [--json]")
+	}
+	return path, jsonMode, nil
+}
+
+func runCheckJSON(path string, output io.Writer) (bool, error) {
+	report := checkReport{SchemaVersion: 1, EntryPath: path, Diagnostics: []checkDiagnostic{}}
+	program, diagnostics, analysisErr := compiler.Analyze(path)
+	var verdict string
+	switch {
+	case analysisErr == nil:
+		_, result, err := compiler.Verify(program)
+		diagnostics = append(result.Violations, result.Incomplete...)
+		switch {
+		case err == nil:
+			verdict = "verified"
+		case errors.Is(err, safety.ErrRejected):
+			verdict = "rejected"
+		case errors.Is(err, safety.ErrIndeterminate):
+			verdict = "indeterminate"
+		default:
+			report.Diagnostics = append(report.Diagnostics, checkFailure(err))
+		}
+	case len(diagnostics) != 0:
+		verdict = "rejected"
+	default:
+		report.Diagnostics = append(report.Diagnostics, checkFailure(analysisErr))
+	}
+	if verdict != "" {
+		report.Verdict = &verdict
+	}
+
+	// Some safety checks enumerate reachable functions through maps.
+	// Canonicalize output order independently of the text renderer.
+	slices.SortStableFunc(diagnostics, func(a, b diagnostic.Diagnostic) int {
+		return cmp.Or(cmp.Compare(a.Pos.File, b.Pos.File), cmp.Compare(a.Pos.Line, b.Pos.Line),
+			cmp.Compare(a.Pos.Column, b.Pos.Column), cmp.Compare(a.Code, b.Code), cmp.Compare(a.Message, b.Message))
+	})
+	for _, diag := range diagnostics {
+		report.Diagnostics = append(report.Diagnostics, projectCheckDiagnostic(diag))
+	}
+	if err := json.NewEncoder(output).Encode(report); err != nil {
+		return false, fmt.Errorf("write check report: %w", err)
+	}
+	return verdict == "verified", nil
+}
+
+func checkFailure(err error) checkDiagnostic {
+	code, phase := "COMPILER_ERROR", "verification"
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		code, phase = "SOURCE_READ_ERROR", "input"
+	}
+	return checkDiagnostic{Code: code, Phase: phase, Severity: "error", Message: err.Error()}
+}
+
+func projectCheckDiagnostic(d diagnostic.Diagnostic) checkDiagnostic {
+	var phase string
+	switch d.Code {
+	case diagnostic.ParseError:
+		phase = "parse"
+	case diagnostic.TypeError, diagnostic.TypeMismatch:
+		phase = "type"
+	case diagnostic.DeclaredEffectMissing, diagnostic.InferredEffectExceedsAuthority:
+		phase = "effect"
+	case diagnostic.PolicyViolation, diagnostic.PolicyCoverageIncomplete:
+		phase = "policy"
+	}
+	result := checkDiagnostic{
+		Code: string(d.Code), Phase: phase, Severity: d.Severity.String(),
+		Message: d.Message, Source: checkSourceRange(d.Pos, d.End), Effects: d.Effects,
+		ExpectedType: d.ExpectedType, ActualType: d.ActualType,
+	}
+	for _, step := range d.Witness {
+		kind := "operation"
+		declaration := checkSourcePoint(step.Declaration)
+		if declaration != nil {
+			kind = "call"
+		}
+		result.Witness = append(result.Witness, checkWitness{
+			Kind: kind, Target: step.Target, Source: checkSourceRange(step.Site, step.End), Declaration: declaration,
+		})
+	}
+	return result
+}
+
+func checkSourcePoint(position token.Position) *checkPoint {
+	if position.Line < 1 || position.Column < 1 {
+		return nil
+	}
+	return &checkPoint{position.File, position.Line, position.Column}
+}
+
+func checkSourceRange(start, end token.Position) *checkRange {
+	point := checkSourcePoint(start)
+	if point == nil {
+		return nil
+	}
+	return &checkRange{Start: *point, End: checkSourcePoint(end)}
+}
