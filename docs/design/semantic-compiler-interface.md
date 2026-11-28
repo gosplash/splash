@@ -169,11 +169,30 @@ The envelope carries `schemaVersion: 1`, `entryPath`, `query`, `direction`, `res
 | `relationships` | Functions in breadth-first discovery order with one shortest-path witness edge each. Empty results use an empty array. |
 | `coverage` | `complete` or `incomplete` for the stated scope of the modeled call evidence. Incomplete coverage includes a representative gap and its owner and source location. |
 
-Each relationship contains `function`, `via`, `distance`, and `source`. The function and via fields each include the symbol and declaration position. Locations distinguish functions whose loaded files declare the same module name. The witness call runs from `via` to `function` for callees and from `function` to `via` for callers. Follow via through the shorter-distance records to reconstruct a path. A recursive root has one positive-distance relationship when a modeled cycle leads back to it. Ties follow captured module order, declaration order, and typed call traversal order. Multiple call sites between the same declarations contribute a single representative witness. Known edges come from the checked call evidence used by effect analysis.
+Each relationship contains `function`, `via`, `distance`, and `source`. The function and via fields each include the symbol and declaration position. Locations distinguish functions whose loaded files declare the same module name. The witness call runs from `via` to `function` for callees and from `function` to `via` for callers. Follow via through the shorter-distance records until reaching the root to reconstruct a path. A recursive root has one positive-distance relationship when a modeled cycle leads back to it. Ties follow captured module order, declaration order, and typed call traversal order. Multiple call sites between the same declarations contribute a single representative witness. Known edges come from the checked call evidence used by effect analysis.
 
 Callee coverage has scope `expandedFunctions`. At a finite depth, this includes the root and discovered functions at distances strictly less than the bound. Caller coverage has scope `entryClosure`. A source gap anywhere in the closure can hide a caller, including in a function outside the known reverse graph. Modeled built-in operations and injected approval hosts are outside the relation between Splash declarations. These are static relationships within loaded source and its current analysis model. The report does not describe runtime call frequency or external callers.
 
 A returned result exits 0 even when coverage is incomplete. Source and lookup failures exit 1 and produce a null result with diagnostics. CLI usage errors go to stderr. The dependency index is built once on first use for a captured analysis. Source checking and contract inspection can run without building it.
+
+#### Dependency performance baseline
+
+Measured at `c805568` on an Apple M5 with macOS 27.0.1 (26A434) and Go 1.26.3 (arm64). Values are medians of three Go benchmark runs. Each timing is a per-operation average within its run.
+
+| Workload | Median | Observed range | Output | Allocated bytes / allocations per op |
+| --- | ---: | ---: | ---: | ---: |
+| Depth-four callers, 2,000-function chain, existing index | 3.56 µs | 3.28–4.38 µs | — | 1,816 / 15 |
+| Depth-four callers, 10,000-function chain, existing index | 30.33 µs | 29.54–30.54 µs | — | 1,888 / 15 |
+| Transitive callers across 40 branching modules, 80 relationships, existing index | 13.57 µs | 12.82–14.30 µs | — | 67,752 / 185 |
+| First depth-four query after analysis, 2,000-function chain | 105.95 µs | 105.37–113.42 µs | — | 288,000 / 2,028 |
+| Encode prepared 80-relationship report | 38.88 µs | 38.76–39.00 µs | 51,933 B | 159 / 1 |
+| Fresh CLI process with a warmed binary, four relationships | 2.39 ms | 2.39–2.53 ms | 3,337 B | — |
+
+The query benchmarks include selector lookup and detached result construction. The first-use measurement includes building the index and excludes source analysis. It exceeds the provisional 100 µs target on this fixture. The JSON benchmark starts with a prepared report and reuses the buffer. Output sizes include source paths and vary with their lengths. The compact witness tree emits one relationship per reached declaration. Wide results can still consume substantial context even with a depth bound. The CLI case includes a fresh analysis, index construction, traversal and output capture. Allocations for that case would reflect the parent harness and are omitted.
+
+```sh
+go test ./cmd/splash -run '^$' -bench '^BenchmarkDependencies$' -benchtime 120ms -count 3 -benchmem
+```
 
 ## Snapshot and artifact provenance
 
