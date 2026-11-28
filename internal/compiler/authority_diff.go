@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 
 	"gosplash.dev/splash/internal/ast"
@@ -237,25 +236,25 @@ func knownSignatureDifference(a, b *Signature) bool {
 	})
 }
 
-// Type parameters are symbolic. A spelling difference cannot establish a
-// change in a concrete type when the comparison lacks generic equivalence.
+// Compare established parts of a checked type independently. An unknown or
+// symbolic leaf does not erase a concrete difference in another branch.
 func differentKnownTypes(a, b TypeIdentity) bool {
-	return !reflect.DeepEqual(a, b) && concreteTypeIdentity(a) && concreteTypeIdentity(b)
-}
-
-func concreteTypeIdentity(id TypeIdentity) bool {
-	if id.Kind == "" || id.Kind == "typeParameter" {
+	if a.Kind == "" || b.Kind == "" || a.Kind == "typeParameter" || b.Kind == "typeParameter" {
 		return false
 	}
-	for _, arg := range id.Arguments {
-		if !concreteTypeIdentity(arg) {
-			return false
+	if a.Kind != b.Kind || a.Name != b.Name || a.Path != b.Path ||
+		len(a.Arguments) != len(b.Arguments) || len(a.Parameters) != len(b.Parameters) {
+		return true
+	}
+	for i, argument := range a.Arguments {
+		if differentKnownTypes(argument, b.Arguments[i]) {
+			return true
 		}
 	}
-	for _, param := range id.Parameters {
-		if !concreteTypeIdentity(param) {
-			return false
+	for i, parameter := range a.Parameters {
+		if differentKnownTypes(parameter, b.Parameters[i]) {
+			return true
 		}
 	}
-	return id.ReturnType == nil || concreteTypeIdentity(*id.ReturnType)
+	return a.ReturnType != nil && b.ReturnType != nil && differentKnownTypes(*a.ReturnType, *b.ReturnType)
 }

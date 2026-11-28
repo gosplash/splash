@@ -277,3 +277,19 @@ func TestAuthorityDiffReportsSeparateGrantsAndScopedEffectCoverage(t *testing.T)
 		t.Fatalf("labels must be sorted and reported separately: %s", raw)
 	}
 }
+
+func TestAuthorityDiffKeepsConcreteChangesWithinSymbolicTypes(t *testing.T) {
+	binary := buildSplashCLI(t)
+	const source = "module app\nfn handle<T>(callback: fn(T) -> %s) {}"
+	base := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, "Int"))
+	head := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, "Bool"))
+	report, raw := runTestAuthorityDiff(t, binary, base, head, 0)
+	if report.Comparison == nil {
+		t.Fatalf("expected verified comparison: %s", raw)
+	}
+	signatures := report.Comparison.PublicSignatures
+	if signatures.Status != "changed" || signatures.Complete || len(signatures.Changes) != 1 ||
+		signatures.Changes[0].Kind != "modified" || signatures.Changes[0].Reason == "" {
+		t.Fatalf("expected concrete callback result change and generic uncertainty: %s", raw)
+	}
+}
