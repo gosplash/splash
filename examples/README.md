@@ -93,7 +93,7 @@ Two enforcement checks are active: `tool fn` functions cannot return types with 
 
 **`containment/containment.splash`** — module-level agent lockout.
 
-`@containment` on a module removes its functions from an agent's reachable call graph. The compiler enforces this at the module boundary.
+The compiler checks `@containment` against the modeled agent-reachable call graph and rejects calls that violate the owning module's policy.
 
 Three policies:
 - `"none"` — agents can't touch anything in this module
