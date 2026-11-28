@@ -69,7 +69,7 @@ The `Emitter` has per-function state (`inApprovalFn`, `currentFnReturnType`, `cu
 `@approve` cascade: the compiler computes `approveFns` + `g.Callers(approveFns)` and passes the result as `Options.ApprovalCallers`. The emitter uses this to widen return types and inject error propagation. The emitter does NOT import callgraph — the compiler bridges them.
 
 ### `internal/compiler/internal/toolschema`
-Extracts `ToolSchema` (JSON Schema) from `@tool` functions. `Extract(file)` returns all tools. `ExtractReachable(file, reachable)` filters to agent-reachable tools. The schema maps Splash types to JSON Schema types — add new type mappings in `typeToSchema()`.
+`VerifiedProgram.ExportTools` passes the owning checked modules to `toolschema.Extract`. Project checked parameter types in `TypeToSchema`. Unsupported parameters fail export before serialization.
 
 ### `cmd/splash/main.go`
 CLI wiring only. Route `check`, `emit`, `build`, `tools`, and VM `run` through `compiler.Verify`. Graph, effects, and approvals use detached projections of the analysis. Keep compiler policy in `internal/compiler` and `internal/safety`.

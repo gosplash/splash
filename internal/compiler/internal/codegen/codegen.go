@@ -284,8 +284,7 @@ func (e *Emitter) emitTypeName(t ast.TypeExpr) string {
 	}
 	switch typ := t.(type) {
 	case *ast.NamedTypeExpr:
-		name := stripModuleQualifier(typ.Name)
-		switch name {
+		switch typ.Name {
 		case "String":
 			return "string"
 		case "Int":
@@ -300,7 +299,7 @@ func (e *Emitter) emitTypeName(t ast.TypeExpr) string {
 			}
 			return "[]any"
 		default:
-			return name
+			return stripModuleQualifier(typ.Name)
 		}
 	case *ast.OptionalTypeExpr:
 		return "*" + e.emitTypeName(typ.Inner)

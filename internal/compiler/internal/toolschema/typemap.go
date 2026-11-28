@@ -1,78 +1,78 @@
 package toolschema
 
 import (
-	"strings"
+	"fmt"
 
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/types"
 )
 
-// TypeExprToSchema converts a Splash type expression to a JSON Schema property.
-// Exported so tests can call it directly.
-// file provides context for resolving enum variants.
-func TypeExprToSchema(te ast.TypeExpr, file *ast.File) *SchemaProperty {
-	enumDecls := buildEnumIndex(file)
-	return typeExprToSchema(te, enumDecls)
-}
-
-func typeExprToSchema(te ast.TypeExpr, enumDecls map[string]*ast.EnumDecl) *SchemaProperty {
-	switch t := te.(type) {
-	case *ast.NamedTypeExpr:
-		return namedTypeToSchema(t, enumDecls)
-	case *ast.OptionalTypeExpr:
-		// Optional only affects the required array, not the schema shape.
-		return typeExprToSchema(t.Inner, enumDecls)
-	case *ast.FnTypeExpr:
-		return &SchemaProperty{Type: "object"}
+// TypeToSchema projects a checked parameter type. Unknown or unsupported
+// shapes fail admission instead of publishing a guessed schema.
+func TypeToSchema(typ types.Type) (*SchemaProperty, error) {
+	switch typ {
+	case types.String:
+		return &SchemaProperty{Type: "string"}, nil
+	case types.Int:
+		return &SchemaProperty{Type: "integer"}, nil
+	case types.Float:
+		return &SchemaProperty{Type: "number"}, nil
+	case types.Bool:
+		return &SchemaProperty{Type: "boolean"}, nil
+	case types.Unknown, nil:
+		return nil, fmt.Errorf("unresolved type")
 	}
-	return &SchemaProperty{Type: "string"}
-}
-
-func namedTypeToSchema(t *ast.NamedTypeExpr, enumDecls map[string]*ast.EnumDecl) *SchemaProperty {
-	name := stripQualifier(t.Name)
-	switch name {
-	case "String":
-		return &SchemaProperty{Type: "string"}
-	case "Int":
-		return &SchemaProperty{Type: "integer"}
-	case "Float":
-		return &SchemaProperty{Type: "number"}
-	case "Bool":
-		return &SchemaProperty{Type: "boolean"}
-	case "List":
-		if len(t.TypeArgs) == 1 {
-			return &SchemaProperty{
-				Type:  "array",
-				Items: typeExprToSchema(t.TypeArgs[0], enumDecls),
+	switch typ := typ.(type) {
+	case *types.EnumType:
+		if typ == nil || typ.Declaration == nil {
+			return nil, fmt.Errorf("unresolved enum")
+		}
+		if len(typ.Declaration.Variants) == 0 {
+			return nil, fmt.Errorf("enum %s has no variants", typ.TypeName())
+		}
+		variants := make([]string, 0, len(typ.Declaration.Variants))
+		for _, variant := range typ.Declaration.Variants {
+			if variant.Payload != nil {
+				return nil, fmt.Errorf("enum %s has a payload variant", typ.TypeName())
 			}
+			variants = append(variants, variant.Name)
 		}
-		return &SchemaProperty{Type: "array"}
-	}
-	if decl, ok := enumDecls[name]; ok {
-		var variants []string
-		for _, v := range decl.Variants {
-			variants = append(variants, v.Name)
+		return &SchemaProperty{Type: "string", Enum: variants}, nil
+	case *types.NamedType:
+		if typ != nil && typ.Declaration != nil {
+			// Record properties are outside the current tool input projection.
+			return &SchemaProperty{Type: "object"}, nil
 		}
-		return &SchemaProperty{Type: "string", Enum: variants}
+	case *types.OptionalType:
+		if typ != nil {
+			return TypeToSchema(typ.Inner)
+		}
+	case *types.ListType:
+		if typ == nil {
+			return nil, fmt.Errorf("unresolved list type")
+		}
+		elem, err := TypeToSchema(typ.Element)
+		if err != nil {
+			return nil, fmt.Errorf("list element: %w", err)
+		}
+		return &SchemaProperty{Type: "array", Items: elem}, nil
 	}
-	return &SchemaProperty{Type: "object"}
+	return nil, fmt.Errorf("unsupported parameter type (%T)", typ)
 }
 
-func stripQualifier(name string) string {
-	if idx := strings.LastIndex(name, "."); idx >= 0 {
-		return name[idx+1:]
-	}
-	return name
-}
-
-func buildEnumIndex(file *ast.File) map[string]*ast.EnumDecl {
-	decls := make(map[string]*ast.EnumDecl)
-	if file == nil {
-		return decls
-	}
-	for _, d := range file.Declarations {
-		if e, ok := d.(*ast.EnumDecl); ok {
-			decls[e.Name] = e
+// supportedParameterSyntax detects type arguments the current checker can
+// erase. Schema types still come exclusively from the checked signature.
+func supportedParameterSyntax(expr ast.TypeExpr, typ types.Type) bool {
+	switch expr := expr.(type) {
+	case *ast.NamedTypeExpr:
+		if len(expr.TypeArgs) != 0 {
+			list, ok := typ.(*types.ListType)
+			return ok && list != nil && len(expr.TypeArgs) == 1 && supportedParameterSyntax(expr.TypeArgs[0], list.Element)
+		}
+	case *ast.OptionalTypeExpr:
+		if optional, ok := typ.(*types.OptionalType); ok && optional != nil {
+			return supportedParameterSyntax(expr.Inner, optional.Inner)
 		}
 	}
-	return decls
+	return true
 }

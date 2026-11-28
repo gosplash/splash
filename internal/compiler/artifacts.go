@@ -83,16 +83,16 @@ func (v *VerifiedProgram) ExportTools(format ToolFormat) ([]byte, error) {
 	if v == nil || v.verified == nil {
 		return nil, ErrUnverifiedProgram
 	}
-	schemas := toolschema.Extract(v.verified.merged)
+	schemas, err := toolschema.Extract(v.verified.modules)
+	if err != nil {
+		return nil, err
+	}
 	names := make(map[string]bool)
 	for _, schema := range schemas {
 		if names[schema.Name] {
 			return nil, fmt.Errorf("duplicate exported tool name %q", schema.Name)
 		}
 		names[schema.Name] = true
-	}
-	if schemas == nil {
-		schemas = []toolschema.ToolSchema{}
 	}
 	return toolschema.Serialize(schemas, format)
 }

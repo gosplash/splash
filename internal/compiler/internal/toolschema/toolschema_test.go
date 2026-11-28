@@ -7,105 +7,63 @@ import (
 	"testing"
 
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/compiler/internal/toolschema"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
-	"gosplash.dev/splash/internal/compiler/internal/toolschema"
+	"gosplash.dev/splash/internal/typechecker"
+	"gosplash.dev/splash/internal/types"
 )
 
-// helpers
-
-func namedType(name string, args ...ast.TypeExpr) *ast.NamedTypeExpr {
-	return &ast.NamedTypeExpr{Name: name, TypeArgs: args}
-}
-
-func optionalType(inner ast.TypeExpr) *ast.OptionalTypeExpr {
-	return &ast.OptionalTypeExpr{Inner: inner}
-}
-
-func listType(elem ast.TypeExpr) *ast.NamedTypeExpr {
-	return &ast.NamedTypeExpr{Name: "List", TypeArgs: []ast.TypeExpr{elem}}
-}
-
-func emptyFile() *ast.File { return &ast.File{} }
-
-func fileWithEnum(name string, variants ...string) *ast.File {
-	var vs []ast.EnumVariant
-	for _, v := range variants {
-		vs = append(vs, ast.EnumVariant{Name: v})
+func schemaFor(t *testing.T, typ types.Type) *toolschema.SchemaProperty {
+	t.Helper()
+	prop, err := toolschema.TypeToSchema(typ)
+	if err != nil {
+		t.Fatalf("parameter schema: %v", err)
 	}
-	return &ast.File{
-		Declarations: []ast.Decl{
-			&ast.EnumDecl{Name: name, Variants: vs},
-		},
-	}
+	return prop
 }
 
-// type mapping tests
-
-func TestTypeMapper_String(t *testing.T) {
-	prop := toolschema.TypeExprToSchema(namedType("String"), emptyFile())
-	if prop.Type != "string" {
-		t.Errorf("expected type=string, got %q", prop.Type)
+func TestCheckedParameterSchemas(t *testing.T) {
+	for _, test := range []struct {
+		typ  types.Type
+		want string
+	}{
+		{types.String, "string"},
+		{types.Int, "integer"},
+		{types.Float, "number"},
+		{types.Bool, "boolean"},
+		{&types.OptionalType{Inner: types.String}, "string"},
+		{&types.NamedType{Declaration: &ast.TypeDecl{Name: "Record"}}, "object"},
+	} {
+		if prop := schemaFor(t, test.typ); prop.Type != test.want {
+			t.Errorf("expected type %q, got %q", test.want, prop.Type)
+		}
 	}
-}
-
-func TestTypeMapper_Int(t *testing.T) {
-	prop := toolschema.TypeExprToSchema(namedType("Int"), emptyFile())
-	if prop.Type != "integer" {
-		t.Errorf("expected type=integer, got %q", prop.Type)
+	list := schemaFor(t, &types.ListType{Element: types.Int})
+	if list.Type != "array" || list.Items == nil || list.Items.Type != "integer" {
+		t.Errorf("expected a list of integers, got %+v", list)
+	}
+	enum := schemaFor(t, &types.EnumType{Declaration: &ast.EnumDecl{
+		Name: "Color", Variants: []ast.EnumVariant{{Name: "red"}, {Name: "green"}},
+	}})
+	if enum.Type != "string" || !slices.Equal(enum.Enum, []string{"red", "green"}) {
+		t.Errorf("expected a two-variant string enum, got %+v", enum)
 	}
 }
 
-func TestTypeMapper_Float(t *testing.T) {
-	prop := toolschema.TypeExprToSchema(namedType("Float"), emptyFile())
-	if prop.Type != "number" {
-		t.Errorf("expected type=number, got %q", prop.Type)
-	}
-}
-
-func TestTypeMapper_Bool(t *testing.T) {
-	prop := toolschema.TypeExprToSchema(namedType("Bool"), emptyFile())
-	if prop.Type != "boolean" {
-		t.Errorf("expected type=boolean, got %q", prop.Type)
-	}
-}
-
-func TestTypeMapper_Optional_IsInnerType(t *testing.T) {
-	// String? → same schema as String (required handling is at param level)
-	prop := toolschema.TypeExprToSchema(optionalType(namedType("String")), emptyFile())
-	if prop.Type != "string" {
-		t.Errorf("expected type=string for optional, got %q", prop.Type)
-	}
-}
-
-func TestTypeMapper_ListOfInt(t *testing.T) {
-	prop := toolschema.TypeExprToSchema(listType(namedType("Int")), emptyFile())
-	if prop.Type != "array" {
-		t.Errorf("expected type=array, got %q", prop.Type)
-	}
-	if prop.Items == nil {
-		t.Fatal("expected items to be non-nil")
-	}
-	if prop.Items.Type != "integer" {
-		t.Errorf("expected items.type=integer, got %q", prop.Items.Type)
-	}
-}
-
-func TestTypeMapper_Enum(t *testing.T) {
-	file := fileWithEnum("Color", "Red", "Green", "Blue")
-	prop := toolschema.TypeExprToSchema(namedType("Color"), file)
-	if prop.Type != "string" {
-		t.Errorf("expected type=string for enum, got %q", prop.Type)
-	}
-	if len(prop.Enum) != 3 {
-		t.Fatalf("expected 3 enum values, got %v", prop.Enum)
-	}
-}
-
-func TestTypeMapper_UnknownNamedType_IsObject(t *testing.T) {
-	prop := toolschema.TypeExprToSchema(namedType("SearchResult"), emptyFile())
-	if prop.Type != "object" {
-		t.Errorf("expected type=object for unknown named type, got %q", prop.Type)
+func TestUnsupportedParameterSchema(t *testing.T) {
+	for _, typ := range []types.Type{
+		types.Unknown, types.Void, types.Named("Unresolved"),
+		&types.ListType{Element: types.Unknown},
+		&types.EnumType{Declaration: &ast.EnumDecl{
+			Name: "Payload", Variants: []ast.EnumVariant{{
+				Name: "value", Payload: &ast.NamedTypeExpr{Name: "Int"},
+			}},
+		}},
+	} {
+		if prop, err := toolschema.TypeToSchema(typ); err == nil || prop != nil {
+			t.Errorf("%s: expected admission failure, got %+v, %v", typ.TypeName(), prop, err)
+		}
 	}
 }
 
@@ -117,6 +75,19 @@ func parseFile(src string) *ast.File {
 	return file
 }
 
+func extractSchemas(t *testing.T, file *ast.File) []toolschema.ToolSchema {
+	t.Helper()
+	typed, diagnostics := typechecker.New().Check(file)
+	if len(diagnostics) != 0 {
+		t.Fatalf("check tool declarations: %v", diagnostics)
+	}
+	schemas, err := toolschema.Extract([]*typechecker.TypedFile{typed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schemas
+}
+
 // Extract tests
 
 func TestExtract_NoTools(t *testing.T) {
@@ -124,7 +95,7 @@ func TestExtract_NoTools(t *testing.T) {
 module foo
 fn helper() -> String { return "hi" }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 	if len(schemas) != 0 {
 		t.Errorf("expected 0 schemas, got %d", len(schemas))
 	}
@@ -135,7 +106,7 @@ func TestExtract_SingleTool_Name(t *testing.T) {
 module foo
 tool fn search(query: String) -> String { return query }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 	if len(schemas) != 1 {
 		t.Fatalf("expected 1 schema, got %d", len(schemas))
 	}
@@ -149,7 +120,7 @@ func TestExtract_RequiredParams(t *testing.T) {
 module foo
 tool fn search(query: String, limit: Int) -> String { return query }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 	required := schemas[0].InputSchema.Required
 	if len(required) != 2 {
 		t.Fatalf("expected 2 required params, got %v", required)
@@ -161,7 +132,7 @@ func TestExtract_OptionalParamNotRequired(t *testing.T) {
 module foo
 tool fn search(query: String, category: String?) -> String { return query }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 	required := schemas[0].InputSchema.Required
 	for _, r := range required {
 		if r == "category" {
@@ -179,7 +150,7 @@ module foo
 /// Search the product catalog.
 tool fn search(query: String) -> String { return query }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 	if schemas[0].Description != "Search the product catalog." {
 		t.Errorf("expected description %q, got %q",
 			"Search the product catalog.", schemas[0].Description)
@@ -194,7 +165,7 @@ tool fn search(
   query: String,
 ) -> String { return query }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 	prop := schemas[0].InputSchema.Properties["query"]
 	if prop == nil {
 		t.Fatal("expected property 'query'")
@@ -211,7 +182,7 @@ tool fn search(query: String) -> String { return query }
 tool fn lookup(id: Int) -> String { return "x" }
 fn internal() -> String { return "hidden" }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 	if len(schemas) != 2 {
 		t.Fatalf("expected 2 schemas, got %d", len(schemas))
 	}
@@ -223,7 +194,7 @@ module demo
 /// Find records by query.
 tool fn search(query: String) needs DB.read, Net -> String { return query }
 `)
-	tools := toolschema.Extract(file)
+	tools := extractSchemas(t, file)
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
@@ -245,7 +216,7 @@ module demo
 /// Simple tool with no effects.
 tool fn ping() -> String { return "pong" }
 `)
-	tools := toolschema.Extract(file)
+	tools := extractSchemas(t, file)
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
@@ -261,24 +232,6 @@ tool fn ping() -> String { return "pong" }
 	}
 }
 
-func TestExtractReachable_FiltersNonReachable(t *testing.T) {
-	file := parseFile(`
-module demo
-tool fn reachable(query: String) -> String { return query }
-tool fn restricted(id: Int) -> String { return "hidden" }
-`)
-	agentReachable := map[string]bool{
-		"reachable": true,
-	}
-	tools := toolschema.ExtractReachable(file, agentReachable)
-	if len(tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(tools))
-	}
-	if tools[0].Name != "reachable" {
-		t.Errorf("expected tool name %q, got %q", "reachable", tools[0].Name)
-	}
-}
-
 func TestToolSchema_DefaultParamNotRequired(t *testing.T) {
 	src := `
 module demo
@@ -286,7 +239,7 @@ module demo
 tool fn search(query: String, limit: Int = 10) -> String { return query }
 `
 	file := parseFile(src)
-	tools := toolschema.Extract(file)
+	tools := extractSchemas(t, file)
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
@@ -317,7 +270,7 @@ tool fn search(
 ) -> String { return query }
 `
 	file := parseFile(src)
-	tools := toolschema.Extract(file)
+	tools := extractSchemas(t, file)
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
@@ -335,7 +288,7 @@ module demo
 /// Search the catalog.
 tool fn search(query: String) needs DB.read -> String { return query }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 
 	out, err := toolschema.Serialize(schemas, toolschema.FormatAnthropic)
 	if err != nil {
@@ -365,7 +318,7 @@ module demo
 /// Search the catalog.
 tool fn search(query: String) needs DB.read -> String { return query }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 
 	out, err := toolschema.Serialize(schemas, toolschema.FormatOpenAI)
 	if err != nil {
@@ -390,7 +343,7 @@ tool fn search(query: String) needs DB.read -> String { return query }
 }
 
 func TestSerialize_UnknownFormat_ReturnsError(t *testing.T) {
-	schemas := toolschema.Extract(parseFile(`module demo`))
+	schemas := extractSchemas(t, parseFile(`module demo`))
 	_, err := toolschema.Serialize(schemas, toolschema.Format("garbage"))
 	if err == nil {
 		t.Error("expected error for unknown format, got nil")
@@ -403,7 +356,7 @@ module demo
 /// Lookup a user by ID.
 tool fn get_user(user_id: Int) -> String { return "x" }
 `)
-	schemas := toolschema.Extract(file)
+	schemas := extractSchemas(t, file)
 	out, err := toolschema.Serialize(schemas, toolschema.FormatOpenAI)
 	if err != nil {
 		t.Fatalf("Serialize returned error: %v", err)

@@ -105,6 +105,23 @@ func Named(name string) *NamedType {
 	}
 }
 
+// EnumType carries the resolved declaration of a named enum.
+type EnumType struct {
+	Declaration *ast.EnumDecl
+}
+
+func (e *EnumType) TypeName() string { return e.Declaration.Name }
+
+func (e *EnumType) IsAssignableTo(other Type) bool {
+	if opt, ok := other.(*OptionalType); ok {
+		return e.IsAssignableTo(opt.Inner)
+	}
+	target, ok := other.(*EnumType)
+	return ok && e.Declaration == target.Declaration
+}
+
+func (e *EnumType) Classification() Classification { return ClassPublic }
+
 // ModuleType represents an imported module namespace.
 type ModuleType struct {
 	Name    string

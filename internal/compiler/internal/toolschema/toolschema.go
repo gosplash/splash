@@ -6,7 +6,10 @@ package toolschema
 import (
 	"encoding/json"
 	"fmt"
+
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/typechecker"
+	"gosplash.dev/splash/internal/types"
 )
 
 // ToolSchema is the complete schema for a single tool function.
@@ -60,44 +63,28 @@ type openAIFunction struct {
 	Effects     []string    `json:"effects,omitempty"`
 }
 
-// Extract returns a ToolSchema for every tool function in file.
-func Extract(file *ast.File) []ToolSchema {
-	enumDecls := buildEnumIndex(file)
-	var tools []ToolSchema
-	for _, decl := range file.Declarations {
-		fn, ok := decl.(*ast.FunctionDecl)
-		if !ok {
-			continue
+// Extract projects tool schemas from the declarations and callable signatures
+// retained by the owning checked modules.
+func Extract(modules []*typechecker.TypedFile) ([]ToolSchema, error) {
+	tools := []ToolSchema{}
+	for _, module := range modules {
+		for _, decl := range module.File.Declarations {
+			fn, ok := decl.(*ast.FunctionDecl)
+			if !ok || !hasAnnotation(fn.Annotations, ast.AnnotTool) {
+				continue
+			}
+			signature, ok := module.Types[fn].(*types.FunctionType)
+			if !ok || signature == nil || len(signature.Params) != len(fn.Params) {
+				return nil, fmt.Errorf("%s: tool %q has no checked signature", fn.Pos(), fn.Name)
+			}
+			schema, err := buildToolSchema(fn, signature)
+			if err != nil {
+				return nil, err
+			}
+			tools = append(tools, schema)
 		}
-		if !hasAnnotation(fn.Annotations, ast.AnnotTool) {
-			continue
-		}
-		tools = append(tools, buildToolSchema(fn, enumDecls))
 	}
-	return tools
-}
-
-// ExtractReachable returns a ToolSchema for every tool function
-// that appears in the agent-reachable set. Functions excluded by redline or
-// @containment will not be in agentReachable and are silently omitted — their
-// absence from the output is the guarantee.
-func ExtractReachable(file *ast.File, agentReachable map[string]bool) []ToolSchema {
-	enumDecls := buildEnumIndex(file)
-	var tools []ToolSchema
-	for _, decl := range file.Declarations {
-		fn, ok := decl.(*ast.FunctionDecl)
-		if !ok {
-			continue
-		}
-		if !hasAnnotation(fn.Annotations, ast.AnnotTool) {
-			continue
-		}
-		if !agentReachable[fn.Name] {
-			continue
-		}
-		tools = append(tools, buildToolSchema(fn, enumDecls))
-	}
-	return tools
+	return tools, nil
 }
 
 func hasAnnotation(anns []ast.Annotation, kind ast.AnnotationKind) bool {
@@ -109,18 +96,25 @@ func hasAnnotation(anns []ast.Annotation, kind ast.AnnotationKind) bool {
 	return false
 }
 
-func buildToolSchema(fn *ast.FunctionDecl, enumDecls map[string]*ast.EnumDecl) ToolSchema {
+func buildToolSchema(fn *ast.FunctionDecl, signature *types.FunctionType) (ToolSchema, error) {
 	props := make(map[string]*SchemaProperty)
 	var required []string
 
-	for _, p := range fn.Params {
-		prop := typeExprToSchema(p.Type, enumDecls)
+	for i, p := range fn.Params {
+		paramType := signature.Params[i]
+		if !supportedParameterSyntax(p.Type, paramType) {
+			return ToolSchema{}, fmt.Errorf("%s: tool %q parameter %q has unsupported type arguments", p.Pos, fn.Name, p.Name)
+		}
+		prop, err := TypeToSchema(paramType)
+		if err != nil {
+			return ToolSchema{}, fmt.Errorf("%s: tool %q parameter %q: %w", p.Pos, fn.Name, p.Name, err)
+		}
 		if p.Doc != "" {
 			prop.Description = p.Doc
 		}
 		props[p.Name] = prop
 		// Optional params (T?) and params with defaults are not in required[]
-		if _, isOptional := p.Type.(*ast.OptionalTypeExpr); !isOptional && p.Default == nil {
+		if _, isOptional := paramType.(*types.OptionalType); !isOptional && p.Default == nil {
 			required = append(required, p.Name)
 		}
 	}
@@ -139,7 +133,7 @@ func buildToolSchema(fn *ast.FunctionDecl, enumDecls map[string]*ast.EnumDecl) T
 			Required:   required,
 		},
 		Effects: effects,
-	}
+	}, nil
 }
 
 // Serialize marshals schemas to JSON in the requested format.
