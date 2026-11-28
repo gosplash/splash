@@ -5,11 +5,12 @@ import (
 	"fmt"
 
 	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/effects"
 )
 
 const (
-	DefaultModuleSummaryLimit = 20
-	MaxModuleSummaryLimit     = 100
+	DefaultContextLimit = 20
+	MaxContextLimit     = 100
 )
 
 var (
@@ -31,7 +32,16 @@ type ModuleDeclaration struct {
 	Name     string
 	Line     int
 	Column   int
-	Function *FunctionContract
+	Function *ModuleFunctionSummary
+}
+
+// ModuleFunctionSummary describes a function in the module projection.
+// A representative gap uses capture-relative source paths.
+type ModuleFunctionSummary struct {
+	Signature Signature
+	Declared  effects.EffectSet
+	Inferred  effects.EffectSet
+	Gap       *effects.CoverageGap
 }
 
 // SummarizeModule selects the entry file when name is empty. A named query
@@ -40,8 +50,8 @@ func (p *AnalyzedProgram) SummarizeModule(name string, limit int) (ModuleSummary
 	if p == nil || p.snapshot == nil {
 		return ModuleSummary{}, ErrInvalidAnalysis
 	}
-	if limit < 1 || limit > MaxModuleSummaryLimit {
-		return ModuleSummary{}, fmt.Errorf("module summary limit must be between 1 and %d", MaxModuleSummaryLimit)
+	if limit < 1 || limit > MaxContextLimit {
+		return ModuleSummary{}, fmt.Errorf("module summary limit must be between 1 and %d", MaxContextLimit)
 	}
 
 	a := p.snapshot
@@ -132,7 +142,9 @@ func (p *AnalyzedProgram) SummarizeModule(name string, limit int) (ModuleSummary
 				gap.End.File = a.sourcePath(gap.End.File)
 			}
 		}
-		result.Declarations[i].Function = &contract
+		result.Declarations[i].Function = &ModuleFunctionSummary{
+			Signature: contract.Signature, Declared: contract.Declared, Inferred: contract.Inferred, Gap: contract.Gap,
+		}
 		delete(functions, summary.Function)
 		if len(functions) == 0 {
 			return result, nil

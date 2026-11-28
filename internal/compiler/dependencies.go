@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"errors"
+	"fmt"
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
@@ -144,8 +145,8 @@ func (p *AnalyzedProgram) Dependencies(query string, direction DependencyDirecti
 // CompactDependencies returns the first limit matches in traversal order.
 // Counting and coverage still describe the entire requested depth and scope.
 func (p *AnalyzedProgram) CompactDependencies(query string, direction DependencyDirection, maxDepth, limit int) (CompactDependencyResult, error) {
-	if limit < 1 {
-		return CompactDependencyResult{}, errors.New("invalid dependency limit")
+	if limit < 1 || limit > MaxContextLimit {
+		return CompactDependencyResult{}, fmt.Errorf("dependency limit must be between 1 and %d", MaxContextLimit)
 	}
 	result, err := p.dependenciesWithin(query, direction, maxDepth, limit)
 	if err != nil {

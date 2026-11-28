@@ -168,3 +168,17 @@ func TestSummaryCLIDiagnosticsAndMisuse(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryAcceptsDashPrefixedEntryPath(t *testing.T) {
+	binary := buildSplashCLI(t)
+	dir := t.TempDir()
+	writeSplashFile(t, dir, "--app.splash", "module app\nfn main() {}")
+	command := exec.Command(binary, "summary", "--app.splash", "--json")
+	command.Dir = dir
+	raw, err := command.Output()
+	var report summaryTestReport
+	if err != nil || json.Unmarshal(raw, &report) != nil ||
+		report.EntryPath != "--app.splash" || report.Result == nil || report.Result.Module != "app" {
+		t.Fatalf("expected positional entry path: %s (%v)", raw, err)
+	}
+}

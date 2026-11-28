@@ -7,11 +7,6 @@ import (
 	"gosplash.dev/splash/internal/compiler"
 )
 
-const (
-	defaultContextLimit = 20
-	maxContextLimit     = 100
-)
-
 type compactDependencyProjection struct {
 	Root          compiler.CompactDependencyFunction `json:"root"`
 	MaxDepth      *int                               `json:"maxDepth"`
@@ -24,7 +19,7 @@ type compactDependencyProjection struct {
 }
 
 func compactDependencyOptions(args []string) (depth, limit int, err error) {
-	depth, limit = 1, defaultContextLimit
+	depth, limit = 1, compiler.DefaultContextLimit
 	depthSet, limitSet := false, false
 	for len(args) > 0 {
 		option := args[0]
@@ -35,8 +30,8 @@ func compactDependencyOptions(args []string) (depth, limit int, err error) {
 				return 0, 0, fmt.Errorf("expected a single --limit value")
 			}
 			limit, err = strconv.Atoi(args[0])
-			if err != nil || limit < 1 || limit > maxContextLimit {
-				return 0, 0, fmt.Errorf("--limit requires an integer from 1 to %d", maxContextLimit)
+			if err != nil || limit < 1 || limit > compiler.MaxContextLimit {
+				return 0, 0, fmt.Errorf("--limit requires an integer from 1 to %d", compiler.MaxContextLimit)
 			}
 			args, limitSet = args[1:], true
 		case "--transitive":

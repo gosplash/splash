@@ -33,3 +33,13 @@ func TestDependenciesUseCapturedFactsConcurrently(t *testing.T) {
 	})
 	tasks.Wait()
 }
+
+func TestCompactDependencyQueryRejectsOutOfRangeLimits(t *testing.T) {
+	path := writeSource(t, t.TempDir(), "main.splash", "module app\nfn main() {}")
+	program := analyze(t, path)
+	for _, limit := range []int{0, compiler.MaxContextLimit + 1} {
+		if _, err := program.CompactDependencies("app.main", compiler.Callees, 1, limit); err == nil {
+			t.Errorf("accepted limit %d", limit)
+		}
+	}
+}

@@ -36,7 +36,7 @@ func BenchmarkModuleSummary(b *testing.B) {
 		b.Fatalf("analyze: %v, diagnostics: %v", err, diagnostics)
 	}
 	query := func(b *testing.B) compiler.ModuleSummary {
-		result, err := program.SummarizeModule("feature35", compiler.DefaultModuleSummaryLimit)
+		result, err := program.SummarizeModule("feature35", compiler.DefaultContextLimit)
 		if err != nil || len(result.Declarations) != 20 || result.TotalDeclarations != functionCount+1 {
 			b.Fatalf("summary query returned %+v, %v", result, err)
 		}

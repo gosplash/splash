@@ -66,7 +66,7 @@ type summaryPoint struct {
 
 func runSummaryCommand(args []string, output io.Writer) (bool, error) {
 	usage := errors.New("usage: splash summary <entry.splash> --json [--module NAME] [--limit N]")
-	if len(args) < 2 || args[0] == "" || strings.HasPrefix(args[0], "--") || args[1] != "--json" {
+	if len(args) < 2 || args[0] == "" || args[1] != "--json" {
 		return false, usage
 	}
 	var module string
@@ -87,8 +87,8 @@ func runSummaryCommand(args []string, output io.Writer) (bool, error) {
 				return false, usage
 			}
 			n, err := strconv.Atoi(value)
-			if err != nil || n < 1 || n > compiler.MaxModuleSummaryLimit {
-				return false, fmt.Errorf("--limit requires an integer between 1 and %d\n%w", compiler.MaxModuleSummaryLimit, usage)
+			if err != nil || n < 1 || n > compiler.MaxContextLimit {
+				return false, fmt.Errorf("--limit requires an integer between 1 and %d\n%w", compiler.MaxContextLimit, usage)
 			}
 			limit = n
 		default:
@@ -96,7 +96,7 @@ func runSummaryCommand(args []string, output io.Writer) (bool, error) {
 		}
 	}
 	if limit == 0 {
-		limit = compiler.DefaultModuleSummaryLimit
+		limit = compiler.DefaultContextLimit
 	}
 
 	report := summaryReport{SchemaVersion: 1, EntryPath: args[0]}

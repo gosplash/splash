@@ -131,9 +131,19 @@ func BenchmarkDependencyContext(b *testing.B) {
 		if err != nil || len(result.Relationships) != 80 {
 			b.Fatalf("expected 80 relationships, got %d (%v)", len(result.Relationships), err)
 		}
-		benchmarkDependencyJSON(b, dependencyReport[dependencyProjection]{
-			SchemaVersion: 1, EntryPath: entry, Query: query, Direction: direction,
-			Identity: &identity, Result: projectDependencies(result, direction, 0), Diagnostics: []checkDiagnostic{},
+		b.Run("Encode", func(b *testing.B) {
+			benchmarkDependencyJSON(b, dependencyReport[dependencyProjection]{
+				SchemaVersion: 1, EntryPath: entry, Query: query, Direction: direction,
+				Identity: &identity, Result: projectDependencies(result, direction, 0), Diagnostics: []checkDiagnostic{},
+			})
+		})
+		b.Run("Query", func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if result, err := program.Dependencies(query, direction, 0); err != nil || len(result.Relationships) != 80 {
+					b.Fatalf("unexpected full dependency query: %+v (%v)", result, err)
+				}
+			}
 		})
 	})
 	for _, limit := range []int{20, 100} {

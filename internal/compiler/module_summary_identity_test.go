@@ -30,7 +30,7 @@ func TestModuleSummaryUsesDeclarationIdentityAcrossEffectOrder(t *testing.T) {
 		t.Fatalf("summary changed after reordering inference results: %+v, %v", summary, err)
 	}
 	contract := summary.Declarations[0].Function
-	if contract == nil || contract.Symbol != "library.read" || contract.Declared != effects.DBRead {
+	if contract == nil || contract.Declared != effects.DBRead {
 		t.Fatalf("returned the wrong function authority: %+v", contract)
 	}
 }
