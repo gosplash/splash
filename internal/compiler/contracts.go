@@ -94,8 +94,15 @@ func (p *AnalyzedProgram) InspectFunction(query string) (FunctionContract, error
 		if summary.Function != declaration {
 			continue
 		}
+		fnType := owner.GenericSignatures[declaration]
+		if fnType == nil {
+			fnType, _ = owner.Types[declaration].(*types.FunctionType)
+		}
+		if fnType == nil {
+			return FunctionContract{}, fmt.Errorf("missing checked signature for %q", symbol)
+		}
 		contract := FunctionContract{
-			Symbol: symbol, Declaration: declaration.Pos(), Signature: functionSignature(owner, declaration),
+			Symbol: symbol, Declaration: declaration.Pos(), Signature: functionSignature(fnType, declaration),
 			Declared: summary.Declared, Inferred: summary.Inferred,
 		}
 		if summary.Gap != nil {
@@ -107,19 +114,16 @@ func (p *AnalyzedProgram) InspectFunction(query string) (FunctionContract, error
 	return FunctionContract{}, fmt.Errorf("missing effect summary for %q", symbol)
 }
 
-func functionSignature(module *typechecker.TypedFile, declaration *ast.FunctionDecl) Signature {
+func functionSignature(fnType *types.FunctionType, declaration *ast.FunctionDecl) Signature {
 	signature := Signature{
 		Parameters: make([]Parameter, 0, len(declaration.Params)),
-		ReturnType: types.Void.TypeName(), Async: declaration.IsAsync,
+		ReturnType: fnType.Return.TypeName(), Async: declaration.IsAsync,
 	}
-	for _, param := range declaration.Params {
+	for i, param := range declaration.Params {
 		signature.Parameters = append(signature.Parameters, Parameter{
-			Name: param.Name, Type: signatureType(module.Types[param.Type]),
+			Name: param.Name, Type: fnType.Params[i].TypeName(),
 			HasDefault: param.Default != nil, Variadic: param.Variadic,
 		})
-	}
-	if declaration.ReturnType != nil {
-		signature.ReturnType = signatureType(module.Types[declaration.ReturnType])
 	}
 	for _, param := range declaration.TypeParams {
 		signature.TypeParameters = append(signature.TypeParameters, TypeParameter{
@@ -127,15 +131,4 @@ func functionSignature(module *typechecker.TypedFile, declaration *ast.FunctionD
 		})
 	}
 	return signature
-}
-
-func signatureType(t types.Type) string {
-	switch t := t.(type) {
-	case nil:
-		return types.Unknown.TypeName()
-	case *types.TypeParamType:
-		return t.Name
-	default:
-		return t.TypeName()
-	}
 }

@@ -94,14 +94,21 @@ func TestInspectJSONUnavailableContract(t *testing.T) {
 	}
 	ambiguous := writeSplashFile(t, dir, "main.splash", "module main\nuse first as a\nuse second as b\nfn main() {}\n")
 	broken := writeSplashFile(t, dir, "broken.splash", "module broken\nfn main() { let n: Int = \"text\" }\n")
-	for _, tc := range []struct{ path, query, code string }{
-		{ambiguous, "shared.find", "FUNCTION_AMBIGUOUS"},
-		{broken, "broken.main", "TYPE_MISMATCH"},
-		{filepath.Join(dir, "missing.splash"), "missing.main", "SOURCE_READ_ERROR"},
+	malformed := writeSplashFile(t, dir, "malformed.splash", "module malformed\nfn main( {\n")
+	for _, tc := range []struct{ path, query, code, phase string }{
+		{ambiguous, "shared.find", "FUNCTION_AMBIGUOUS", "inspection"},
+		{broken, "broken.main", "TYPE_MISMATCH", "type"},
+		{malformed, "malformed.main", "PARSE_ERROR", "parse"},
+		{filepath.Join(dir, "missing.splash"), "missing.main", "SOURCE_READ_ERROR", "input"},
 	} {
 		report, _ := readInspectJSON(t, binary, tc.path, tc.query, false)
-		if report.Contract != nil || len(report.Diagnostics) != 1 || report.Diagnostics[0].Code != tc.code {
-			t.Errorf("want %s with no contract, got %+v", tc.code, report)
+		if len(report.Diagnostics) == 0 {
+			t.Fatalf("want %s with no contract, got %+v", tc.code, report)
+		}
+		for _, diag := range report.Diagnostics {
+			if diag.Code != tc.code || diag.Phase != tc.phase || diag.Severity != "error" {
+				t.Errorf("want %s/%s error, got %+v", tc.code, tc.phase, diag)
+			}
 		}
 	}
 }
@@ -131,6 +138,12 @@ func readInspectJSON(t *testing.T, binary, path, query string, success bool) (in
 	}
 	if report.SchemaVersion != 1 || report.EntryPath != path || report.Query != query || report.Diagnostics == nil {
 		t.Fatalf("unexpected inspect report: %+v", report)
+	}
+	if !success {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(stdout.Bytes(), &fields); err != nil || string(fields["contract"]) != "null" {
+			t.Fatalf("failed inspection must include explicit null contract: %s", &stdout)
+		}
 	}
 	return report, stdout.Bytes()
 }

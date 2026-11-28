@@ -66,3 +66,40 @@ func TestInspectFunctionWithoutModuleDeclaration(t *testing.T) {
 		t.Fatalf("empty qualifier must not look up a module: %v", err)
 	}
 }
+
+func TestInspectFunctionUsesCallableSignature(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeSource(t, dir, "main.splash", `module main
+type Item { quantity: Int }
+fn Item(x: Item) {}
+type Batch { count: Int }
+fn Batch<T: Loggable>(x: Batch, xs: List<T>, maybe: T?, cb: fn(T) -> T) -> T? {
+    return maybe
+}
+fn main() { Item(Item { quantity: 3 }) }
+`)
+	program := analyze(t, entry)
+	verify(t, program)
+
+	for _, tc := range []struct {
+		name   string
+		params []string
+		result string
+	}{
+		{"main.Item", []string{"Item"}, "Void"},
+		{"main.Batch", []string{"Batch", "List<T>", "T?", "(T) -> T"}, "T?"},
+	} {
+		contract, err := program.InspectFunction(tc.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var types []string
+		for _, param := range contract.Signature.Parameters {
+			types = append(types, param.Type)
+		}
+		if !reflect.DeepEqual(types, tc.params) || contract.Signature.ReturnType != tc.result {
+			t.Errorf("%s: contract got %v -> %s, want %v -> %s", tc.name,
+				types, contract.Signature.ReturnType, tc.params, tc.result)
+		}
+	}
+}

@@ -126,7 +126,7 @@ The command writes one object to stdout with `schemaVersion: 1`, `entryPath`, `q
 | --- | --- |
 | `symbol` | Function name qualified by its declared module where available. |
 | `declaration` | File and one-based position of the function declaration. |
-| `signature` | Ordered parameter names and checked type display names, return type, and applicable default-presence, variadic, async, and generic constraint information. Type display names can coincide for distinct declarations. `Unknown` marks missing type information in the existing analysis. |
+| `signature` | Ordered parameter names and declaration-scope type display names, return type, and applicable default-presence, variadic, async, and generic constraint information. Generic parameter names appear in the types, with bounds listed separately in `typeParameters`. Type display names may coincide for distinct declarations or fall back to `Unknown` when type information is incomplete. |
 | `declaredAuthority` | Atomic authority labels from the declaration, including structural labels where applicable. |
 | `inferredEffects` | Known effects from modeled operations and resolved calls. |
 | `effectCoverage` | `complete` or `incomplete` under the current effect model. Incomplete coverage includes one representative gap with source provenance where available. |
