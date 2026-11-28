@@ -612,6 +612,9 @@ func (p *Parser) parseTypeExpr() ast.TypeExpr {
 	var typeArgs []ast.TypeExpr
 	if p.check(token.LT) {
 		p.advance()
+		if p.check(token.GT) {
+			p.errorf(p.current().Pos, "type application requires at least one type argument")
+		}
 		for !p.check(token.GT) && !p.check(token.EOF) {
 			typeArgs = append(typeArgs, p.parseTypeExpr())
 			if !p.check(token.COMMA) {

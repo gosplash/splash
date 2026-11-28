@@ -24,7 +24,7 @@ func TypeToSchema(typ types.Type) (*SchemaProperty, error) {
 	}
 	switch typ := typ.(type) {
 	case *types.EnumType:
-		if typ.Declaration == nil {
+		if typ == nil || typ.Declaration == nil {
 			return nil, fmt.Errorf("unresolved enum")
 		}
 		if len(typ.Declaration.Variants) == 0 {
@@ -39,20 +39,25 @@ func TypeToSchema(typ types.Type) (*SchemaProperty, error) {
 		}
 		return &SchemaProperty{Type: "string", Enum: variants}, nil
 	case *types.NamedType:
-		if typ.Declaration != nil {
+		if typ != nil && typ.Declaration != nil {
 			// Record properties are outside the current tool input projection.
 			return &SchemaProperty{Type: "object"}, nil
 		}
 	case *types.OptionalType:
-		return TypeToSchema(typ.Inner)
+		if typ != nil {
+			return TypeToSchema(typ.Inner)
+		}
 	case *types.ListType:
+		if typ == nil {
+			return nil, fmt.Errorf("unresolved list type")
+		}
 		elem, err := TypeToSchema(typ.Element)
 		if err != nil {
 			return nil, fmt.Errorf("list element: %w", err)
 		}
 		return &SchemaProperty{Type: "array", Items: elem}, nil
 	}
-	return nil, fmt.Errorf("unsupported type %s", typ.TypeName())
+	return nil, fmt.Errorf("unsupported parameter type (%T)", typ)
 }
 
 // supportedParameterSyntax detects type arguments the current checker can
@@ -62,10 +67,10 @@ func supportedParameterSyntax(expr ast.TypeExpr, typ types.Type) bool {
 	case *ast.NamedTypeExpr:
 		if len(expr.TypeArgs) != 0 {
 			list, ok := typ.(*types.ListType)
-			return ok && len(expr.TypeArgs) == 1 && supportedParameterSyntax(expr.TypeArgs[0], list.Element)
+			return ok && list != nil && len(expr.TypeArgs) == 1 && supportedParameterSyntax(expr.TypeArgs[0], list.Element)
 		}
 	case *ast.OptionalTypeExpr:
-		if optional, ok := typ.(*types.OptionalType); ok {
+		if optional, ok := typ.(*types.OptionalType); ok && optional != nil {
 			return supportedParameterSyntax(expr.Inner, optional.Inner)
 		}
 	}

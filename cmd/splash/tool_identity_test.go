@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -121,10 +122,28 @@ enum String {
 	entry := writeSplashFile(t, dir, "main.splash", `module main
 use calendar as cal
 tool fn choose(value: cal.String) -> Int { return 1 }
+approve fn confirm(value: cal.String) -> cal.String { return value }
 fn main() {}
 `)
 	output, err := exec.Command(binary, "emit", entry).CombinedOutput()
 	if err != nil || !bytes.Contains(output, []byte("func choose(value String) int")) {
 		t.Fatalf("Go output must preserve the qualified nominal type: %v\n%s", err, output)
+	}
+	if output, err := exec.Command(binary, "build", entry, "-o", filepath.Join(dir, "program")).CombinedOutput(); err != nil {
+		t.Fatalf("native build must preserve the nominal type on every approval path: %v\n%s", err, output)
+	}
+}
+
+func TestToolExportRejectsEmptyTypeApplications(t *testing.T) {
+	binary := buildSplashCLI(t)
+	for _, typ := range []string{"Int<>", "List<Int<>>"} {
+		entry := writeSplashFile(t, t.TempDir(), "main.splash",
+			"module main\ntool fn choose(value: "+typ+") -> Int { return 1 }\n")
+		command := exec.Command(binary, "tools", entry)
+		var stdout, stderr bytes.Buffer
+		command.Stdout, command.Stderr = &stdout, &stderr
+		if err := command.Run(); err == nil || stdout.Len() != 0 || !strings.Contains(stderr.String(), "type argument") {
+			t.Fatalf("expected an empty type argument error for %s: %v, %q, %q", typ, err, &stdout, &stderr)
+		}
 	}
 }
