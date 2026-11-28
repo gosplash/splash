@@ -135,18 +135,18 @@ An empty inferred array with incomplete coverage means the analyzer established 
 
 #### Inspection performance baseline
 
-Measured at `a61fa73` on an Apple M5 with macOS 27.0.1 (26A434) and Go 1.26.3 (arm64). Values are medians of five Go benchmark runs. Each steady-state value is a per-operation average within its run. The lookup benchmark includes construction of a detached contract and starts with existing analysis. The JSON benchmark starts with a prepared report and reuses its output buffer.
+Measured at `97b637e` on an Apple M5 with macOS 27.0.1 (26A434) and Go 1.26.3 (arm64). Values are medians of five Go benchmark runs. Each steady-state value is a per-operation average within its run. The lookup benchmark includes construction of a detached contract and starts with existing analysis. The JSON benchmark starts with a prepared report and reuses its output buffer.
 
 | Workload | Median | Observed range | Output | Allocated bytes / allocations per op |
 | --- | ---: | ---: | ---: | ---: |
-| Invoice lookup, two modules | 94 ns | 94–101 ns | — | 152 / 2 |
-| Look up the last function in the 2,000-function chain | 5.33 µs | 5.28–5.35 µs | — | 16 / 1 |
-| Look up the last function in the 10,000-function chain | 36.29 µs | 36.20–36.97 µs | — | 16 / 1 |
-| Encode the prepared invoice report | 519 ns | 517–538 ns | 606 B | 80 / 1 |
-| Invoice inspect, fresh process after the binary had run | 2.22 ms | 2.21–2.29 ms | 606 B | — |
-| Invoice inspect, first launch of a newly built binary | 86.76 ms | 84.46–91.16 ms | 606 B | — |
-| Check two policy findings as text, fresh process | 2.09 ms | 2.07–2.15 ms | 512 B | — |
-| Check the same findings as JSON, fresh process | 2.11 ms | 2.10–2.14 ms | 1,721 B | — |
+| Invoice lookup, two modules | 82 ns | 79–85 ns | — | 152 / 2 |
+| Look up the last function in the 2,000-function chain | 5.42 µs | 5.41–5.90 µs | — | 16 / 1 |
+| Look up the last function in the 10,000-function chain | 37.44 µs | 37.15–38.37 µs | — | 16 / 1 |
+| Encode the prepared invoice report | 557 ns | 550–563 ns | 606 B | 80 / 1 |
+| Invoice inspect, fresh process after the binary had run | 2.44 ms | 2.36–2.51 ms | 606 B | — |
+| Invoice inspect, first launch of a newly built binary | 124.74 ms | 118.15–131.35 ms | 606 B | — |
+| Check two policy findings as text, fresh process | 2.20 ms | 2.17–2.40 ms | 512 B | — |
+| Check the same findings as JSON, fresh process | 2.22 ms | 2.19–2.49 ms | 1,721 B | — |
 
 The first launch is a separate single invocation per run and excludes the preceding Go build. Fresh-process cases include process startup, source analysis, report generation, and output capture. Process allocations reported by Go's benchmark harness describe the parent test harness. Output sizes include source paths. Lookup scans declarations and summaries, so the cost grows with the analyzed closure. The single-fixture text and JSON timings do not establish equivalent costs or isolate diagnostic rendering from process startup.
 
