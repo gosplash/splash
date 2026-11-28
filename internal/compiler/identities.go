@@ -15,7 +15,7 @@ const (
 
 	// Bump when front-end semantics, import binding, or modeled call/effect
 	// rules change. Source verification and backends have separate scopes.
-	analysisRulesVersion = "1"
+	analysisRulesVersion = "2"
 )
 
 // AnalysisIdentity identifies captured source and the rules used to analyze it.
