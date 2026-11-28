@@ -30,12 +30,20 @@ func main() {
 		return
 	}
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: splash <check|inspect|run|build|emit|tools|graph|effects|approvals> <file.splash>")
+		fmt.Fprintln(os.Stderr, "usage: splash <check|inspect|callers|callees|run|build|emit|tools|graph|effects|approvals> <file.splash>")
 		os.Exit(1)
 	}
 	cmd, file := os.Args[1], os.Args[2]
 
 	switch cmd {
+	case "callers", "callees":
+		ok, err := runDependencyCommand(compiler.DependencyDirection(cmd), os.Args[2:], os.Stdout)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		if !ok {
+			os.Exit(1)
+		}
 	case "check":
 		path, jsonMode, err := parseCheckArgs(os.Args[2:])
 		if err != nil {

@@ -18,7 +18,8 @@ Splash is an early statically typed language for backend and control-plane softw
 | Verified source artifact boundary | The compiler requires an encapsulated `VerifiedProgram` for Go emission, VM lowering, and tool export. It authorizes the captured source under the shared policy checks. |
 | Structured check diagnostics | `splash check <file.splash> --json` emits a versioned source verdict with diagnostic codes, source locations, and resolved effect witnesses. [JSON report v1](docs/design/semantic-compiler-interface.md#check-json-v1) |
 | Function contract inspection | `splash inspect <file.splash> <module.function> --json` reports a signature, declared authority, inferred effects, and effect coverage. [Inspect JSON v1](docs/design/semantic-compiler-interface.md#inspect-json-v1) |
-| Dependency queries and authority comparisons | Proposed. Graph, effect, and approval inspection use detached projections of the analyzed program. |
+| Dependency queries | `splash callers` and `splash callees` report resolved source call relationships, call-site witnesses, and scoped coverage. [Dependency JSON v1](docs/design/semantic-compiler-interface.md#dependency-json-v1) |
+| Authority comparisons | Proposed. Graph, effect, and approval inspection use detached projections of the analyzed program. |
 | TTCS and cost evaluation | Experimental methodology. Comparative authoring results are pending. |
 
 See the [repository assessment](docs/design/repository-assessment.md) for scoped evidence and the [status vocabulary](docs/design/product-and-roadmap.md#public-implementation-status) for how to read these labels.
@@ -42,6 +43,7 @@ go build ./cmd/splash/...          # build the compiler
 ./splash check examples/sandbox/sandbox.splash
 ./splash check examples/approval/approval.splash
 ./splash inspect examples/hello/hello.splash hello.main --json
+./splash callees examples/hello/hello.splash hello.main --json --transitive
 
 ./splash build examples/hello/hello.splash -o hello && ./hello
 ./splash emit  examples/approval/approval.splash   # print generated Go

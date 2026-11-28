@@ -49,31 +49,39 @@ func runInspectCommand(args []string, output io.Writer) (bool, error) {
 
 func makeInspectReport(path, query string) inspectReport {
 	report := inspectReport{SchemaVersion: 1, EntryPath: path, Query: query, Diagnostics: []checkDiagnostic{}}
-	program, diagnostics, err := compiler.Analyze(path)
-	if err != nil {
-		if len(diagnostics) == 0 {
-			report.Diagnostics = append(report.Diagnostics, checkFailure(err))
-		}
-		report.Diagnostics = appendCheckDiagnostics(report.Diagnostics, diagnostics)
+	program, diagnostics := analyzeForInspection(path)
+	report.Diagnostics = diagnostics
+	if program == nil {
 		return report
 	}
 	contract, err := program.InspectFunction(query)
 	if err != nil {
-		code := "COMPILER_ERROR"
-		switch {
-		case errors.Is(err, compiler.ErrFunctionNotFound):
-			code = "FUNCTION_NOT_FOUND"
-		case errors.Is(err, compiler.ErrAmbiguousFunction):
-			code = "FUNCTION_AMBIGUOUS"
-		}
-		report.Diagnostics = append(report.Diagnostics, checkDiagnostic{
-			Code: code, Phase: "inspection", Severity: "error", Message: err.Error(),
-		})
+		report.Diagnostics = append(report.Diagnostics, inspectionFailure(err))
 		return report
 	}
 
 	report.Contract = projectInspectContract(contract)
 	return report
+}
+
+func analyzeForInspection(path string) (*compiler.AnalyzedProgram, []checkDiagnostic) {
+	program, diagnostics, err := compiler.Analyze(path)
+	out := appendCheckDiagnostics([]checkDiagnostic{}, diagnostics)
+	if err != nil && len(diagnostics) == 0 {
+		out = append(out, checkFailure(err))
+	}
+	return program, out
+}
+
+func inspectionFailure(err error) checkDiagnostic {
+	code := "COMPILER_ERROR"
+	switch {
+	case errors.Is(err, compiler.ErrFunctionNotFound):
+		code = "FUNCTION_NOT_FOUND"
+	case errors.Is(err, compiler.ErrAmbiguousFunction):
+		code = "FUNCTION_AMBIGUOUS"
+	}
+	return checkDiagnostic{Code: code, Phase: "inspection", Severity: "error", Message: err.Error()}
 }
 
 func projectInspectContract(contract compiler.FunctionContract) *inspectContract {

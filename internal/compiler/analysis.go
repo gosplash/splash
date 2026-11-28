@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/callgraph"
@@ -21,14 +22,17 @@ type AnalyzedProgram struct {
 	snapshot *analysis
 }
 
-// analysis is immutable once returned by Analyze. Neither inspection nor
-// verification exposes the compiler-owned AST, graph, maps, or typed modules.
+// Analysis facts are immutable once returned by Analyze. The dependency
+// index is memoized on demand without changing the captured facts.
 type analysis struct {
 	sources map[string]string
 	modules []*typechecker.TypedFile
 	merged  *ast.File
 	graph   *callgraph.Graph
 	effects []*effects.Summary
+
+	dependencyOnce sync.Once
+	dependencies   *dependencyIndex
 
 	functionReferences map[ast.Expr]*ast.FunctionDecl
 	printlnCalls       map[*ast.CallExpr]bool
