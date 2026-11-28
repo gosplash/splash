@@ -187,6 +187,12 @@ fn main() {}
 		t.Fatalf("dependency query identity disagrees with inspect: %v, %s", err, dependencyOut)
 	}
 
+	checkOut, err := exec.Command(binary, "check", entry, "--json").Output()
+	var checked inspectTestReport
+	if err != nil || json.Unmarshal(checkOut, &checked) != nil || checked.Identity != identity {
+		t.Fatalf("verification identity disagrees with inspect: %v, %s", err, checkOut)
+	}
+
 	lib := filepath.Join(dir, "left.splash")
 	src, err := os.ReadFile(lib)
 	if err != nil {
@@ -240,4 +246,16 @@ func readInspectJSON(t *testing.T, binary, path, query string, success bool) (in
 		}
 	}
 	return report, stdout.Bytes()
+}
+
+func TestInspectQualifiedEnumHasNominalIdentity(t *testing.T) {
+	binary := buildSplashCLI(t)
+	dir := t.TempDir()
+	writeSplashFile(t, dir, "status.splash", "module status\nenum State { available }\n")
+	entry := writeSplashFile(t, dir, "entry.splash", "module app\nuse status as alias\nfn use_state(state: alias.State) {}\n")
+	report, _ := readInspectJSON(t, binary, entry, "app.use_state", true)
+	got := report.Contract.Signature.Parameters[0].TypeIdentity
+	if got == nil || got.Kind != "enum" || got.Name != "State" || got.Path != "status.splash" {
+		t.Fatalf("wrong enum identity: %+v", got)
+	}
 }

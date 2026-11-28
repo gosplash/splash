@@ -98,7 +98,7 @@ A full result applies to the selected entry plus all reachable imports resolved 
 
 ### Check JSON v1
 
-`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, `effectCoverage`, and a `diagnostics` array. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its success and diagnostic messages, with long diagnostic paths abbreviated as described below.
+`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, `effectCoverage`, and a `diagnostics` array. An `identity` object is present when an analyzed snapshot is available, with the same meaning as on inspect reports. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its success and diagnostic messages, with long diagnostic paths abbreviated as described below.
 
 The verdict is `rejected` when the current compiler identifies a language or policy error. It is `indeterminate` when the verifier reports missing required policy coverage without an established violation. If both are present, the verdict is `rejected` and the array includes both findings. Failure to read the entry source has a null verdict and a `SOURCE_READ_ERROR` diagnostic. Import resolution errors reported by the front end are source diagnostics under the current rules. CLI usage errors and errors returned by the JSON encoder are reported on stderr.
 
@@ -161,13 +161,13 @@ The existing signature display fields `type` and `returnType` remain strings. A 
 
 | `kind` | Identity fields |
 | --- | --- |
-| `record` | `path` is the normalized source locator of the bound declaration. `name` is its declared name. `arguments` carries any checked type arguments. |
+| `record`, `enum` | `path` is the normalized source locator of the bound declaration. `name` is its declared name. `arguments` carries any checked type arguments. |
 | `primitive` | `name` is the primitive name, including `Void`. |
 | `typeParameter` | `name` refers to the parameter scoped to this signature. The existing `typeParameters` lists its bounds. |
 | `optional`, `list`, `result` | `arguments` carries the inner type, element type, or the success and error types in that order. |
 | `function` | `parameters` carries ordered argument types and is omitted for zero arguments. `returnType` carries the result type. |
 
-Within an entry closure’s layout, a bound record keeps the same locator through import aliases and edits that leave its path and declared name intact. Same-name records in different files have distinct locators. Compare analysis identities when the exact snapshot matters. Unresolved types and named types without checked declaration bindings, such as enums and injected adapter types, retain their display string. A compound identity is omitted if a component is unavailable.
+Within an entry closure’s layout, a bound record or enum keeps the same locator through import aliases and edits that leave its path and declared name intact. Same-name nominal types in different files have distinct locators. Compare analysis identities when the exact snapshot matters. Unresolved types and named types without checked declaration bindings, such as injected adapter types, retain their display string. A compound identity is omitted if a component is unavailable.
 
 #### Inspection performance baseline
 
@@ -256,7 +256,7 @@ go test ./cmd/splash -run '^$' -bench '^BenchmarkCheck_Pipeline_' -benchtime 200
 
 ## Snapshot and artifact provenance
 
-Inspect and dependency reports expose `identity.sourceId` and `identity.analysisId` for one successful capture. The analysis computes them lazily from captured data.
+Check, inspect, and dependency reports expose `identity.sourceId` and `identity.analysisId` for one successful capture. The analysis computes them lazily from captured data.
 
 - `splash-source-v1:sha256:<hex>` identifies the file locators and exact bytes of the captured closure. File locators are lexical paths relative to the entry file’s directory, with forward slash separators. Relocating the whole source tree or spelling the same lexical entry path differently preserves the ID when the capture is equivalent. If an entry spelled through a symlink and a cleaned import would share a locator, the entry keeps a reserved `./` prefix to distinguish the two captures. Unloaded files, symlink targets, and filesystem metadata are outside the manifest.
 - `splash-analysis-v1:sha256:<hex>` binds the source ID, the entry locator, and the compiler’s analysis rules version. The current resolver and built-in boundaries use fixed rules, so their inputs come from this manifest and rules version. The query, direction, depth, display paths, running binary build, verification rules, backend, and runtime are outside this ID’s scope.

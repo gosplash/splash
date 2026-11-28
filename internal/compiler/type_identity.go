@@ -3,7 +3,7 @@ package compiler
 import "gosplash.dev/splash/internal/types"
 
 // TypeIdentity is a detached representation of a checked signature type.
-// Record names are scoped by the path of the bound declaration.
+// Nominal names are scoped by the path of the bound declaration.
 type TypeIdentity struct {
 	Kind       string         `json:"kind"`
 	Name       string         `json:"name,omitempty"`
@@ -25,6 +25,10 @@ func (a *analysis) typeIdentity(typ types.Type) TypeIdentity {
 			if len(args) == len(t.TypeArgs) {
 				return TypeIdentity{Kind: "record", Name: t.Declaration.Name, Path: a.sourcePath(t.Declaration.Pos().File), Arguments: args}
 			}
+		}
+	case *types.EnumType:
+		if t.Declaration != nil {
+			return TypeIdentity{Kind: "enum", Name: t.Declaration.Name, Path: a.sourcePath(t.Declaration.Pos().File)}
 		}
 	case *types.OptionalType:
 		if args := a.typeArguments([]types.Type{t.Inner}); args != nil {
