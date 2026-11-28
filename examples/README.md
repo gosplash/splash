@@ -98,7 +98,7 @@ Two enforcement checks are active: `tool fn` functions cannot return types with 
 Three policies:
 - `"none"` — agents can't touch anything in this module
 - `"read_only"` — agents can call read functions, not write
-- `"approved_only"` — every agent call requires `approve fn`
+- `"approved_only"` — calls from agent-reachable code require `approve fn` or `@agent_allowed` on the target
 
 ```splash
 @containment(agent: "approved_only")
@@ -107,7 +107,7 @@ module billing
 approve fn charge_customer(customer_id: Int, amount_cents: Int) needs DB.write, Net { ... }
 ```
 
-**Try breaking it.** Remove `approve` from `charge_customer`. `splash check` will flag the containment violation — `approved_only` requires every function callable from agents to be approval-gated.
+To exercise the policy, add an agent caller for `charge_customer` with matching declared capabilities, then remove `approve`. Without `@agent_allowed`, `splash check` reports a containment violation.
 
 ---
 

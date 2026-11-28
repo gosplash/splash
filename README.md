@@ -16,7 +16,7 @@ Splash is an early statically typed language for backend and control-plane softw
 | Required policy coverage | `check`, `emit`, `build`, `tools`, and VM `run` report indeterminate verification when required source coverage is missing. The shared gate preserves known violations and leaves effect inspection available. |
 | Approval and classification | Implemented for selected checks and lowering forms. Request-bound approval and general classified-data flow enforcement are proposed. |
 | Verified source artifact boundary | The compiler requires an encapsulated `VerifiedProgram` for Go emission, VM lowering, and tool export. It authorizes the captured source under the shared policy checks. |
-| Structured check diagnostics | `splash check <file.splash> --json` emits a versioned source verdict with diagnostic codes, source locations, and resolved effect witnesses. [JSON report v1](docs/design/semantic-compiler-interface.md#check-json-v1) |
+| Structured check diagnostics | `splash check <file.splash> --json` emits a versioned source verdict, effect coverage, diagnostic codes, source locations, and resolved effect witnesses. [JSON report v1](docs/design/semantic-compiler-interface.md#check-json-v1) |
 | Function contract inspection | `splash inspect <file.splash> <module.function> --json` reports a signature, declared authority, inferred effects, and effect coverage. [Inspect JSON v1](docs/design/semantic-compiler-interface.md#inspect-json-v1) |
 | Dependency queries | `splash callers` and `splash callees` report resolved source call relationships, call-site witnesses, and scoped coverage. [Dependency JSON v1](docs/design/semantic-compiler-interface.md#dependency-json-v1) |
 | Authority comparisons | Proposed. Graph, effect, and approval inspection use detached projections of the analyzed program. |
@@ -165,8 +165,8 @@ fn summarize(id: Int) needs DB.read, AI -> String { return fetch(id) }
 | `redline fn` | function | safety check rejects a modeled agent path to this function |
 | `approve fn` | function | injects human approval gate; emits `(T, error)` Go signature |
 | `@reason "..."` | declaration | attaches human-readable justification metadata to the next declaration |
-| `@agent_allowed` | function | exempts from `@containment(agent: "approved_only")` check |
-| `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | evaluates entry-module policy over the modeled graph |
+| `@agent_allowed` | function | grants explicit permission under `approved_only` and the `DB.write` plus `Net` rule |
+| `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | applies the policy of each function's owning module over the modeled graph |
 | `@sandbox(allow: [...], deny: [...])` | function | checks declared effects on modeled reachable functions |
 | `@budget(max_cost: Float, max_calls: Int)` | function | declares resource limits; types validated at compile time |
 | `@sensitive` | field | field is PII; containing type cannot satisfy `Loggable`; `tool fn` cannot return it |
@@ -185,7 +185,7 @@ public < @internal < @sensitive < @restricted
 
 The current checks cover selected type and sink shapes:
 
-1. Tool results with supported named and optional-named record types are checked for directly annotated fields above `@internal`.
+1. Tool return classification checks primitives, void, payload-free enums, nongeneric records and their fields, optionals, lists, and both `Result` types. It rejects classified fields above `@internal` and requires enough type evidence to verify the return shape. [Tool return classification](SPEC.md#72-compile-time-enforcement)
 2. `println` and supported `Loggable` calls check argument type classification. Projected fields currently use the underlying field type.
 
 ---

@@ -80,6 +80,36 @@ func TestCheckJSONVerdicts(t *testing.T) {
 	}
 }
 
+func TestCheckJSONEffectCoverageIsIndependentOfVerdict(t *testing.T) {
+	binary := buildSplashCLI(t)
+	for _, tc := range []struct {
+		name, source, verdict, coverage string
+	}{
+		{"complete", "fn main() {}", "verified", "complete"},
+		{"ordinary callback", "fn evaluate(cb: fn() -> Int) -> Int { return cb() }", "verified", "incomplete"},
+		{"required callback", "agent fn evaluate(cb: fn() -> Int) -> Int { return cb() }", "indeterminate", "incomplete"},
+		{"trusted adapter", "approve fn confirm() -> Bool { return true }", "verified", "incomplete"},
+		{"known violation", "redline fn reset() {}\nagent fn report() { reset() }", "rejected", "complete"},
+		{"parse failure", "fn main( {", "rejected", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeSplashFile(t, t.TempDir(), "main.splash", tc.source)
+			_, output := readCheckJSON(t, binary, path, tc.verdict)
+			var report struct{ EffectCoverage json.RawMessage }
+			if err := json.Unmarshal(output, &report); err != nil {
+				t.Fatal(err)
+			}
+			want := `null`
+			if tc.coverage != "" {
+				want = `{"status":"` + tc.coverage + `"}`
+			}
+			if string(report.EffectCoverage) != want {
+				t.Fatalf("effectCoverage = %s, want %s", report.EffectCoverage, want)
+			}
+		})
+	}
+}
+
 func TestCheckJSONEffectWitnesses(t *testing.T) {
 	binary := buildSplashCLI(t)
 	dir := t.TempDir()

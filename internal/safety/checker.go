@@ -11,6 +11,7 @@ import (
 	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/effects"
+	"gosplash.dev/splash/internal/token"
 	"gosplash.dev/splash/internal/types"
 )
 
@@ -31,10 +32,11 @@ var (
 	ErrIndeterminate = errors.New("safety verification indeterminate")
 )
 
-// Result contains known policy violations and missing required source evidence.
+// Result contains policy findings and coverage of the analyzed effects.
 type Result struct {
-	Violations []diagnostic.Diagnostic
-	Incomplete []diagnostic.Diagnostic
+	Violations      []diagnostic.Diagnostic
+	Incomplete      []diagnostic.Diagnostic
+	EffectsComplete bool
 }
 
 // Check runs the enforcement passes and reports findings even if coverage is incomplete.
@@ -44,6 +46,17 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 	roots := g.AgentRoots()
 	agentReachable := g.Reachable(roots)
 	agentParents := g.Parents(roots)
+	var agentCallees map[string]bool
+	if slices.ContainsFunc(modules, func(module Module) bool {
+		return moduleContainment(module.File) == containmentApprovedOnly
+	}) {
+		agentCallees = make(map[string]bool)
+		for caller := range agentReachable {
+			for _, callee := range g.Node(caller).Callees() {
+				agentCallees[callee] = true
+			}
+		}
+	}
 
 	gated := g.ApprovalFunctions()
 	diags = append(diags, c.checkApprovalCallContexts(g, gated)...)
@@ -51,19 +64,26 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 		file := module.File
 		diags = append(diags, c.checkRedline(file, g, agentParents)...)
 		diags = append(diags, c.checkApprove(file, g, agentReachable)...)
-		diags = append(diags, c.checkContainment(file, g, agentReachable)...)
-		diags = append(diags, c.checkToolDataClassification(module)...)
+		diags = append(diags, c.checkContainment(file, g, agentReachable, agentCallees)...)
 		diags = append(diags, c.checkSandbox(file, g)...)
 		diags = append(diags, c.checkBudget(file)...)
 	}
+	toolViolations, toolGaps := checkToolDataClassification(modules)
+	diags = append(diags, toolViolations...)
 	for i := range diags {
 		diags[i].Code = diagnostic.PolicyViolation
 	}
+	effectsComplete := true
 	for _, summary := range inferred {
 		diags = append(diags, summary.Diagnostics()...)
+		effectsComplete = effectsComplete && summary.Gap == nil
 	}
 
-	return Result{Violations: diags, Incomplete: requiredCoverage(g, inferred, len(gated) != 0)}
+	return Result{
+		Violations:      diags,
+		Incomplete:      append(requiredCoverage(g, inferred, len(gated) != 0), toolGaps...),
+		EffectsComplete: effectsComplete,
+	}
 }
 
 // requiredCoverage reports direct coverage gaps in the resolved closure of policy roots.
@@ -143,35 +163,95 @@ func sensitiveFields(decl *ast.TypeDecl) []string {
 	return names
 }
 
-// checkToolDataClassification emits an error for every tool function whose
-// return type contains @sensitive or @restricted fields.
-// PII in a tool's return value flows directly into the AI agent's context window.
-func (c *Checker) checkToolDataClassification(module Module) []diagnostic.Diagnostic {
-	var diags []diagnostic.Diagnostic
-	for _, declaration := range module.File.Declarations {
-		fn, ok := declaration.(*ast.FunctionDecl)
-		if !ok || !slices.ContainsFunc(fn.Annotations, func(ann ast.Annotation) bool {
-			return ann.Kind == ast.AnnotTool
-		}) {
-			continue
-		}
-		returnType := module.Types[fn.ReturnType]
-		if optional, ok := returnType.(*types.OptionalType); ok {
-			returnType = optional.Inner
-		}
-		record, ok := returnType.(*types.NamedType)
-		if !ok || record.Declaration == nil {
-			continue
-		}
-		if fields := sensitiveFields(record.Declaration); len(fields) > 0 {
-			diags = append(diags, diagnostic.Errorf(
-				fn.Position,
-				"tool fn %q returns type %s which contains sensitive or restricted fields (%s) — PII would flow into the AI agent's context",
-				fn.Name, record.TypeName(), strings.Join(fields, ", "),
-			))
+// checkToolDataClassification follows data-bearing return types using resolved
+// declaration identities and the owning modules' type evidence.
+func checkToolDataClassification(modules []Module) (violations, incomplete []diagnostic.Diagnostic) {
+	owners := make(map[*ast.TypeDecl]map[ast.Node]types.Type)
+	for _, module := range modules {
+		for _, declaration := range module.File.Declarations {
+			if record, ok := declaration.(*ast.TypeDecl); ok {
+				owners[record] = module.Types
+			}
 		}
 	}
-	return diags
+	for _, module := range modules {
+		for _, declaration := range module.File.Declarations {
+			fn, ok := declaration.(*ast.FunctionDecl)
+			if !ok || fn.ReturnType == nil || !slices.ContainsFunc(fn.Annotations, func(ann ast.Annotation) bool {
+				return ann.Kind == ast.AnnotTool
+			}) {
+				continue
+			}
+			found, gap := checkToolReturnType(fn, module.Types[fn.ReturnType], owners)
+			violations = append(violations, found...)
+			if gap != (token.Position{}) {
+				incomplete = append(incomplete, diagnostic.Errorf(gap,
+					"incomplete policy coverage: tool fn %q return classification lacks supported resolved type evidence", fn.Name,
+				).WithCode(diagnostic.PolicyCoverageIncomplete))
+			}
+		}
+	}
+	return violations, incomplete
+}
+
+// checkToolReturnType reports known violations even when part of the return
+// type is unsupported. Each resolved record is visited once, including cycles.
+func checkToolReturnType(fn *ast.FunctionDecl, returnType types.Type, owners map[*ast.TypeDecl]map[ast.Node]types.Type) (violations []diagnostic.Diagnostic, gap token.Position) {
+	seen := make(map[*ast.TypeDecl]bool)
+	markGap := func(pos token.Position) {
+		if gap == (token.Position{}) {
+			gap = pos
+		}
+	}
+	var visit func(types.Type, token.Position)
+	visit = func(typ types.Type, pos token.Position) {
+		switch typ := typ.(type) {
+		case *types.OptionalType:
+			visit(typ.Inner, pos)
+		case *types.ListType:
+			visit(typ.Element, pos)
+		case *types.ResultType:
+			visit(typ.Ok, pos)
+			visit(typ.Err, pos)
+		case *types.NamedType:
+			record := typ.Declaration
+			if record == nil {
+				markGap(pos)
+				return
+			}
+			if seen[record] {
+				return
+			}
+			seen[record] = true
+			if fields := sensitiveFields(record); len(fields) > 0 {
+				violations = append(violations, diagnostic.Errorf(fn.Position,
+					"tool fn %q returns type %s which contains sensitive or restricted fields (%s)",
+					fn.Name, record.Name, strings.Join(fields, ", "),
+				))
+			}
+			fieldTypes := owners[record]
+			if fieldTypes == nil || len(record.TypeParams) > 0 {
+				markGap(pos)
+			}
+			for _, field := range record.Fields {
+				visit(fieldTypes[field.Type], field.Position)
+			}
+		case *types.EnumType:
+			if typ.Declaration == nil || slices.ContainsFunc(typ.Declaration.Variants, func(variant ast.EnumVariant) bool {
+				return variant.Payload != nil
+			}) {
+				markGap(pos)
+			}
+		case *types.PrimitiveType:
+			if typ == types.Unknown {
+				markGap(pos)
+			}
+		default:
+			markGap(pos)
+		}
+	}
+	visit(returnType, fn.ReturnType.Pos())
+	return violations, gap
 }
 
 // checkRedline emits an error for every redline function that is agent-reachable.
@@ -244,7 +324,7 @@ func moduleContainment(file *ast.File) containmentPolicy {
 }
 
 // checkContainment enforces the module-level @containment policy against the agent-reachable set.
-func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReachable map[string]bool) []diagnostic.Diagnostic {
+func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReachable, agentCallees map[string]bool) []diagnostic.Diagnostic {
 	policy := moduleContainment(file)
 	if policy == containmentUnrestricted {
 		return nil
@@ -257,10 +337,11 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 		if !ok {
 			continue
 		}
-		if !agentReachable[g.FunctionKey(fn)] {
+		key := g.FunctionKey(fn)
+		if !agentReachable[key] {
 			continue
 		}
-		node := g.Node(g.FunctionKey(fn))
+		node := g.Node(key)
 		if node == nil {
 			continue
 		}
@@ -281,9 +362,8 @@ func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReac
 				))
 			}
 		case containmentApprovedOnly:
-			// Agent-root functions (those with the Agent effect) are the entry points;
-			// only non-root agent-reachable functions need explicit annotation.
-			if node.Effects.Has(effects.Agent) {
+			// Agent entry-point admission is independent of permission to call it.
+			if node.Effects.Has(effects.Agent) && !agentCallees[key] {
 				continue
 			}
 			if !node.HasAnnotation(ast.AnnotApprove) && !node.HasAnnotation(ast.AnnotAgentAllowed) {

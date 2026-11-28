@@ -98,9 +98,11 @@ A full result applies to the selected entry plus all reachable imports resolved 
 
 ### Check JSON v1
 
-`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, and a `diagnostics` array. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its existing success and diagnostic messages.
+`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, `effectCoverage`, and a `diagnostics` array. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its existing success and diagnostic messages.
 
 The verdict is `rejected` when the current compiler identifies a language or policy error. It is `indeterminate` when the verifier reports missing required policy coverage without an established violation. If both are present, the verdict is `rejected` and the array includes both findings. Failure to read the entry source has a null verdict and a `SOURCE_READ_ERROR` diagnostic. Import resolution errors reported by the front end are source diagnostics under the current rules. CLI usage errors and errors returned by the JSON encoder are reported on stderr.
+
+`effectCoverage` has a `status` of `complete` when every function summary in the analyzed entry and its imports is complete under the current effect model. The status is `incomplete` when any summary has an effect gap, including ordinary callbacks and the trusted Go approval adapter. The field is `null` when source analysis cannot produce a snapshot. Coverage describes the effect summaries independently of policy outcomes. A `verified` verdict can accompany `incomplete` summaries outside the required source scope. Use `splash effects` or `splash inspect` to find affected functions and see known effects.
 
 Diagnostic records have `code`, `phase`, `severity`, and a human-readable `message`. Consumers should branch on codes. Records are sorted by file, line, column, code, and message. Optional `source.start` has `file`, a one-based `line`, and a one-based Unicode code-point `column`. Call-site diagnostics can include an exclusive `source.end` just after the closing parenthesis. The start uses the compiler's diagnostic anchor, which is the opening parenthesis for a call. Other locations may be point-only.
 
@@ -116,7 +118,7 @@ Diagnostic records have `code`, `phase`, `severity`, and a human-readable `messa
 | `SOURCE_READ_ERROR` | `input` | Entry source read failed before a program verdict could be determined. |
 | `COMPILER_ERROR` | `verification` | Unexpected compiler failure without a program verdict. |
 
-A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. The report currently omits phase-level coverage, snapshot identities, causal diagnostic links, and repair suggestions. Clients should tolerate additive fields and codes within v1.
+A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. Clients should tolerate additive fields and codes within v1.
 
 ### Inspect JSON v1
 

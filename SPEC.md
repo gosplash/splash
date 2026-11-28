@@ -25,11 +25,11 @@
 
 Splash is a statically-typed, compiled control-plane language that transpiles to Go. It is designed for software whose authority must be statically understood before it runs, especially AI agent systems and other autonomous control software.
 
-Its distinguishing feature is a compile-time safety model: an effect system, call graph analysis, data classification, and a suite of annotations (`redline fn`, `approve fn`, `@containment`, `@sandbox`, `@budget`, `@sensitive`, `@restricted`) that enforce authority and safety properties before codegen.
+The compiler models authority with declared and inferred effects, resolved calls, and selected type-classification checks. Source verification applies these checks to the selected entry and its loaded imports before artifact production. [Implementation status](README.md#implementation-status)
 
-The compiler design requires checking applicable safety properties before Go lowering. The current implementation's coverage is documented separately.
+Go lowering, native compilation, and VM admission each have their own supported forms and can fail after source verification succeeds. Generated approval gates depend on the runtime's configured adapter. [Supported Go subset](docs/design/supported-subset.md) · [VM subset and limits](docs/design/splash-ir-and-vm.md#public-vm-execution)
 
-This specification describes the current v0.1 language. It does not imply that Splash is a general-purpose replacement for Go or a universal software-security mechanism. The design center is statically-governed control software.
+This working draft describes the v0.1 language design and identifies current implementation limits for statically governed control software.
 
 ---
 
@@ -406,9 +406,11 @@ Unresolved calls, unsupported source forms, and unmodeled adapter operations lea
 
 The compiler-injected Go approval adapter is a trusted host boundary for these source checks. Its effects remain unmodeled in `splash effects`. The checker still requires coverage of the Splash source around it. The VM has its own admission requirements. Ordinary callbacks outside the required policy scopes can still compile, with incomplete summaries available for inspection.
 
+`splash check --json` reports `effectCoverage.status` across all analyzed function summaries, including unmodeled approval adapter effects. A scoped `verified` verdict can accompany `incomplete` effect coverage. [Check JSON v1](docs/design/semantic-compiler-interface.md#check-json-v1)
+
 ### 5.4 Effect Propagation Through `approve fn`
 
-`approve fn` functions widen their return type to `(T, error)`. All transitive callers also receive the widened signature. The type checker propagates this widening before codegen.
+The Go backend adds an error return to approval-gated functions and their resolved transitive callers. Source verification requires calls on these paths to occupy a standalone statement or the entire value of a `let` or `return` statement. See [§11.4](#114-the-agent-error-boundary).
 
 ---
 
@@ -422,7 +424,7 @@ Annotations appear immediately before declarations. Multiple annotations may be 
 tool fn search_catalog(query: String, limit: Int) needs DB.read -> List<SearchResult> { ... }
 ```
 
-Marks a function as AI-callable. `splash tools` emits JSON Schema for `tool fn` parameters from their resolved callable signatures. It supports scalar types, optionals, lists, nonempty payload-free enums, and nominal records projected as objects. Unresolved parameter types and unsupported parameter shapes fail schema export. `tool fn` functions may not return a type whose data classification exceeds `@internal` (see [Section 7](#7-data-classification)).
+Marks a function as a tool candidate and an agent root for source analysis. `splash tools` emits JSON Schema for `tool fn` parameters from their resolved callable signatures. It supports scalar types, optionals, lists, nonempty payload-free enums, and nominal records projected as objects. Unresolved parameter types and unsupported parameter shapes fail schema export. Source verification checks tool return classification under [§7.2](#72-compile-time-enforcement).
 
 ### 6.2 `redline fn`
 
@@ -431,7 +433,7 @@ Marks a function as AI-callable. `splash tools` emits JSON Schema for `tool fn` 
 redline fn delete_all_data() needs DB.admin -> Void { ... }
 ```
 
-Build fails if any agent-reachable call path reaches this function. The error includes the full call path from the agent root to the redlined function.
+Source verification rejects a resolved call path from an agent root to a `redline fn`. The diagnostic includes one such path. The verifier requires source call coverage in the agent scope as described in [§5.3](#53-effect-checking).
 
 `@reason "..."` may precede `redline fn` to attach a human-readable justification that the compiler preserves in declaration metadata.
 
@@ -441,12 +443,7 @@ Build fails if any agent-reachable call path reaches this function. The error in
 approve fn charge_card(customer_id: Int, amount_cents: Int) needs Net -> Charge { ... }
 ```
 
-Injects a human approval gate. At compile time:
-1. The function's Go return type is widened to `(T, error)`.
-2. `splashApprove("fn_name")` is injected as the first statement of the body.
-3. All transitive callers also receive `(T, error)` signatures — denial propagates as an error.
-
-At runtime, the `ApprovalAdapter` interface determines the gate behavior. The default adapter prompts stdin. Production adapters (`SlackApproval`, `WebhookApproval`) are not yet implemented.
+The Go backend inserts an approval check before the function body and propagates denial as an error through supported resolved calls. At runtime, the registered `ApprovalAdapter` decides whether the body can run. The default adapter prompts on standard input. Slack and webhook adapters remain proposed. The experimental VM rejects approval declarations at admission. [Go error propagation](#114-the-agent-error-boundary)
 
 ### 6.4 `@agent_allowed`
 
@@ -455,7 +452,7 @@ At runtime, the `ApprovalAdapter` interface determines the gate behavior. The de
 fn read_public_catalog() needs DB.read -> List<Item> { ... }
 ```
 
-Exempts a function from the `@containment(agent: "approved_only")` check. Has no effect when `@containment` is not in force.
+Grants explicit access under `@containment(agent: "approved_only")`. It also satisfies the separate rule requiring `approve fn` or `@agent_allowed` on agent-reachable functions declaring both `DB.write` and `Net`.
 
 ### 6.5 `@containment`
 
@@ -470,9 +467,11 @@ Three policies:
 
 | Value           | Meaning                                                    |
 |-----------------|------------------------------------------------------------|
-| `"none"`        | No agent may call any function in this module              |
+| `"none"`        | No agent root or agent-reachable function is allowed in this module |
 | `"read_only"`   | Agent-reachable functions may declare at most `DB.read` capability |
-| `"approved_only"` | Agents may only call `@agent_allowed` functions          |
+| `"approved_only"` | Agent-reachable calls require `approve fn` or `@agent_allowed` on the target |
+
+Containment applies to each declaration in its owning module, including when imported. Under `approved_only`, a function marked `Agent` may serve as a standalone root. Any resolved call to that root from an agent-reachable caller, including a recursive call, requires the same permission as other calls. A tool-only root requires explicit permission to be exposed under `approved_only`.
 
 ### 6.6 `@sandbox`
 
@@ -481,10 +480,7 @@ Three policies:
 fn search_agent() needs Agent, DB.read, Net -> List<Result> { ... }
 ```
 
-Constrains the effects of the entire reachable call graph from this function. The safety checker:
-1. Walks every function reachable from the `@sandbox`-annotated function.
-2. For each reachable function, checks its declared effects against the `allow`/`deny` lists.
-3. Emits an error for any effect not in `allow` (or in `deny`).
+The verifier checks the declared effects of the annotated function and its resolved transitive callees against the supplied `allow` and `deny` lists. It rejects any denied effect or any effect outside a supplied allow list. Required call and effect coverage in this scope follows [§5.3](#53-effect-checking).
 
 `Agent` is excluded from `@sandbox` constraint checking. The `allow` and `deny` keys accept effect names in the same form as `needs` declarations.
 
@@ -513,7 +509,7 @@ type User {
 }
 ```
 
-A `@sensitive` field elevates the containing type's data classification. `tool fn` functions cannot return a type with any `@sensitive` field. Functions requiring `Loggable` cannot accept a type with `@sensitive` fields.
+A `@sensitive` field elevates the containing type's classification for the supported tool return and logging checks in [§7.2](#72-compile-time-enforcement).
 
 ### 6.9 `@restricted`
 
@@ -525,7 +521,7 @@ type Config {
 }
 ```
 
-A `@restricted` field means the value is process-local — no storage adapter may accept it. This is the highest classification level.
+`@restricted` is the highest classification level. It denotes intended process-local handling. Current source enforcement covers the type checks in [§7.2](#72-compile-time-enforcement). General storage-adapter and classified-data flow enforcement remain proposed.
 
 ### 6.10 `@internal`
 
@@ -544,7 +540,7 @@ An `@internal` field elevates the containing type above `public` but below `@sen
 
 ## 7. Data Classification
 
-Classification is a property of types, not values. Fields carry classification; the containing type's classification is the maximum of its fields.
+Classification belongs to types. A record's directly annotated fields contribute their maximum classification. Tool return checking also traverses the supported nested types described below.
 
 ### 7.1 Classification Lattice
 
@@ -552,19 +548,19 @@ Classification is a property of types, not values. Fields carry classification; 
 public < @internal < @sensitive < @restricted
 ```
 
-A type with no annotated fields is `public`. A type with at least one `@internal` field is `@internal`. A type with at least one `@sensitive` field is `@sensitive`. A type with at least one `@restricted` field is `@restricted`.
+Unannotated fields have classification `public`. A field with multiple classification annotations takes the highest level.
 
 ### 7.2 Compile-Time Enforcement
 
-Two rules are enforced today:
+The compiler implements two type-based checks.
 
-1. **`tool fn` return type:** A `tool fn` function cannot return a type whose classification exceeds `@internal`. PII (`@sensitive`) and process-local data (`@restricted`) must not flow into the agent's context window.
+1. **Tool return classification.** Starting at the declared return type, the checker follows resolved nongeneric records and their fields, optional and list element types, and both `Result` types. Primitives, void returns, and payload-free enums are supported. Known `@sensitive` or `@restricted` fields reject verification. Missing type evidence and unsupported shapes such as enum payloads, generic records, type parameters, and function types make verification indeterminate in the absence of a known violation. The verifier reports both findings when both occur.
 
-2. **`Loggable` constraint:** A type parameter constrained with `Loggable` cannot be instantiated with a type whose classification exceeds `public`. Logging PII is rejected at compile time.
+2. **Logging classification.** The checker rejects arguments classified above `@internal` at built-in `println` calls and in supported inference of `Loggable` type parameters. It uses the argument type's classification. Field projections use the underlying field type.
 
 ### 7.3 `Loggable`
 
-`Loggable` is a built-in constraint. No declaration is required. Any type without `@sensitive` or `@restricted` fields satisfies `Loggable`. The `println` built-in requires `Loggable`.
+`Loggable` is a built-in constraint with a maximum classification of `@internal`. The built-in `println` applies the same classification threshold.
 
 ---
 
@@ -622,7 +618,7 @@ The compiler recognizes this source interface. Provider execution and backend er
 | Symbol           | Type                                         | Description                        |
 |------------------|----------------------------------------------|------------------------------------|
 | `ai.prompt<T>`   | `fn(input: String) needs AI -> T`            | Call an AI model, parse response as `T` |
-| `AIError`        | `type AIError { message: String }`           | AI call failure (propagates to Agent boundary) |
+| `AIError`        | `type AIError { message: String }`           | Planned error type for AI call failures |
 
 `ai.prompt<T>` is a generic function call: `ai.prompt<Report>("Summarize this")`.
 
@@ -638,23 +634,23 @@ The `AI` effect is required in `needs` to call `ai.prompt`.
 source (.splash)
   → Lexer         tokenize → []token.Token
   → Parser        []token.Token → *ast.File
-  → TypeChecker   type inference, effect propagation, constraint satisfaction
-  → CallGraph     directed call graph, AgentRoots(), Reachable(), Callers()
-  → SafetyChecker redline fn, approve fn, @containment, @sandbox, @budget, data classification
-  → Emitter       verified AST → Go source
+  → Analyze       types, resolved calls, and inferred effects for entry and imports
+  → Verify        applicable source policies → verified program
+  → Emitter       verified program → Go source
   → go build      Go source → native binary
 ```
 
-Each stage is independent. The CLI wires them in `cmd/splash/main.go`.
+Source verification issues the program handle used for Go emission, tool schema export, and VM lowering. Each output path has its own requirements.
 
 ### 10.1 CLI Commands
 
 | Command                     | Stages run                          |
 |-----------------------------|-------------------------------------|
-| `splash check <file>`       | Lexer → TypeChecker → SafetyChecker |
-| `splash build <file> -o <out>` | Full pipeline → `go build`       |
-| `splash emit <file>`        | Full pipeline → print Go source     |
-| `splash tools <file>`       | Lexer → TypeChecker → JSON Schema   |
+| `splash check <file>`       | Source analysis and verification |
+| `splash build <file> -o <out>` | Source verification → Go emission → `go build` |
+| `splash emit <file>`        | Source verification → Go emission |
+| `splash tools <file>`       | Source verification → tool schema export |
+| `splash run <file> --backend vm` | Source verification → VM admission and lowering → bytecode validation and execution |
 
 ### 10.2 Agent Roots
 
@@ -662,12 +658,7 @@ The call graph treats any function with `needs Agent` or `tool fn` as an agent r
 
 ### 10.3 Error Reporting
 
-All stages emit `[]diagnostic.Diagnostic`. A `Diagnostic` carries:
-- `Severity` — `Error` or `Warning`
-- `Message` — human-readable description
-- `Position` — filename, line, column
-
-The CLI prints diagnostics and exits non-zero if any errors are present.
+Source analysis and verification emit diagnostics with a code, severity, message, and location when available. Backend and runtime failures use the corresponding command's error reporting. `splash check --json` exposes the source verdict, effect coverage, and diagnostics. [Check JSON v1](docs/design/semantic-compiler-interface.md#check-json-v1)
 
 ---
 
@@ -697,9 +688,7 @@ Splash `enum` declarations become Go type aliases with constants. Variants with 
 
 ### 11.4 The Agent Error Boundary
 
-`needs Agent` functions define the error surface of agent execution. When the `ApprovalAdapter` denies an `approve fn` call, generated Go propagates the error through transitive callers to the `needs Agent` function. Splash source signatures leave this propagation implicit.
-
-Any function annotated with `approve fn` — and all transitive callers up to the `needs Agent` boundary — have their return type widened from `T` to `(T, error)` in the generated Go. The call to `splashApprove("fn_name")` is injected as the first statement.
+For `approve fn` and its resolved transitive callers, the Go backend adds an `error` return alongside a value return or uses `error` alone for a function with no return value. A generated adapter call guards the approval-gated body. Denial propagates through the modeled call path, including across `needs Agent` functions. The `Agent` marker alone adds no Go error return.
 
 The proposed AI runtime would route provider failures, including network errors and timeouts, to the same error boundary. Current source analysis models the `AI` effect of `ai.prompt<T>`. The Go backend emits an ordinary call for it.
 
@@ -733,20 +722,18 @@ func run() error {
 }
 ```
 
-The Splash developer writes `fn main()` with no error handling. The compiler treats `fn main()` as an error-propagating function at the Agent boundary — errors return up through `run()` and the wrapper handles process exit. The compiler never injects `os.Exit` inside generated function bodies.
-
-In production, agent entry points are typically called from HTTP handlers or queue consumers rather than `main()` — the `(T, error)` signature integrates naturally with those callers.
+The generated wrapper prints errors returned by `run()` and exits with status 1. In library use, callers receive the generated error return on approval paths.
 
 ### 11.9 Runtime Support
 
-The generated Go file includes a small runtime preamble:
+Go output for programs with approval gates includes these runtime helpers.
 
 - `splashApprove(name string) error` — dispatches to the registered `ApprovalAdapter`
 - `ApprovalAdapter` interface — `Approve(name string) error`
 - `SetApprovalAdapter(a ApprovalAdapter)` — register before agent startup
 - Default `StdinApprovalAdapter` prompts standard input
 
-No other runtime support is injected. All safety enforcement is complete before codegen.
+Source verification checks the supported approval call paths. The adapter enforces each generated gate at runtime. Go lowering also emits helpers required by other supported constructs, such as optional-value coalescing.
 
 ---
 
@@ -754,16 +741,16 @@ No other runtime support is injected. All safety enforcement is complete before 
 
 | Annotation                                          | Applies To | Purpose                                                   |
 |-----------------------------------------------------|------------|-----------------------------------------------------------|
-| `tool fn`                                             | function   | AI-callable; `splash tools` emits JSON Schema             |
-| `redline fn`                                          | function   | Build fails if agent-reachable                            |
-| `approve fn`                                          | function   | Human gate; `(T, error)` cascade through callers          |
+| `tool fn`                                             | function   | Tool candidate with argument schema and return classification checks |
+| `redline fn`                                          | function   | Source verification rejects resolved agent reachability  |
+| `approve fn`                                          | function   | Runtime approval gate with Go error propagation          |
 | `@reason "..."`                                     | declaration | Human-readable justification for the next declaration   |
-| `@agent_allowed`                                    | function   | Exempt from `@containment(agent: "approved_only")`        |
+| `@agent_allowed`                                    | function   | Explicit permission for `approved_only` and the `DB.write` plus `Net` rule |
 | `@containment(agent: "none"\|"read_only"\|"approved_only")` | module | Module-level agent access policy             |
-| `@sandbox(allow: [...], deny: [...])`               | function   | Constrain effects of entire reachable call graph          |
+| `@sandbox(allow: [...], deny: [...])`               | function   | Constrain declared effects on resolved reachable functions |
 | `@budget(max_cost: Float, max_calls: Int)`          | function   | Compile-time resource limit validation                    |
-| `@sensitive`                                        | field      | PII; blocks `tool fn` return and `Loggable` usage           |
-| `@restricted`                                       | field      | Process-local; no storage adapter accepts it              |
+| `@sensitive`                                        | field      | Sensitive classification for supported tool and logging checks |
+| `@restricted`                                       | field      | Highest classification for supported tool and logging checks |
 | `@internal`                                         | field      | Internal-only; raises classification above `public`       |
 
 ## Appendix B: Effect Quick Reference

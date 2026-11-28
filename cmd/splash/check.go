@@ -17,10 +17,15 @@ import (
 )
 
 type checkReport struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	EntryPath     string            `json:"entryPath"`
-	Verdict       *string           `json:"verdict"`
-	Diagnostics   []checkDiagnostic `json:"diagnostics"`
+	SchemaVersion  int                  `json:"schemaVersion"`
+	EntryPath      string               `json:"entryPath"`
+	Verdict        *string              `json:"verdict"`
+	EffectCoverage *checkEffectCoverage `json:"effectCoverage"`
+	Diagnostics    []checkDiagnostic    `json:"diagnostics"`
+}
+
+type checkEffectCoverage struct {
+	Status string `json:"status"`
 }
 
 type checkDiagnostic struct {
@@ -89,6 +94,10 @@ func runCheckJSON(path string, output io.Writer) (bool, error) {
 	switch {
 	case analysisErr == nil:
 		_, result, err := compiler.Verify(program)
+		report.EffectCoverage = &checkEffectCoverage{Status: "complete"}
+		if !result.EffectsComplete {
+			report.EffectCoverage.Status = "incomplete"
+		}
 		diagnostics = append(result.Violations, result.Incomplete...)
 		switch {
 		case err == nil:
