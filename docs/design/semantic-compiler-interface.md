@@ -68,7 +68,7 @@ Show declared grants, inferred effects and coverage separately. With complete ev
 
 ## Commands and status
 
-The CLI uses file-first commands. Versioned JSON is implemented for `check`, one-function `inspect`, and `callers` and `callees`. The authority commands below are proposals.
+The CLI accepts source entries for checks, semantic queries, and verified Go emission. The source authority comparison accepts two entries.
 
 ```text
 splash check app/main.splash --json
@@ -76,11 +76,12 @@ splash inspect app/main.splash billing.refund_customer --json
 splash callers app/main.splash billing.refund_customer --json --depth 2
 splash callees app/main.splash billing.refund_customer --json --transitive
 splash graph app/main.splash
-splash authority snapshot app/main.splash --json
-splash authority diff base.json head.json --json
+splash summary app/main.splash --json
+splash emit app/main.splash --json
+splash authority diff base/app/main.splash head/app/main.splash --json
 ```
 
-Machine queries cover source verification diagnostics, one function contract, and resolved caller and callee relationships. Root classification, approval facts, and richer declaration ranges are candidates for later queries. The manifest and diff follow once binding, policy completeness and lowering agree. The agent-facing schema stays separate from provider-specific tool formats.
+Machine queries cover source verification diagnostics, one function contract, and resolved caller and callee relationships. Root classification, approval facts, and richer declaration ranges are candidates for later queries. Persisted authority snapshots and comparisons over authenticated evidence remain proposed. The agent-facing schema stays separate from provider-specific tool formats.
 
 The full verification report design includes a schema version, source and analysis identities, entry scope, loaded files, phase status, property evidence, and an overall verdict. Report each property with its scope, status, and supporting or blocking evidence. Use `passed`, `failed`, `incomplete` and `notRun` for both phases and properties. One phase can establish several properties with different statuses.
 
@@ -421,6 +422,27 @@ A later cache may reuse lexical/parse results and module summaries keyed by sour
 Use an immutable in-process Go representation, deterministic projections and a single-shot CLI to validate the design. Defer a daemon, incremental invalidation, external graph storage, a serialized intermediate representation, comprehensive LSP or MCP integrations, and a public SDK. Revisit latency investments when representative measurements or TTCS show that repeated analysis, startup or serialization matters. A later editor or agent adapter should use the same fact and coverage contracts.
 
 ## Authority snapshots and diffs
+
+### Source authority comparison v1
+
+```sh
+splash authority diff base/app/main.splash head/app/main.splash --json
+```
+
+Use corresponding entries in two source trees. One compiler process captures and verifies each entry and its imports. The report embeds v1 `base` and `head` check reports with capture identity, verdict, effect coverage, and diagnostics. The command returns exit 1 and `comparison: null` when either source cannot be verified or comparison itself fails. A successfully evaluated report exits 0, including when differences or indeterminate signature details are present. Usage errors go to stderr.
+
+Functions match by capture-relative file locator, declared module name and function name. The report treats a move or rename as individual removal and addition. Changes are ordered by locator, module and name.
+
+| Property | Comparison scope |
+| --- | --- |
+| `declaredAuthority` | Atomic declared labels on every checked function in the closure, including private functions. Equivalent label spellings such as `DB` and `DB.read, DB.write` compare equal. Each row distinguishes added, removed and modified declarations, even when a declaration has zero grants. Added and removed label lists measure grant changes, and the source points refer to the corresponding captures. `Agent` is a structural entry marker included in the declared labels. |
+| `publicSignatures` | Exposed functions, or all functions when the owner has no nonempty `expose` list. Compare checked parameter and return type identities, parameter names and order, default presence, variadic mode and async status. A change in nominal type owner is observable even when display names match. Generic signatures and unavailable checked identities leave signature evidence incomplete. |
+
+Each property reports `unchanged`, `changed`, or `indeterminate`. Public membership changes are established from the exposed declaration sets. A known change keeps the status `changed` when another signature is indeterminate. In that case `complete` is false and the report includes the uncertain entries and reasons alongside the known changes. Function body behavior, default expressions, type declaration layouts, inferred effects, approval paths, tool schemas and agent reachability require separate evidence.
+
+This command supports source review. A release gate still needs protected base and head acquisition, a pinned verifier, coverage of the properties it enforces, and linkage to the released artifact.
+
+### Further authority snapshot work
 
 Current graph facts can seed a labeled observational report of declarations, modeled direct reachability changes, tool declarations/schemas, and approval markers/caller sets. A verified diff requires the release gates in the [engineering plan](engineering-plan.md) and two comparable passing, complete analyses with matched rules and scope. Reject stale, failed, incompatible or missing result inputs. Compare canonical sets and policy-relevant relationships before choosing a shortest witness. Treat authority added to an existing root, newly reachable privileged functions, added tool membership, tool contract expansion and gate weakening as distinct events. A gate marker diff establishes a declaration change. Proving all paths remain gated requires a policy-specific path property, plus runtime request binding for an approval claim. Track removals and mixed changes, and flag renames or unknowns for review.
 

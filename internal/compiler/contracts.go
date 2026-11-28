@@ -8,6 +8,7 @@ import (
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
 	"gosplash.dev/splash/internal/token"
+	"gosplash.dev/splash/internal/typechecker"
 	"gosplash.dev/splash/internal/types"
 )
 
@@ -62,10 +63,7 @@ func (a *analysis) projectFunctionContract(selected selectedFunction) (FunctionC
 	owner, summary := selected.owner, selected.summary
 	declaration := summary.Function
 	symbol := functionSymbol(owner.File.Module, declaration)
-	fnType := owner.GenericSignatures[declaration]
-	if fnType == nil {
-		fnType, _ = owner.Types[declaration].(*types.FunctionType)
-	}
+	fnType := checkedFunctionType(owner, declaration)
 	if fnType == nil {
 		return FunctionContract{}, fmt.Errorf("missing checked signature for %q", symbol)
 	}
@@ -87,15 +85,29 @@ func functionSymbol(module *ast.ModuleDecl, declaration *ast.FunctionDecl) strin
 	return module.Name + "." + declaration.Name
 }
 
+func checkedFunctionType(owner *typechecker.TypedFile, decl *ast.FunctionDecl) *types.FunctionType {
+	if generic := owner.GenericSignatures[decl]; generic != nil {
+		return generic
+	}
+	fnType, _ := owner.Types[decl].(*types.FunctionType)
+	return fnType
+}
+
 func (a *analysis) functionSignature(fnType *types.FunctionType, declaration *ast.FunctionDecl) Signature {
+	signature := a.functionSignatureShape(fnType, declaration)
+	signature.setDisplayTypes(fnType)
+	return signature
+}
+
+func (a *analysis) functionSignatureShape(fnType *types.FunctionType, declaration *ast.FunctionDecl) Signature {
 	signature := Signature{
-		Parameters: make([]Parameter, 0, len(declaration.Params)),
-		ReturnType: fnType.Return.TypeName(), ReturnTypeIdentity: a.signatureTypeIdentity(declaration.ReturnType, fnType.Return),
-		Async: declaration.IsAsync,
+		Parameters:         make([]Parameter, 0, len(declaration.Params)),
+		ReturnTypeIdentity: a.signatureTypeIdentity(declaration.ReturnType, fnType.Return),
+		Async:              declaration.IsAsync,
 	}
 	for i, param := range declaration.Params {
 		signature.Parameters = append(signature.Parameters, Parameter{
-			Name: param.Name, Type: fnType.Params[i].TypeName(), TypeIdentity: a.signatureTypeIdentity(param.Type, fnType.Params[i]),
+			Name: param.Name, TypeIdentity: a.signatureTypeIdentity(param.Type, fnType.Params[i]),
 			HasDefault: param.Default != nil, Variadic: param.Variadic,
 		})
 	}
@@ -105,4 +117,11 @@ func (a *analysis) functionSignature(fnType *types.FunctionType, declaration *as
 		})
 	}
 	return signature
+}
+
+func (s *Signature) setDisplayTypes(fnType *types.FunctionType) {
+	s.ReturnType = fnType.Return.TypeName()
+	for i := range s.Parameters {
+		s.Parameters[i].Type = fnType.Params[i].TypeName()
+	}
 }

@@ -21,7 +21,7 @@ Splash is an early statically typed language for backend and control-plane softw
 | Function contract inspection | `splash inspect <file.splash> <module.function> --json` reports a signature, declared authority, inferred effects, and effect coverage. [Inspect JSON v1](docs/design/semantic-compiler-interface.md#inspect-json-v1) |
 | Module summaries | `splash summary <file.splash> --json` gives a bounded view of exported declarations and checked function contracts. [Compact context](docs/design/semantic-compiler-interface.md#compact-semantic-context) |
 | Dependency queries | `splash callers` and `splash callees` report resolved relationships, call-site witnesses, and scoped coverage. Use `--compact` for a bounded view. [Dependency JSON v1](docs/design/semantic-compiler-interface.md#dependency-json-v1) · [Compact context](docs/design/semantic-compiler-interface.md#compact-semantic-context) |
-| Authority comparisons | Proposed. Graph, effect, and approval inspection use detached projections of the analyzed program. |
+| Authority comparisons | `splash authority diff <base.splash> <head.splash> --json` compares declared authority and public function signatures across verified captures. [Source comparison v1](docs/design/semantic-compiler-interface.md#source-authority-comparison-v1) |
 | TTCS and cost evaluation | Experimental methodology. Comparative authoring results are pending. |
 
 See the [repository assessment](docs/design/repository-assessment.md) for scoped evidence and the [status vocabulary](docs/design/product-and-roadmap.md#public-implementation-status) for how to read these labels.
