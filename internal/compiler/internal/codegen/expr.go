@@ -156,7 +156,8 @@ func (e *Emitter) zeroValueFor(t ast.TypeExpr) string {
 		case "List":
 			return "nil"
 		default:
-			return "*new(" + e.emitTypeName(typ) + ")"
+			// Index a zero-initialized array to avoid shadowable Go names.
+			return "[1]" + e.emitTypeName(typ) + "{}[0]"
 		}
 	case *ast.OptionalTypeExpr:
 		return "nil"

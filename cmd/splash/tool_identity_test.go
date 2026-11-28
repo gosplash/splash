@@ -122,7 +122,7 @@ enum String {
 	entry := writeSplashFile(t, dir, "main.splash", `module main
 use calendar as cal
 tool fn choose(value: cal.String) -> Int { return 1 }
-approve fn confirm(value: cal.String) -> cal.String { return value }
+approve fn confirm(new: cal.String) -> cal.String { return new }
 fn main() {}
 `)
 	output, err := exec.Command(binary, "emit", entry).CombinedOutput()
