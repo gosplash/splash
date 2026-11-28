@@ -268,8 +268,7 @@ func (p *Parser) parseTopLevelDecl() ast.Decl {
 	// collect leading annotations
 	var annots []ast.Annotation
 	for p.check(token.AT) {
-		a := p.parseAnnotation()
-		annots = append(annots, a)
+		annots = append(annots, p.parseDeclarationAnnotation())
 	}
 
 	switch p.current().Kind {
@@ -331,6 +330,14 @@ func (p *Parser) parseAnnotation() ast.Annotation {
 	}
 }
 
+func (p *Parser) parseDeclarationAnnotation() ast.Annotation {
+	annotation := p.parseAnnotation()
+	if annotation.Kind == ast.AnnotContainment {
+		p.errorf(annotation.Pos, "@containment only applies to a module declaration")
+	}
+	return annotation
+}
+
 func (p *Parser) parseAnnotationArgs(kind ast.AnnotationKind) map[string]ast.Expr {
 	args := map[string]ast.Expr{}
 	if p.check(token.LPAREN) {
@@ -344,6 +351,11 @@ func (p *Parser) parseAnnotationArgs(kind ast.AnnotationKind) map[string]ast.Exp
 					p.errorf(keyTok.Pos, "unknown @sandbox argument %q", keyTok.Literal)
 				} else if _, duplicate := args[keyTok.Literal]; duplicate {
 					p.errorf(keyTok.Pos, "duplicate @sandbox argument %q", keyTok.Literal)
+				}
+			}
+			if kind == ast.AnnotContainment {
+				if _, duplicate := args[keyTok.Literal]; duplicate {
+					p.errorf(keyTok.Pos, "duplicate @containment argument %q", keyTok.Literal)
 				}
 			}
 			args[keyTok.Literal] = val
@@ -653,7 +665,7 @@ func (p *Parser) parseTypeDecl(annots []ast.Annotation) *ast.TypeDecl {
 		// collect field annotations
 		var fieldAnnots []ast.Annotation
 		for p.check(token.AT) {
-			fieldAnnots = append(fieldAnnots, p.parseAnnotation())
+			fieldAnnots = append(fieldAnnots, p.parseDeclarationAnnotation())
 		}
 
 		fieldPos := p.current().Pos

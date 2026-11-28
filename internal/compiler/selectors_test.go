@@ -4,7 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"gosplash.dev/splash/internal/effects"
 )
 
 func TestSharedSelectorsAreLazy(t *testing.T) {
@@ -66,5 +69,34 @@ func TestSharedSelectorsAreLazy(t *testing.T) {
 	d, err := p.Dependencies("shared.unique", Callees, 1)
 	if err != nil || d.Root.Symbol != "shared.unique" || p.snapshot.selectors != selectors {
 		t.Fatalf("dependency query failed to reuse the selector index: %+v, %v", d, err)
+	}
+}
+
+func TestSelectorsAssociateEffectsByDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.splash")
+	library := "module library\nfn scoped() needs Net {}\n"
+	app := "module app\nuse library\nfn main() {}\n"
+	for path, source := range map[string]string{path: app, filepath.Join(dir, "library.splash"): library} {
+		if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, diagnostics, err := Analyze(path)
+	if err != nil {
+		t.Fatalf("analyze: %v, %v", err, diagnostics)
+	}
+	slices.Reverse(p.snapshot.effects)
+	for _, tc := range []struct {
+		query, symbol string
+		authority     effects.EffectSet
+	}{
+		{"main", "app.main", effects.None},
+		{"library.scoped", "library.scoped", effects.Net},
+	} {
+		contract, err := p.InspectFunction(tc.query)
+		if err != nil || contract.Symbol != tc.symbol || contract.Declared != tc.authority {
+			t.Errorf("inspect %q: got %+v, %v", tc.query, contract, err)
+		}
 	}
 }

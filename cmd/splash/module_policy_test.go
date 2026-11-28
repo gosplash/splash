@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -34,6 +35,68 @@ agent fn status() -> Int { return 1 + %s.count() }
 	if err == nil || !strings.Contains(diagnostic, restricted+":4:") ||
 		!strings.Contains(diagnostic, `module has @containment(agent: "none")`) {
 		t.Fatalf("want containment failure attributed to imported archive.count, got %v: %s", err, diagnostic)
+	}
+}
+
+func TestContainmentAnnotationsMustBeValid(t *testing.T) {
+	binary := buildSplashCLI(t)
+	for _, tc := range []struct {
+		name, annotation, diagnostic string
+	}{
+		{"unknown mode", `@containment(agent: "approved_ony")`, "unknown @containment agent policy"},
+		{"bare", "@containment", "requires one string argument"},
+		{"empty", "@containment()", "requires one string argument"},
+		{"non-string", "@containment(agent: true)", "requires one string argument"},
+		{"unknown argument", `@containment(mode: "none")`, "requires one string argument"},
+		{"extra argument", `@containment(agent: "none", other: "none")`, "requires one string argument"},
+		{"duplicate argument", `@containment(agent: "none", agent: "read_only")`, "duplicate @containment argument"},
+		{"duplicate annotation", "@containment(agent: \"none\")\n@containment(agent: \"read_only\")", "duplicate @containment annotation"},
+		{"none", `@containment(agent: "none")`, ""},
+		{"read only", `@containment(agent: "read_only")`, ""},
+		{"approved only", `@containment(agent: "approved_only")`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeSplashFile(t, t.TempDir(), "app.splash", tc.annotation+"\nmodule app\nfn main() {}")
+			if tc.diagnostic == "" {
+				readCheckJSON(t, binary, path, "verified")
+				return
+			}
+			findings, _ := readCheckJSON(t, binary, path, "rejected")
+			if len(findings) != 1 || !strings.Contains(findings[0].Message, tc.diagnostic) {
+				t.Fatalf("want %q, got %+v", tc.diagnostic, findings)
+			}
+			if findings[0].Source == nil || findings[0].Source.Start.File != path {
+				t.Fatalf("diagnostic should point to the invalid annotation: %+v", findings[0])
+			}
+		})
+	}
+}
+
+func TestContainmentAnnotationsMustBeOnModule(t *testing.T) {
+	binary := buildSplashCLI(t)
+	for _, source := range []string{
+		"module app\n@containment(agent: \"none\")\nfn main() {}",
+		"module app\ntype Record { @containment(agent: \"none\") value: Int }",
+	} {
+		path := writeSplashFile(t, t.TempDir(), "app.splash", source)
+		findings, _ := readCheckJSON(t, binary, path, "rejected")
+		if len(findings) != 1 || !strings.Contains(findings[0].Message, "only applies to a module declaration") {
+			t.Fatalf("want module-only diagnostic, got %+v", findings)
+		}
+	}
+}
+
+func TestMalformedImportedContainmentBlocksEmission(t *testing.T) {
+	binary := buildSplashCLI(t)
+	dir := t.TempDir()
+	writeSplashFile(t, dir, "library.splash", `@containment(agent: "unknown")
+module library
+fn unused() {}
+`)
+	path := writeSplashFile(t, dir, "app.splash", "module app\nuse library\nfn main() {}")
+	command := exec.Command(binary, "emit", path)
+	if output, err := command.Output(); err == nil || len(output) != 0 {
+		t.Fatalf("emit should fail without generating Go source, got %q, %v", output, err)
 	}
 }
 

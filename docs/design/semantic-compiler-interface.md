@@ -124,7 +124,7 @@ Policy producers also attach a stable `policyRuleId` to `POLICY_VIOLATION` and `
 | --- | --- |
 | Approval | `approval.call_context`, `approval.required` |
 | Redline | `redline.agent_reachable` |
-| Containment | `containment.none`, `containment.read_only`, `containment.approved_only` |
+| Containment | `containment.invalid_annotation`, `containment.none`, `containment.read_only`, `containment.approved_only` |
 | Tool data classification | `tool.classified_return`, `tool.return_coverage` |
 | Sandbox | `sandbox.duplicate`, `sandbox.invalid_effect_list`, `sandbox.denied_effect`, `sandbox.effect_not_allowed` |
 | Budget | `budget.max_cost_literal`, `budget.max_calls_literal` |

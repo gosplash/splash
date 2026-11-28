@@ -49,18 +49,6 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 	agentReachable := g.Reachable(roots)
 	agentPaths := g.ShortestPaths(roots)
 	var agentCallees map[string]bool
-	if slices.ContainsFunc(modules, func(module Module) bool {
-		return moduleContainment(module.File) == containmentApprovedOnly
-	}) {
-		agentCallees = make(map[string]bool)
-		for caller := range agentReachable {
-			if node := g.Node(caller); node != nil {
-				for _, callee := range node.Callees() {
-					agentCallees[callee] = true
-				}
-			}
-		}
-	}
 
 	gated := g.ApprovalFunctions()
 	diags = append(diags, c.checkApprovalCallContexts(g, gated)...)
@@ -77,7 +65,22 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 		file := module.File
 		diags = append(diags, c.checkRedline(file, g, agentPaths)...)
 		diags = append(diags, c.checkApprove(file, g, agentReachable)...)
-		diags = append(diags, c.checkContainment(file, g, agentReachable, agentCallees)...)
+		policy, invalid := moduleContainment(file)
+		if invalid != nil {
+			diags = append(diags, *invalid)
+		} else if policy != containmentUnrestricted {
+			if policy == containmentApprovedOnly && agentCallees == nil {
+				agentCallees = make(map[string]bool)
+				for caller := range agentReachable {
+					if node := g.Node(caller); node != nil {
+						for _, callee := range node.Callees() {
+							agentCallees[callee] = true
+						}
+					}
+				}
+			}
+			diags = append(diags, c.checkContainment(policy, file, g, agentReachable, agentCallees)...)
+		}
 		diags = append(diags, c.checkSandbox(file, g, sandboxEffects)...)
 		diags = append(diags, c.checkBudget(file)...)
 	}
@@ -335,42 +338,42 @@ const (
 	containmentUnrestricted                          // no containment annotation
 )
 
-// moduleContainment reads the @containment annotation from the module declaration.
-func moduleContainment(file *ast.File) containmentPolicy {
+// moduleContainment distinguishes an absent annotation from an invalid policy.
+func moduleContainment(file *ast.File) (containmentPolicy, *diagnostic.Diagnostic) {
+	policy := containmentUnrestricted
 	if file.Module == nil {
-		return containmentUnrestricted
+		return policy, nil
 	}
 	for _, ann := range file.Module.Annotations {
 		if ann.Kind != ast.AnnotContainment {
 			continue
 		}
-		agentExpr, ok := ann.Args["agent"]
-		if !ok {
-			continue
+		if policy != containmentUnrestricted {
+			diag := policyErrorf("containment.invalid_annotation", ann.Pos, "duplicate @containment annotation")
+			return policy, &diag
 		}
-		lit, ok := agentExpr.(*ast.StringLiteral)
-		if !ok {
-			continue
+		agent, ok := ann.Args["agent"].(*ast.StringLiteral)
+		if len(ann.Args) != 1 || !ok {
+			diag := policyErrorf("containment.invalid_annotation", ann.Pos, "@containment requires one string argument named agent")
+			return policy, &diag
 		}
-		switch lit.Value {
+		switch agent.Value {
 		case "none":
-			return containmentNone
+			policy = containmentNone
 		case "read_only":
-			return containmentReadOnly
+			policy = containmentReadOnly
 		case "approved_only":
-			return containmentApprovedOnly
+			policy = containmentApprovedOnly
+		default:
+			diag := policyErrorf("containment.invalid_annotation", agent.Pos(), "unknown @containment agent policy %q", agent.Value)
+			return policy, &diag
 		}
 	}
-	return containmentUnrestricted
+	return policy, nil
 }
 
-// checkContainment enforces the module-level @containment policy against the agent-reachable set.
-func (c *Checker) checkContainment(file *ast.File, g *callgraph.Graph, agentReachable, agentCallees map[string]bool) []diagnostic.Diagnostic {
-	policy := moduleContainment(file)
-	if policy == containmentUnrestricted {
-		return nil
-	}
-
+// checkContainment enforces the validated module policy against the agent-reachable set.
+func (c *Checker) checkContainment(policy containmentPolicy, file *ast.File, g *callgraph.Graph, agentReachable, agentCallees map[string]bool) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 
 	for _, decl := range file.Declarations {

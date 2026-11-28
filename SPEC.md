@@ -463,7 +463,7 @@ Module-level annotation. Applied to the module declaration:
 module billing
 ```
 
-Three policies:
+A module may declare containment once. The annotation requires exactly one argument, `agent`, whose value must be one of the three string literals below. The compiler rejects malformed, repeated, or misplaced containment annotations.
 
 | Value           | Meaning                                                    |
 |-----------------|------------------------------------------------------------|
