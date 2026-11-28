@@ -109,6 +109,14 @@ func runCheckJSON(path string, output io.Writer) (bool, error) {
 		report.Verdict = &verdict
 	}
 
+	report.Diagnostics = appendCheckDiagnostics(report.Diagnostics, diagnostics)
+	if err := json.NewEncoder(output).Encode(report); err != nil {
+		return false, fmt.Errorf("write check report: %w", err)
+	}
+	return verdict == "verified", nil
+}
+
+func appendCheckDiagnostics(output []checkDiagnostic, diagnostics []diagnostic.Diagnostic) []checkDiagnostic {
 	// Some safety checks enumerate reachable functions through maps.
 	// Canonicalize output order independently of the text renderer.
 	slices.SortStableFunc(diagnostics, func(a, b diagnostic.Diagnostic) int {
@@ -116,12 +124,9 @@ func runCheckJSON(path string, output io.Writer) (bool, error) {
 			cmp.Compare(a.Pos.Column, b.Pos.Column), cmp.Compare(a.Code, b.Code), cmp.Compare(a.Message, b.Message))
 	})
 	for _, diag := range diagnostics {
-		report.Diagnostics = append(report.Diagnostics, projectCheckDiagnostic(diag))
+		output = append(output, projectCheckDiagnostic(diag))
 	}
-	if err := json.NewEncoder(output).Encode(report); err != nil {
-		return false, fmt.Errorf("write check report: %w", err)
-	}
-	return verdict == "verified", nil
+	return output
 }
 
 func checkFailure(err error) checkDiagnostic {

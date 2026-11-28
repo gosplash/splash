@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func buildSplashCLI(t *testing.T) string {
+func buildSplashCLI(t testing.TB) string {
 	t.Helper()
 	name := "splash"
 	if runtime.GOOS == "windows" {

@@ -18,7 +18,10 @@ import (
 type TypedFile struct {
 	File *ast.File
 	// Types retains expression, annotation, and declaration types from checking this file.
-	Types              map[ast.Node]types.Type
+	Types map[ast.Node]types.Type
+	// GenericSignatures retains declaration-scope types with named parameters.
+	// Call checking uses Types, where uninstantiated parameters are Unknown.
+	GenericSignatures  map[*ast.FunctionDecl]*types.FunctionType
 	FunctionReferences map[ast.Expr]*ast.FunctionDecl
 	LocalReferences    map[*ast.Ident]LocalBinding
 	PrintlnCalls       map[*ast.CallExpr]bool
@@ -157,7 +160,13 @@ func (tc *TypeChecker) pass1(file *ast.File, typed *TypedFile) {
 				tc.errorf(d.Position, "duplicate function %q in module", d.Name)
 			}
 			functionNames[d.Name] = true
-			ft := tc.buildFunctionType(d)
+			ft := tc.buildFunctionType(d, false)
+			if len(d.TypeParams) > 0 {
+				if typed.GenericSignatures == nil {
+					typed.GenericSignatures = make(map[*ast.FunctionDecl]*types.FunctionType)
+				}
+				typed.GenericSignatures[d] = tc.buildFunctionType(d, true)
+			}
 			tc.globals.symbols[d.Name] = binding{typ: ft, function: d}
 			typed.Types[d] = ft
 		}
@@ -312,7 +321,7 @@ func (tc *TypeChecker) buildNamedType(d *ast.TypeDecl) *types.NamedType {
 	return nt
 }
 
-func (tc *TypeChecker) buildFunctionType(d *ast.FunctionDecl) *types.FunctionType {
+func (tc *TypeChecker) buildFunctionType(d *ast.FunctionDecl, retainTypeNames bool) *types.FunctionType {
 	var typeParams map[string]types.Type
 	if len(d.TypeParams) > 0 {
 		// Call signatures are not instantiated yet. Unresolved type parameters
@@ -320,6 +329,10 @@ func (tc *TypeChecker) buildFunctionType(d *ast.FunctionDecl) *types.FunctionTyp
 		typeParams = make(map[string]types.Type, len(d.TypeParams))
 		for _, param := range d.TypeParams {
 			typeParams[param.Name] = types.Unknown
+			if retainTypeNames {
+				// Inspection reports bounds separately from type references.
+				typeParams[param.Name] = &types.TypeParamType{Name: param.Name}
+			}
 		}
 	}
 	ft := &types.FunctionType{}
