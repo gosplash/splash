@@ -24,6 +24,17 @@ func RetainsTypeArguments(expr ast.TypeExpr, checked Type) bool {
 	case *ast.OptionalTypeExpr:
 		optional, ok := checked.(*OptionalType)
 		return ok && optional != nil && RetainsTypeArguments(expr.Inner, optional.Inner)
+	case *ast.FnTypeExpr:
+		function, ok := checked.(*FunctionType)
+		if !ok || function == nil || len(function.Params) != len(expr.Params) {
+			return false
+		}
+		for i, param := range expr.Params {
+			if !RetainsTypeArguments(param, function.Params[i]) {
+				return false
+			}
+		}
+		return RetainsTypeArguments(expr.ReturnType, function.Return)
 	default:
 		return true
 	}

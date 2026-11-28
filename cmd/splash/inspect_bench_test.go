@@ -41,6 +41,19 @@ func BenchmarkInspect(b *testing.B) {
 			benchmarkInspectLookup(b, chain, fmt.Sprintf("bench.f%d", n-1))
 		})
 	}
+	b.Run("FirstLookupLastOf2000", func(b *testing.B) {
+		path := writeTempSplash(b, genCheckSrc(2000))
+		b.ReportAllocs()
+		for b.Loop() {
+			b.StopTimer()
+			program := analyzeDependencyBenchmark(b, path)
+			b.StartTimer()
+			contract, err := program.InspectFunction("bench.f1999")
+			if err != nil || contract.Symbol != "bench.f1999" {
+				b.Fatalf("first inspect: %v, contract %+v", err, contract)
+			}
+		}
+	})
 	b.Run("JSONEncodeInvoice", func(b *testing.B) {
 		var output bytes.Buffer
 		encoder := json.NewEncoder(&output)
@@ -84,6 +97,9 @@ func benchmarkInspectLookup(b *testing.B, path, query string) {
 	program, diagnostics, err := compiler.Analyze(path)
 	if err != nil {
 		b.Fatalf("analyze: %v, diagnostics %v", err, diagnostics)
+	}
+	if _, err := program.InspectFunction(query); err != nil {
+		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	for b.Loop() {

@@ -22,17 +22,22 @@ type AnalyzedProgram struct {
 	snapshot *analysis
 }
 
-// Analysis facts are immutable once returned by Analyze. The dependency
-// index is memoized on demand without changing the captured facts.
+// Analysis facts are immutable once returned by Analyze. Query indexes are
+// memoized on demand without changing the captured facts.
 type analysis struct {
-	sources map[string]string
-	modules []*typechecker.TypedFile
-	merged  *ast.File
-	graph   *callgraph.Graph
-	effects []*effects.Summary
+	entryPath string
+	sources   map[string]string
+	modules   []*typechecker.TypedFile
+	merged    *ast.File
+	graph     *callgraph.Graph
+	effects   []*effects.Summary
 
+	selectorOnce   sync.Once
+	selectors      *selectorIndex
 	dependencyOnce sync.Once
 	dependencies   *dependencyIndex
+	identityOnce   sync.Once
+	identity       AnalysisIdentity
 
 	functionReferences map[ast.Expr]*ast.FunctionDecl
 	printlnCalls       map[*ast.CallExpr]bool
@@ -41,7 +46,7 @@ type analysis struct {
 
 // Analyze captures the entry and its imports and resolves their semantic facts.
 func Analyze(path string) (*AnalyzedProgram, []diagnostic.Diagnostic, error) {
-	program := &analysis{sources: make(map[string]string)}
+	program := &analysis{entryPath: path, sources: make(map[string]string)}
 	read := func(path string) ([]byte, error) {
 		if source, ok := program.sources[path]; ok {
 			return []byte(source), nil

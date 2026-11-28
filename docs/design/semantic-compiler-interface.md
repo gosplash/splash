@@ -2,7 +2,7 @@
 
 Central compiler architecture proposal. Splash's language defines types, contracts and effects. The semantic compiler resolves those facts and exposes them to humans and agents. The trust architecture governs which verified facts can authorize artifact production and release. The [repository assessment](repository-assessment.md) describes the current implementation. This proposal extends the [April analyzed-program design](../superpowers/specs/2026-04-07-splash-language-positioning.md#L294).
 
-The [kickoff decision](../decisions/2026-11-26-analyzed-program-and-verification.md) adopts this direction. The implemented compiler retains captured source and typed modules, resolves named calls, and requires an in-process `VerifiedProgram` after checking required source policies. Go emission, tool export, and VM lowering consume this handle. The `check` command now has a [versioned JSON report](#check-json-v1). Identities stable across revisions and persisted artifact provenance remain proposed. [Verification implementation](../../internal/compiler/verification.go)
+The [kickoff decision](../decisions/2026-11-26-analyzed-program-and-verification.md) adopts this direction. The implemented compiler retains captured source and typed modules, resolves named calls, and requires an in-process `VerifiedProgram` after checking required source policies. Go emission, tool export, and VM lowering consume this handle. The `check` command now has a [versioned JSON report](#check-json-v1). Inspect and dependency reports include versioned capture identities. Persisted artifact provenance remains proposed. [Verification implementation](../../internal/compiler/verification.go)
 
 ## The analyzed program
 
@@ -98,7 +98,7 @@ A full result applies to the selected entry plus all reachable imports resolved 
 
 ### Check JSON v1
 
-`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, `effectCoverage`, and a `diagnostics` array. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its success and diagnostic messages, with long diagnostic paths abbreviated as described below.
+`splash check app/main.splash --json` runs the same source analysis and policy checks as text mode. It writes one JSON object to stdout with `schemaVersion: 1`, `entryPath`, `verdict`, `effectCoverage`, and a `diagnostics` array. An `identity` object is present when an analyzed snapshot is available, with the same meaning as on inspect reports. A completed check returns exit status 0 for `verified` and 1 otherwise. Normal process signal behavior applies, including a possible SIGPIPE if stdout is closed. Text mode keeps its success and diagnostic messages, with long diagnostic paths abbreviated as described below.
 
 The verdict is `rejected` when the current compiler identifies a language or policy error. It is `indeterminate` when the verifier reports missing required policy coverage without an established violation. If both are present, the verdict is `rejected` and the array includes both findings. Failure to read the entry source has a null verdict and a `SOURCE_READ_ERROR` diagnostic. Import resolution errors reported by the front end are source diagnostics under the current rules. CLI usage errors and errors returned by the JSON encoder are reported on stderr.
 
@@ -132,7 +132,7 @@ Policy producers also attach a stable `policyRuleId` to `POLICY_VIOLATION` and `
 
 Path diagnostics report `witnessLength` and `witnessTruncated`. An effect witness counts call or operation steps and shows at most eight, keeping the first seven calls and the origin operation when truncated. A redline path counts function names, including both endpoints, and appears in the message. When truncated, it shows the agent root and the seven names nearest the violation. Messages identify how many entries were omitted. Every individual finding still appears in the report.
 
-A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. The report currently omits phase-level coverage, snapshot identities, causal diagnostic links, and repair suggestions. Clients should tolerate additive fields and codes within v1.
+A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. The report currently omits phase-level coverage, causal diagnostic links, and repair suggestions. Clients should tolerate additive fields and codes within v1.
 
 The policy scaling benchmarks cover a rejected chain and overlapping sandbox, agent, and approval closures. The chain includes analysis, verification, and JSON encoding, with the writer counting bytes only. The overlapping-roots benchmark reuses captured analysis and times verification. In the `7b757c3` baseline profile on Apple M5 and Go 1.26.3, sandbox checks accounted for 1.23 s of 1.45 s sampled within verification and 82.13% of total sampled allocation space. The sandbox traversal still visits each root's reachable set independently. The profiled harness was only the overlapping-policy portion of `cmd/splash/policy_bench_test.go` copied onto a temporary `7b757c3` checkout. It generates a shared diamond graph with agent roots and an approval-gated tail. Collect the profile there with `go test ./cmd/splash -run '^$' -bench '^BenchmarkOverlappingPolicyRoots$' -benchmem -benchtime 300ms -count 3 -cpuprofile /tmp/splash-policy.cpu -memprofile /tmp/splash-policy.mem -o /tmp/splash-policy.test`.
 
@@ -144,7 +144,7 @@ go test ./cmd/splash -run '^$' -bench 'Benchmark(RejectedPolicyChain|Overlapping
 
 `splash inspect app/main.splash inventory.reconcile --json` resolves one function in the analyzed entry and its loaded imports. A qualified selector uses the declared module name and the function name. A bare selector searches the entry file only, including an entry without a module declaration. Imported functions in files without a module declaration have no v1 selector. Import aliases belong to their source files. If two files with the same declared module name both define the requested function, inspection reports ambiguity. The function and its effects are linked by the resolved declaration, and the report uses the same captured snapshot and semantic facts that source verification consumes.
 
-The command writes one object to stdout with `schemaVersion: 1`, `entryPath`, `query`, `contract`, and `diagnostics`. A resolved contract exits 0. A missing or ambiguous selector returns exit 1 with a null contract and `FUNCTION_NOT_FOUND` or `FUNCTION_AMBIGUOUS` in the `inspection` phase. Front-end and input failures return exit 1 with the corresponding [check diagnostics](#check-json-v1). CLI usage errors go to stderr.
+The command writes one object to stdout with `schemaVersion: 1`, `entryPath`, `query`, `contract`, and `diagnostics`. An `identity` object is present whenever source analysis succeeds, including on a missing or ambiguous selector. A resolved contract exits 0. A missing or ambiguous selector returns exit 1 with a null contract and `FUNCTION_NOT_FOUND` or `FUNCTION_AMBIGUOUS` in the `inspection` phase. Front-end and input failures return exit 1 with the corresponding [check diagnostics](#check-json-v1). CLI usage errors go to stderr.
 
 | Contract field | Meaning |
 | --- | --- |
@@ -155,7 +155,19 @@ The command writes one object to stdout with `schemaVersion: 1`, `entryPath`, `q
 | `inferredEffects` | Known effects from modeled operations and resolved calls. |
 | `effectCoverage` | `complete` or `incomplete` under the current effect model. Incomplete coverage includes one representative gap with source provenance where available. |
 
-An empty inferred array with incomplete coverage means the analyzer established no modeled effects for the function and still has missing evidence. Inspection can report a contract even when source verification would reject the program or be indeterminate. Use `splash check --json` for a source verdict. Each inspector invocation captures its own snapshot. Persistent snapshot identities and public type identities remain proposed.
+An empty inferred array with incomplete coverage means the analyzer established no modeled effects for the function and still has missing evidence. Inspection can report a contract even when source verification would reject the program or be indeterminate. Use `splash check --json` for a source verdict. Each inspector invocation captures its own snapshot and reports its [source and analysis identities](#snapshot-and-artifact-provenance).
+
+The existing signature display fields `type` and `returnType` remain strings. A parameter may also have a `typeIdentity` and its signature may have a `returnTypeIdentity`. Both are recursive objects derived from the checked signature.
+
+| `kind` | Identity fields |
+| --- | --- |
+| `record`, `enum` | `path` is the normalized source locator of the bound declaration. `name` is its declared name. `arguments` carries any checked type arguments. |
+| `primitive` | `name` is the primitive name, including `Void`. |
+| `typeParameter` | `name` refers to the parameter scoped to this signature. The existing `typeParameters` lists its bounds. |
+| `optional`, `list`, `result` | `arguments` carries the inner type, element type, or the success and error types in that order. |
+| `function` | `parameters` carries ordered argument types and is omitted for zero arguments. `returnType` carries the result type. |
+
+Within an entry closure’s layout, a bound record or enum keeps its locator through import aliases and edits that leave its path and declared name intact. The same collision rule as the source manifest can add a reserved `./` prefix when an entry path spelled through a symlink collides with an imported path. Same-name nominal types in different files have distinct locators. Compare analysis identities when the exact snapshot matters. Unresolved types and named types without checked declaration bindings, such as injected adapter types, retain their display string. A compound identity is omitted if a component is unavailable or the frontend discarded an explicit type application.
 
 #### Inspection performance baseline
 
@@ -172,7 +184,7 @@ Measured at `97b637e` on an Apple M5 with macOS 27.0.1 (26A434) and Go 1.26.3 (a
 | Check two policy findings as text, fresh process | 2.20 ms | 2.17–2.40 ms | 512 B | — |
 | Check the same findings as JSON, fresh process | 2.22 ms | 2.19–2.49 ms | 1,721 B | — |
 
-The first launch is a separate single invocation per run and excludes the preceding Go build. Fresh-process cases include process startup, source analysis, report generation, and output capture. Process allocations reported by Go's benchmark harness describe the parent test harness. Output sizes include source paths. Lookup scans declarations and summaries, so the cost grows with the analyzed closure. The single-fixture text and JSON timings do not establish equivalent costs or isolate diagnostic rendering from process startup.
+The first launch is a separate single invocation per run and excludes the preceding Go build. Fresh-process cases include process startup, source analysis, report generation, and output capture. Process allocations reported by Go's benchmark harness describe the parent test harness. Output sizes include source paths. This historical baseline includes a scan of declarations and summaries on each lookup. The single-fixture text and JSON timings do not establish equivalent costs or isolate diagnostic rendering from process startup.
 
 ```sh
 go test ./cmd/splash -run '^$' -bench 'Benchmark(Inspect|CheckDiagnosticFeedback)$' -benchtime 300ms -count 5 -benchmem
@@ -182,7 +194,7 @@ go test ./cmd/splash -run '^$' -bench 'Benchmark(Inspect|CheckDiagnosticFeedback
 
 `splash callers <file.splash> <module.function> --json` and `splash callees <file.splash> <module.function> --json` use the same selectors as [inspect](#inspect-json-v1). The default depth is one call. Append `--depth N` for a positive maximum distance or `--transitive` to traverse the full modeled component in the chosen direction.
 
-The envelope carries `schemaVersion: 1`, `entryPath`, `query`, `direction`, `result`, and `diagnostics`. The result has these fields.
+The envelope carries `schemaVersion: 1`, `entryPath`, `query`, `direction`, `result`, and `diagnostics`. It also carries the same `identity` object as inspect when source analysis succeeds. The result has these fields.
 
 | Field | Meaning |
 | --- | --- |
@@ -195,7 +207,7 @@ Each relationship contains `function`, `via`, `distance`, and `source`. The sour
 
 Callee coverage has scope `expandedFunctions`. At a finite depth, this includes the root and discovered functions at distances strictly less than the bound. Caller coverage has scope `entryClosure`. A source gap anywhere in the closure can hide a caller, including in a function outside the known reverse graph. Modeled built-in operations and injected approval hosts are outside the relation between Splash declarations. These are static relationships within loaded source and its current analysis model. The report does not describe runtime call frequency or external callers.
 
-A returned result exits 0 even when coverage is incomplete. Source and lookup failures exit 1 and produce a null result with diagnostics. CLI usage errors go to stderr. The dependency index is built once on first use for a captured analysis. Source checking and contract inspection can run without building it.
+A returned result exits 0 even when coverage is incomplete. Source and lookup failures exit 1 and produce a null result with diagnostics. CLI usage errors go to stderr. Inspect and dependency queries share a selector index that links checked declarations to their effect summaries. Each analysis builds the selector index on its first query and the adjacency index on its first resolved dependency query. Standard source checking builds neither index.
 
 #### Dependency performance baseline
 
@@ -210,23 +222,50 @@ Measured at `c805568` on an Apple M5 with macOS 27.0.1 (26A434) and Go 1.26.3 (a
 | Encode prepared 80-relationship report | 38.88 µs | 38.76–39.00 µs | 51,933 B | 159 / 1 |
 | Fresh CLI process with a warmed binary, four relationships | 2.39 ms | 2.39–2.53 ms | 3,337 B | — |
 
-The query benchmarks include a selector scan over eligible declarations and detached result construction. Traversal visits only adjacency lists within the requested scope. The first-use measurement includes building the index and excludes source analysis. It exceeds the provisional 100 µs target on this fixture. The JSON benchmark starts with a prepared report and reuses the buffer. Output sizes include source paths and vary with their lengths. The compact witness tree emits one relationship per reached declaration. Wide results can still consume substantial context even with a depth bound. The CLI case includes a fresh analysis, index construction, traversal and output capture. Allocations for that case would reflect the parent harness and are omitted.
+This historical baseline includes a selector scan over eligible declarations and detached result construction. Traversal visits only adjacency lists within the requested scope. The first-use measurement includes building the index and excludes source analysis. It exceeds the provisional 100 µs target on this fixture. The JSON benchmark starts with a prepared report and reuses the buffer. Output sizes include source paths and vary with their lengths. The compact witness tree emits one relationship per reached declaration. Wide results can still consume substantial context even with a depth bound. The CLI case includes a fresh analysis, index construction, traversal and output capture. Allocations for that case would reflect the parent harness and are omitted.
 
 ```sh
 go test ./cmd/splash -run '^$' -bench '^BenchmarkDependencies$' -benchtime 120ms -count 3 -benchmem
 ```
 
+#### Shared selector index measurements
+
+Medians of five runs on Apple M5, macOS 27.0.1 (26A434), Go 1.26.3 arm64. The baseline is `7b757c3` with the same inspect benchmark harness. Warm queries use a prebuilt index and include detached result construction. First-query measurements exclude analysis. Inspect lookup includes structured type projection after the change. These measurements exclude CLI encoding and capture digest calculation.
+
+| Workload | Before | After | Bytes and allocations per operation, before → after |
+| --- | ---: | ---: | ---: |
+| Inspect last of 2,000, warm | 5.062 µs | 82.01 ns | 16 / 1 → 16 / 1 |
+| Inspect last of 10,000, warm | 33.612 µs | 82.75 ns | 16 / 1 → 16 / 1 |
+| Inspect invoice, warm | 79.28 ns | 429.2 ns | 152 / 2 → 472 / 2 |
+| Depth-four callers, 2,000, warm | 2.917 µs | 548.4 ns | 1,816 / 15 → 1,816 / 15 |
+| Depth-four callers, 10,000, warm | 28.294 µs | 519.4 ns | 1,888 / 15 → 1,888 / 15 |
+| Transitive callers, 40 modules, warm | 10.353 µs | 10.523 µs | 67,752 / 185 → 67,752 / 185 |
+| First inspect, 2,000 | 7.944 µs | 37.802 µs | 16 / 1 → 164,144 / 13 |
+| First depth-four callers, 2,000 | 112.891 µs | 155.600 µs | 288,002 / 2,028 → 452,130 / 2,040 |
+| Standard check pipeline, 100 | 0.266 ms | 0.226 ms | 762,646 / 3,107 → 762,725 / 3,107 |
+| Standard check pipeline, 500 | 1.323 ms | 1.241 ms | 4,433,776 / 14,398 → 4,433,849 / 14,398 |
+| Standard check pipeline, 2,000 | 5.807 ms | 5.824 ms | 19,824,143 / 56,620 → 19,824,238 / 56,620 |
+
+Warm selection uses keyed lookups and dependency traversal remains scoped to the reached adjacency lists. The larger first-query timings include selector construction. The standard check measurements have the same median allocation counts and show no material timing regression on these fixtures.
+
+```sh
+go test ./cmd/splash -run '^$' -bench '^Benchmark(Inspect|Dependencies)$/(^Lookup|^Chain[[:digit:]]+Depth|^MultiModuleFanIn)' -benchtime 150ms -count 5 -benchmem
+go test ./cmd/splash -run '^$' -bench '^Benchmark(Inspect|Dependencies)$/First' -benchtime 50x -count 5 -benchmem
+go test ./cmd/splash -run '^$' -bench '^BenchmarkCheck_Pipeline_' -benchtime 200ms -count 5 -benchmem
+```
+
+For the pre-index baseline, copy the newer first-inspect benchmark case onto a temporary checkout at `7b757c3`. This isolates the harness difference from the compiler change. These results were recorded before restacking the compiler review fixes.
+
 ## Snapshot and artifact provenance
 
-| Identity | Inputs it binds |
-| --- | --- |
-| Source | Canonical module and file locators and hashes of the exact byte contents captured for the source closure. |
-| Analysis | Source identity, entry scope, resolver results, compiler build, ruleset, configuration, and trusted dependency and boundary inputs. |
-| Artifact | Analysis identity, artifact kind and digest, backend identity and applicable build inputs. A native artifact also records generated source identity, Go toolchain, target, flags and declared native dependencies. |
+Check, inspect, and dependency reports expose `identity.sourceId` and `identity.analysisId` for one successful capture. The analysis computes them lazily from captured data.
 
-Derive identities from canonical manifests with explicit hashing and encoding versions. The loader captures each source file once for the snapshot. Typing, verification and lowering consume those captured bytes or their derived immutable representation. A native build uses generated source and recorded build inputs from controlled staging. If dependencies or build configuration cannot be tied to the recorded inputs, the result cannot carry the corresponding provenance claim.
+- `splash-source-v1:sha256:<hex>` identifies the file locators and exact bytes of the captured closure. File locators are lexical paths relative to the entry file’s directory, with forward slash separators. Relocating the whole source tree or spelling the same lexical entry path differently preserves the ID when the capture is equivalent. If an entry spelled through a symlink and a cleaned import would share a locator, the entry keeps a reserved `./` prefix to distinguish the two captures. Unloaded files, symlink targets, and filesystem metadata are outside the manifest.
+- `splash-analysis-v1:sha256:<hex>` binds the source ID, the entry locator, and the compiler’s analysis rules version. The current resolver and built-in boundaries use fixed rules, so their inputs come from this manifest and rules version. The query, direction, depth, display paths, running binary build, verification rules, backend, and runtime are outside this ID’s scope.
 
-A digest identifies content. Authenticity comes from trusted reanalysis or authenticated evidence issued by a protected verifier. In enforcement mode, recompute the evidence from protected inputs or verify the evidence's issuer and binding to the expected source, scope, ruleset and release artifact. A validly formed JSON document with a matching digest field alone provides no such evidence.
+Each v1 manifest starts with its full ID prefix as a domain marker. Strings use an unsigned base-128 varint byte length followed by their bytes. The source manifest appends each locator in byte order, followed by the 32 raw bytes of its SHA-256 content digest. The analysis manifest appends the source ID string, entry locator, and rules version string in that order. Each final digest is lowercase hex. The rules version starts at `1` and must change when front-end semantics, import binding, or the modeled call and effect rules change. A manifest encoding or normalization change requires a new corresponding format version. Add any future configurable analysis inputs to the manifest before claiming that it binds those inputs.
+
+These digests support content and input comparison. Authenticity requires trusted reanalysis or authenticated evidence from a protected verifier. Persisted artifact provenance remains proposed. It would also bind the concrete compiler and backend builds, artifact kind and digest, and applicable build inputs such as generated source, Go toolchain, target, flags, and native dependencies.
 
 ## Diagnostic contract
 

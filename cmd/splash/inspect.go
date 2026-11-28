@@ -10,11 +10,12 @@ import (
 )
 
 type inspectReport struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	EntryPath     string            `json:"entryPath"`
-	Query         string            `json:"query"`
-	Contract      *inspectContract  `json:"contract"`
-	Diagnostics   []checkDiagnostic `json:"diagnostics"`
+	SchemaVersion int                        `json:"schemaVersion"`
+	EntryPath     string                     `json:"entryPath"`
+	Query         string                     `json:"query"`
+	Identity      *compiler.AnalysisIdentity `json:"identity,omitempty"`
+	Contract      *inspectContract           `json:"contract"`
+	Diagnostics   []checkDiagnostic          `json:"diagnostics"`
 }
 
 type inspectContract struct {
@@ -54,6 +55,8 @@ func makeInspectReport(path, query string) inspectReport {
 	if program == nil {
 		return report
 	}
+	identity := program.Identity()
+	report.Identity = &identity
 	contract, err := program.InspectFunction(query)
 	if err != nil {
 		report.Diagnostics = append(report.Diagnostics, inspectionFailure(err))

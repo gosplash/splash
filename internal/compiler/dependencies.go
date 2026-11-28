@@ -122,12 +122,12 @@ func (p *AnalyzedProgram) Dependencies(query string, direction DependencyDirecti
 	if (direction != Callers && direction != Callees) || maxDepth < 0 {
 		return DependencyResult{}, errors.New("invalid dependency query")
 	}
-	_, declaration, err := p.resolveFunction(query)
+	selected, err := p.resolveFunction(query)
 	if err != nil {
 		return DependencyResult{}, err
 	}
 	index := p.snapshot.indexDependencies()
-	root := index.nodes[declaration]
+	root := index.nodes[selected.summary.Function]
 	result := DependencyResult{Root: root.function(), Relationships: []Relationship{}}
 
 	var uncovered *dependencyNode

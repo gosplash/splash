@@ -4,12 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
 	"gosplash.dev/splash/internal/token"
-	"gosplash.dev/splash/internal/typechecker"
 	"gosplash.dev/splash/internal/types"
 )
 
@@ -30,17 +28,19 @@ type FunctionContract struct {
 }
 
 type Signature struct {
-	Parameters     []Parameter     `json:"parameters"`
-	ReturnType     string          `json:"returnType"`
-	TypeParameters []TypeParameter `json:"typeParameters,omitempty"`
-	Async          bool            `json:"async,omitempty"`
+	Parameters         []Parameter     `json:"parameters"`
+	ReturnType         string          `json:"returnType"`
+	ReturnTypeIdentity TypeIdentity    `json:"returnTypeIdentity,omitzero"`
+	TypeParameters     []TypeParameter `json:"typeParameters,omitempty"`
+	Async              bool            `json:"async,omitempty"`
 }
 
 type Parameter struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	HasDefault bool   `json:"hasDefault,omitempty"`
-	Variadic   bool   `json:"variadic,omitempty"`
+	Name         string       `json:"name"`
+	Type         string       `json:"type"`
+	TypeIdentity TypeIdentity `json:"typeIdentity,omitzero"`
+	HasDefault   bool         `json:"hasDefault,omitempty"`
+	Variadic     bool         `json:"variadic,omitempty"`
 }
 
 type TypeParameter struct {
@@ -51,71 +51,29 @@ type TypeParameter struct {
 // InspectFunction accepts a declared module-qualified name, or a bare
 // function name in the entry file. Import aliases are local to their file.
 func (p *AnalyzedProgram) InspectFunction(query string) (FunctionContract, error) {
-	owner, declaration, err := p.resolveFunction(query)
+	selected, err := p.resolveFunction(query)
 	if err != nil {
 		return FunctionContract{}, err
 	}
+	owner, summary := selected.owner, selected.summary
+	declaration := summary.Function
 	symbol := functionSymbol(owner.File.Module, declaration)
-	for _, summary := range p.snapshot.effects {
-		if summary.Function != declaration {
-			continue
-		}
-		fnType := owner.GenericSignatures[declaration]
-		if fnType == nil {
-			fnType, _ = owner.Types[declaration].(*types.FunctionType)
-		}
-		if fnType == nil {
-			return FunctionContract{}, fmt.Errorf("missing checked signature for %q", symbol)
-		}
-		contract := FunctionContract{
-			Symbol: symbol, Declaration: declaration.Pos(), Signature: functionSignature(fnType, declaration),
-			Declared: summary.Declared, Inferred: summary.Inferred,
-		}
-		if summary.Gap != nil {
-			gap := *summary.Gap
-			contract.Gap = &gap
-		}
-		return contract, nil
+	fnType := owner.GenericSignatures[declaration]
+	if fnType == nil {
+		fnType, _ = owner.Types[declaration].(*types.FunctionType)
 	}
-	return FunctionContract{}, fmt.Errorf("missing effect summary for %q", symbol)
-}
-
-func (p *AnalyzedProgram) resolveFunction(query string) (*typechecker.TypedFile, *ast.FunctionDecl, error) {
-	if p == nil || p.snapshot == nil {
-		return nil, nil, ErrInvalidAnalysis
+	if fnType == nil {
+		return FunctionContract{}, fmt.Errorf("missing checked signature for %q", symbol)
 	}
-	snapshot := p.snapshot
-	qualifier, name, qualified := strings.Cut(query, ".")
-	modules := snapshot.modules
-	if !qualified {
-		name = qualifier
-		modules = modules[len(modules)-1:]
+	contract := FunctionContract{
+		Symbol: symbol, Declaration: declaration.Pos(), Signature: p.snapshot.functionSignature(fnType, declaration),
+		Declared: summary.Declared, Inferred: summary.Inferred,
 	}
-
-	var owner *typechecker.TypedFile
-	var declaration *ast.FunctionDecl
-	for _, module := range modules {
-		moduleName := ""
-		if module.File.Module != nil {
-			moduleName = module.File.Module.Name
-		}
-		if qualified && (moduleName == "" || moduleName != qualifier) {
-			continue
-		}
-		for _, fact := range module.EffectFacts {
-			if fact.Function.Name != name {
-				continue
-			}
-			if declaration != nil {
-				return nil, nil, fmt.Errorf("%w: %q", ErrAmbiguousFunction, query)
-			}
-			owner, declaration = module, fact.Function
-		}
+	if summary.Gap != nil {
+		gap := *summary.Gap
+		contract.Gap = &gap
 	}
-	if declaration == nil {
-		return nil, nil, fmt.Errorf("%w: %q", ErrFunctionNotFound, query)
-	}
-	return owner, declaration, nil
+	return contract, nil
 }
 
 func functionSymbol(module *ast.ModuleDecl, declaration *ast.FunctionDecl) string {
@@ -125,14 +83,15 @@ func functionSymbol(module *ast.ModuleDecl, declaration *ast.FunctionDecl) strin
 	return module.Name + "." + declaration.Name
 }
 
-func functionSignature(fnType *types.FunctionType, declaration *ast.FunctionDecl) Signature {
+func (a *analysis) functionSignature(fnType *types.FunctionType, declaration *ast.FunctionDecl) Signature {
 	signature := Signature{
 		Parameters: make([]Parameter, 0, len(declaration.Params)),
-		ReturnType: fnType.Return.TypeName(), Async: declaration.IsAsync,
+		ReturnType: fnType.Return.TypeName(), ReturnTypeIdentity: a.signatureTypeIdentity(declaration.ReturnType, fnType.Return),
+		Async: declaration.IsAsync,
 	}
 	for i, param := range declaration.Params {
 		signature.Parameters = append(signature.Parameters, Parameter{
-			Name: param.Name, Type: fnType.Params[i].TypeName(),
+			Name: param.Name, Type: fnType.Params[i].TypeName(), TypeIdentity: a.signatureTypeIdentity(param.Type, fnType.Params[i]),
 			HasDefault: param.Default != nil, Variadic: param.Variadic,
 		})
 	}
