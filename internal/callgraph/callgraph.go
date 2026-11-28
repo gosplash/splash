@@ -48,6 +48,15 @@ type Graph struct {
 	hasUnresolved bool
 }
 
+// DeclaredEffects is the union of the declared effects on all graph nodes.
+func (g *Graph) DeclaredEffects() effects.EffectSet {
+	var declared effects.EffectSet
+	for _, node := range g.nodes {
+		declared |= node.Effects
+	}
+	return declared
+}
+
 // HasUnresolvedCalls reports whether any analyzed call lacked a named target.
 func (g *Graph) HasUnresolvedCalls() bool { return g.hasUnresolved }
 

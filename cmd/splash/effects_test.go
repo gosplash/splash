@@ -87,3 +87,29 @@ func captureEffectCommand(t *testing.T, command func() error) (stdout, stderr st
 	}
 	return stdout, string(message), err
 }
+
+func TestSandboxEffectPrefilterKeepsReachableViolations(t *testing.T) {
+	binary := buildSplashCLI(t)
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		name, declaration, body, verdict string
+	}{
+		{"no forbidden effects", "DB.read", "return 1", "verified"},
+		{"unrelated forbidden effect", "DB.read", "return 1", "verified"},
+		{"reachable forbidden effect", "Net", "return network()", "rejected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := "module main\n@sandbox(deny: [Net])\nfn root() needs " + tc.declaration + " -> Int { " + tc.body + " }\n"
+			if tc.name != "no forbidden effects" {
+				source += "fn network() needs Net -> Int { return 2 }\n"
+			}
+			path := writeSplashFile(t, dir, "main.splash", source)
+			diagnostics, _ := readCheckJSON(t, binary, path, tc.verdict)
+			if tc.verdict == "rejected" && (len(diagnostics) != 2 ||
+				!strings.Contains(diagnostics[0].Message, "uses denied effect Net") ||
+				!strings.Contains(diagnostics[1].Message, "uses denied effect Net")) {
+				t.Fatalf("expected violations at the sandbox root and its callee, got %+v", diagnostics)
+			}
+		})
+	}
+}
