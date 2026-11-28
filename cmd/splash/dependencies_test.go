@@ -179,7 +179,12 @@ func TestDependencyQueryFailures(t *testing.T) {
 			t.Fatalf("wrong failure for %s: %s", tc.query, raw)
 		}
 	}
-	for _, args := range [][]string{{"--depth", "0"}, {"--depth", "-2"}, {"--transitive", "--depth", "2"}} {
+	for _, args := range [][]string{
+		{"--depth", "0"}, {"--depth", "-2"}, {"--transitive", "--depth", "2"},
+		{"--limit", "2"}, {"--compact", "--limit"}, {"--compact", "--limit", "0"},
+		{"--compact", "--limit", "101"}, {"--compact", "--limit", "2", "--limit", "3"},
+		{"--compact", "--transitive", "--depth", "2"}, {"--compact", "--compact"},
+	} {
 		command := exec.Command(bin, append([]string{"callers", entry, "main", "--json"}, args...)...)
 		var stdout, stderr bytes.Buffer
 		command.Stdout, command.Stderr = &stdout, &stderr
@@ -188,5 +193,83 @@ func TestDependencyQueryFailures(t *testing.T) {
 		if !errors.As(err, &exit) || exit.ExitCode() != 1 || stdout.Len() != 0 || stderr.Len() == 0 {
 			t.Fatalf("accepted invalid options %v: %v, %s, %s", args, err, &stdout, &stderr)
 		}
+	}
+}
+
+func TestCompactDependenciesKeepCoverageBeyondLimit(t *testing.T) {
+	bin := buildSplashCLI(t)
+	dir := t.TempDir()
+	path := writeSplashFile(t, dir, "app.splash", `module app
+fn root(cb: fn() -> Int) -> Int { return middle(cb) }
+fn middle(cb: fn() -> Int) -> Int { return last(cb) }
+fn last(cb: fn() -> Int) -> Int { return cb() }
+`)
+	full, fullRaw := readDependencies(t, bin, "callees", path, "root", "--transitive")
+	args := []string{"callees", path, "root", "--json", "--compact", "--limit", "1", "--transitive"}
+	raw, err := exec.Command(bin, args...).Output()
+	if err != nil {
+		t.Fatalf("compact dependencies: %v, %s", err, raw)
+	}
+	var report struct {
+		View     string
+		Identity struct{ AnalysisID string }
+		Result   *struct {
+			Root    struct{ Symbol, Path string }
+			Matches []struct {
+				Symbol, Path   string
+				Line, Distance int
+			}
+			Total, Omitted, Limit int
+			OmittedFields         []string
+			Coverage              struct {
+				Scope, Status string
+				Gap           struct{ Function testDependencyFunction }
+			}
+		}
+	}
+	if err := json.Unmarshal(raw, &report); err != nil || report.View != "compact" ||
+		report.Identity.AnalysisID == "" || report.Result == nil {
+		t.Fatalf("invalid compact dependency report: %s (%v)", raw, err)
+	}
+	got := report.Result
+	if got.Root.Symbol != "app.root" || got.Root.Path != "app.splash" ||
+		got.Total != len(full.Result.Relationships) || got.Total != 2 || got.Omitted != 1 ||
+		got.Limit != 1 || !reflect.DeepEqual(got.OmittedFields, []string{"via", "source"}) ||
+		len(got.Matches) != 1 || got.Matches[0].Symbol != full.Result.Relationships[0].Function.Symbol ||
+		got.Matches[0].Path != "app.splash" || got.Matches[0].Line != 3 || got.Matches[0].Distance != 1 ||
+		got.Coverage.Scope != full.Result.Coverage.Scope || got.Coverage.Status != "incomplete" ||
+		got.Coverage.Gap.Function.Symbol != "app.last" {
+		t.Fatalf("wrong compact result: %s", raw)
+	}
+	if next, err := exec.Command(bin, args...).Output(); err != nil || !bytes.Equal(raw, next) {
+		t.Fatalf("nondeterministic compact output: %s (%v)", next, err)
+	}
+	if _, after := readDependencies(t, bin, "callees", path, "root", "--transitive"); !bytes.Equal(fullRaw, after) {
+		t.Fatalf("full report changed: %s", after)
+	}
+}
+
+func TestCompactDependenciesKeepSameNamedDeclarationsDistinct(t *testing.T) {
+	bin := buildSplashCLI(t)
+	dir := t.TempDir()
+	writeSplashFile(t, dir, "left.splash", "module shared\nfn target() {}")
+	writeSplashFile(t, dir, "right.splash", "module shared\nfn target() {}")
+	path := writeSplashFile(t, dir, "main.splash", "module app\nuse left as left_mod\nuse right as right_mod\nfn main() { left_mod.target(); right_mod.target() }")
+	raw, err := exec.Command(bin, "callees", path, "main", "--json", "--compact").Output()
+	if err != nil {
+		t.Fatalf("compact dependencies: %v, %s", err, raw)
+	}
+	var report struct {
+		Result struct {
+			Matches []struct{ Symbol, Path string }
+			Limit   int
+			Omitted int
+		}
+	}
+	if err := json.Unmarshal(raw, &report); err != nil || report.Result.Limit != 20 || report.Result.Omitted != 0 ||
+		len(report.Result.Matches) != 2 || report.Result.Matches[0].Symbol != "shared.target" ||
+		report.Result.Matches[1].Symbol != "shared.target" || report.Result.Matches[0].Path != "left.splash" ||
+		report.Result.Matches[1].Path != "right.splash" {
+		t.Fatalf("nominal dependency locations lost: %s (%v)", raw, err)
 	}
 }

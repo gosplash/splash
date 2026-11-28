@@ -18,7 +18,8 @@ Splash is an early statically typed language for backend and control-plane softw
 | Verified source artifact boundary | The compiler requires an encapsulated `VerifiedProgram` for Go emission, VM lowering, and tool export. It authorizes the captured source under the shared policy checks. |
 | Structured check diagnostics | `splash check <file.splash> --json` emits a versioned source verdict, effect coverage, diagnostic codes, source locations, and resolved effect witnesses. [JSON report v1](docs/design/semantic-compiler-interface.md#check-json-v1) |
 | Function contract inspection | `splash inspect <file.splash> <module.function> --json` reports a signature, declared authority, inferred effects, and effect coverage. [Inspect JSON v1](docs/design/semantic-compiler-interface.md#inspect-json-v1) |
-| Dependency queries | `splash callers` and `splash callees` report resolved source call relationships, call-site witnesses, and scoped coverage. [Dependency JSON v1](docs/design/semantic-compiler-interface.md#dependency-json-v1) |
+| Module summaries | `splash summary <file.splash> --json` gives a bounded view of exported declarations and checked function contracts. [Compact context](docs/design/semantic-compiler-interface.md#compact-semantic-context) |
+| Dependency queries | `splash callers` and `splash callees` report resolved relationships, call-site witnesses, and scoped coverage. Use `--compact` for a bounded view. [Dependency JSON v1](docs/design/semantic-compiler-interface.md#dependency-json-v1) · [Compact context](docs/design/semantic-compiler-interface.md#compact-semantic-context) |
 | Authority comparisons | Proposed. Graph, effect, and approval inspection use detached projections of the analyzed program. |
 | TTCS and cost evaluation | Experimental methodology. Comparative authoring results are pending. |
 

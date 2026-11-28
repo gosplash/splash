@@ -118,3 +118,57 @@ func writeDependencyModules(b *testing.B, count int) string {
 	write("main", entry.String())
 	return filepath.Join(dir, "main.splash")
 }
+
+func BenchmarkDependencyContext(b *testing.B) {
+	entry := writeDependencyModules(b, 40)
+	program := analyzeDependencyBenchmark(b, entry)
+	const query = "shared.finish"
+	const direction = compiler.Callers
+	identity := program.Identity()
+
+	b.Run("Full", func(b *testing.B) {
+		result, err := program.Dependencies(query, direction, 0)
+		if err != nil || len(result.Relationships) != 80 {
+			b.Fatalf("expected 80 relationships, got %d (%v)", len(result.Relationships), err)
+		}
+		benchmarkDependencyJSON(b, dependencyReport[dependencyProjection]{
+			SchemaVersion: 1, EntryPath: entry, Query: query, Direction: direction,
+			Identity: &identity, Result: projectDependencies(result, direction, 0), Diagnostics: []checkDiagnostic{},
+		})
+	})
+	for _, limit := range []int{20, 100} {
+		b.Run(fmt.Sprintf("Compact%d", limit), func(b *testing.B) {
+			result, err := program.CompactDependencies(query, direction, 0, limit)
+			if err != nil || result.Total != 80 || len(result.Matches) != min(limit, 80) {
+				b.Fatalf("unexpected compact dependencies: %d of %d (%v)", len(result.Matches), result.Total, err)
+			}
+			b.Run("Encode", func(b *testing.B) {
+				benchmarkDependencyJSON(b, dependencyReport[compactDependencyProjection]{
+					SchemaVersion: 1, EntryPath: entry, Query: query, Direction: direction, View: "compact",
+					Identity: &identity, Result: projectCompactDependencies(result, direction, 0, limit), Diagnostics: []checkDiagnostic{},
+				})
+			})
+			b.Run("Query", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					if result, err := program.CompactDependencies(query, direction, 0, limit); err != nil || result.Total != 80 {
+						b.Fatalf("unexpected compact dependency query: %+v (%v)", result, err)
+					}
+				}
+			})
+		})
+	}
+}
+
+func benchmarkDependencyJSON(b *testing.B, report any) {
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	b.ReportAllocs()
+	for b.Loop() {
+		output.Reset()
+		if err := encoder.Encode(report); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64(output.Len()), "output-B")
+}
