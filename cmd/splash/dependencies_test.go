@@ -261,7 +261,7 @@ fn last(cb: fn() -> Int) -> Int { return cb() }
 		t.Fatalf("invalid compact dependency report: %s (%v)", raw, err)
 	}
 	got := report.Result
-	if got.Root.Symbol != "app.root" || got.Root.Path != "app.splash" || got.MaxDepth != nil ||
+	if got.Root.Symbol != "app.root" || got.Root.Path != "app.splash" || got.MaxDepth != nil || !bytes.Contains(raw, []byte(`"maxDepth":null`)) ||
 		got.Total != len(full.Result.Relationships) || got.Total != 2 || got.Omitted != 1 ||
 		got.Limit != 1 || !reflect.DeepEqual(got.OmittedFields, []string{"via", "source"}) ||
 		len(got.Matches) != 1 || got.Matches[0].Symbol != full.Result.Relationships[0].Function.Symbol ||
