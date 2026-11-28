@@ -7,22 +7,23 @@ import (
 	"fmt"
 	"os/exec"
 	"reflect"
-	"strings"
 	"testing"
 )
 
 type testAuthorityReport struct {
 	SchemaVersion int
 	Base, Head    struct {
-		Verdict     string
-		Identity    *struct{ AnalysisID string }
-		Diagnostics []checkTestDiagnostic
+		Verdict        string
+		Identity       *struct{ AnalysisID string }
+		EffectCoverage *struct{ Status string }
+		Diagnostics    []checkTestDiagnostic
 	}
 	Comparison *struct {
 		DeclaredAuthority struct {
 			Status  string
 			Changes []struct {
 				Function       struct{ Path, Module, Name string }
+				Kind           string
 				Added, Removed []string
 				Before, After  *struct{ Line, Column int }
 			}
@@ -32,6 +33,7 @@ type testAuthorityReport struct {
 			Status   string
 			Changes  []struct {
 				Function      struct{ Path, Module, Name string }
+				Reason        string
 				Kind          string
 				Before, After *struct {
 					Parameters []struct{ TypeIdentity struct{ Name, Path string } }
@@ -139,16 +141,25 @@ func TestAuthorityDiffRequiresBothCapturesToVerify(t *testing.T) {
 		head := writeSplashFile(t, t.TempDir(), "main.splash", tc.source)
 		report, raw := runTestAuthorityDiff(t, binary, base, head, 1)
 		if report.Base.Verdict != "verified" || report.Head.Verdict != tc.verdict ||
-			report.Comparison != nil || len(report.Head.Diagnostics) == 0 {
+			report.Comparison != nil || !bytes.Contains(raw, []byte(`"comparison":null`)) || len(report.Head.Diagnostics) == 0 {
 			t.Fatalf("unverified source yielded a comparison: %s", raw)
 		}
+		reversed, raw := runTestAuthorityDiff(t, binary, head, base, 1)
+		if reversed.Base.Verdict != tc.verdict || reversed.Head.Verdict != "verified" ||
+			reversed.Comparison != nil || !bytes.Contains(raw, []byte(`"comparison":null`)) || len(reversed.Base.Diagnostics) == 0 {
+			t.Fatalf("unverified base yielded a comparison: %s", raw)
+		}
 	}
-	cmd := exec.Command(binary, "authority", "diff", base)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err == nil || len(raw) != 0 || !strings.Contains(stderr.String(), "usage: splash authority diff") {
-		t.Fatalf("expected usage failure: %s (%v), stderr %s", raw, err, stderr.String())
+	for _, args := range [][]string{{"authority"}, {"authority", "diff", base}} {
+		cmd := exec.Command(binary, args...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		raw, err := cmd.Output()
+		var exit *exec.ExitError
+		const usage = "usage: splash authority diff <base.splash> <head.splash> --json\n"
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 || len(raw) != 0 || stderr.String() != usage {
+			t.Fatalf("expected usage failure: %s (%v), stderr %s", raw, err, stderr.String())
+		}
 	}
 }
 
@@ -176,5 +187,93 @@ fn identity<T>(value: T) -> T { return value }
 	}
 	if !reflect.DeepEqual(kinds, map[string]string{"add": "added", "removed": "removed", "identity": "indeterminate"}) {
 		t.Fatalf("wrong public signature changes: %s", raw)
+	}
+}
+
+func TestAuthorityDiffReportsPrivateDeclarationMovesWithEmptyGrants(t *testing.T) {
+	binary := buildSplashCLI(t)
+	source := "module app\nexpose main\nfn main() {}\nfn %s() {}\n"
+	base := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, "old_helper"))
+	head := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, "new_helper"))
+	report, raw := runTestAuthorityDiff(t, binary, base, head, 0)
+	if report.Comparison == nil || report.Comparison.PublicSignatures.Status != "unchanged" {
+		t.Fatalf("private movement changed public signatures: %s", raw)
+	}
+	authority := report.Comparison.DeclaredAuthority
+	if authority.Status != "changed" || len(authority.Changes) != 2 {
+		t.Fatalf("expected separate declaration additions and removals: %s", raw)
+	}
+	added, removed := authority.Changes[0], authority.Changes[1]
+	if added.Kind != "added" || added.Function.Name != "new_helper" || added.Before != nil || added.After == nil ||
+		removed.Kind != "removed" || removed.Function.Name != "old_helper" || removed.Before == nil || removed.After != nil ||
+		len(added.Added)+len(added.Removed)+len(removed.Added)+len(removed.Removed) != 0 {
+		t.Fatalf("declaration changes must be distinguishable from grant changes: %s", raw)
+	}
+}
+
+func TestAuthorityDiffKeepsKnownChangeOnAnUncertainSignature(t *testing.T) {
+	binary := buildSplashCLI(t)
+	source := "module app\nfn identity<T>(%[1]s: T) -> T { return %[1]s }"
+	base := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, "before"))
+	head := writeSplashFile(t, t.TempDir(), "main.splash", fmt.Sprintf(source, "after"))
+	report, raw := runTestAuthorityDiff(t, binary, base, head, 0)
+	if report.Comparison == nil {
+		t.Fatalf("expected verified comparison: %s", raw)
+	}
+	signatures := report.Comparison.PublicSignatures
+	if signatures.Status != "changed" || signatures.Complete || len(signatures.Changes) != 1 ||
+		signatures.Changes[0].Kind != "modified" || signatures.Changes[0].Reason == "" {
+		t.Fatalf("expected a known change with an uncertainty reason: %s", raw)
+	}
+}
+
+func TestAuthorityDiffReportsKnownSignatureFields(t *testing.T) {
+	binary := buildSplashCLI(t)
+	for _, tc := range []struct{ name, base, head string }{
+		{"result", "fn compute() -> Int { return 1 }", "fn compute() -> Bool { return true }"},
+		{"argument order", "fn compute(left: Int, right: Bool) {}", "fn compute(right: Bool, left: Int) {}"},
+		{"default presence", "fn compute(value: Int) {}", "fn compute(value: Int = 1) {}"},
+		{"variadic", "fn compute(values: Int) {}", "fn compute(...values: Int) {}"},
+		{"async", "fn compute() {}", "async fn compute() {}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := writeSplashFile(t, t.TempDir(), "main.splash", "module app\n"+tc.base)
+			head := writeSplashFile(t, t.TempDir(), "main.splash", "module app\n"+tc.head)
+			report, raw := runTestAuthorityDiff(t, binary, base, head, 0)
+			if report.Comparison == nil || report.Comparison.DeclaredAuthority.Status != "unchanged" {
+				t.Fatalf("unexpected authority change: %s", raw)
+			}
+			signatures := report.Comparison.PublicSignatures
+			if signatures.Status != "changed" || !signatures.Complete || len(signatures.Changes) != 1 ||
+				signatures.Changes[0].Kind != "modified" {
+				t.Fatalf("expected one known signature change: %s", raw)
+			}
+		})
+	}
+}
+
+func TestAuthorityDiffReportsSeparateGrantsAndScopedEffectCoverage(t *testing.T) {
+	binary := buildSplashCLI(t)
+	const common = "module app\nfn helper(cb: fn() -> Int) -> Int { return cb() }\n"
+	base := writeSplashFile(t, t.TempDir(), "main.splash", common+"fn queue() needs Queue {}\nfn first() needs DB.read {}\n")
+	head := writeSplashFile(t, t.TempDir(), "main.splash", common+"agent fn queue() {}\nfn first() needs DB {}\n")
+	report, raw := runTestAuthorityDiff(t, binary, base, head, 0)
+	if report.Comparison == nil || report.Base.EffectCoverage == nil || report.Head.EffectCoverage == nil ||
+		report.Base.EffectCoverage.Status != "incomplete" || report.Head.EffectCoverage.Status != "incomplete" {
+		t.Fatalf("missing scoped effect coverage: %s", raw)
+	}
+	if report.Comparison.PublicSignatures.Status != "unchanged" {
+		t.Fatalf("grants and callable signatures are separate properties: %s", raw)
+	}
+	authority := report.Comparison.DeclaredAuthority
+	if authority.Status != "changed" || len(authority.Changes) != 2 {
+		t.Fatalf("expected two declared-label changes: %s", raw)
+	}
+	first, queue := authority.Changes[0], authority.Changes[1]
+	if first.Function.Name != "first" || first.Kind != "modified" ||
+		!reflect.DeepEqual(first.Added, []string{"DB.write"}) || len(first.Removed) != 0 ||
+		queue.Function.Name != "queue" || queue.Kind != "modified" ||
+		!reflect.DeepEqual(queue.Added, []string{"Agent"}) || !reflect.DeepEqual(queue.Removed, []string{"Queue"}) {
+		t.Fatalf("labels must be sorted and reported separately: %s", raw)
 	}
 }

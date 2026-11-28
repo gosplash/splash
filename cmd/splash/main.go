@@ -21,10 +21,12 @@ func main() {
 	}
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
-		case "inspect", "summary":
+		case "inspect", "summary", "authority":
 			run := runInspectCommand
 			if os.Args[1] == "summary" {
 				run = runSummaryCommand
+			} else if os.Args[1] == "authority" {
+				run = runAuthorityCommand
 			}
 			ok, err := run(os.Args[2:], os.Stdout)
 			if err != nil {
@@ -43,14 +45,6 @@ func main() {
 	cmd, file := os.Args[1], os.Args[2]
 
 	switch cmd {
-	case "authority":
-		ok, err := runAuthorityCommand(os.Args[2:], os.Stdout)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-		}
-		if !ok {
-			os.Exit(1)
-		}
 	case "callers", "callees":
 		ok, err := runDependencyCommand(compiler.DependencyDirection(cmd), os.Args[2:], os.Stdout)
 		if err != nil {

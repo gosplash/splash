@@ -9,6 +9,7 @@ import (
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
+	"gosplash.dev/splash/internal/types"
 )
 
 type ComparisonStatus string
@@ -34,6 +35,7 @@ type AuthorityDeclarationLocation struct {
 
 type DeclaredAuthorityChange struct {
 	Function AuthorityFunctionID           `json:"function"`
+	Kind     string                        `json:"kind"`
 	Before   *AuthorityDeclarationLocation `json:"before"`
 	After    *AuthorityDeclarationLocation `json:"after"`
 	Added    []string                      `json:"added"`
@@ -68,7 +70,20 @@ type AuthorityComparison struct {
 type authorityFunctionFacts struct {
 	location *AuthorityDeclarationLocation
 	declared effects.EffectSet
-	public   *Signature
+	public   *authorityPublicFunction
+}
+
+type authorityPublicFunction struct {
+	shape       Signature
+	checkedType *types.FunctionType
+}
+
+func (f *authorityPublicFunction) displaySignature() *Signature {
+	if f == nil {
+		return nil
+	}
+	f.shape.setDisplayTypes(f.checkedType)
+	return &f.shape
 }
 
 // CompareAuthority compares two captures verified by this compiler. The
@@ -101,10 +116,16 @@ func CompareAuthority(base, head *VerifiedProgram) (AuthorityComparison, error) 
 	}
 	for _, id := range ordered {
 		old, next := before[id], after[id]
-		if old.declared != next.declared {
+		if old.location == nil || next.location == nil || old.declared != next.declared {
+			kind := "modified"
+			if old.location == nil {
+				kind = "added"
+			} else if next.location == nil {
+				kind = "removed"
+			}
 			comparison.DeclaredAuthority.Status = ComparisonChanged
 			comparison.DeclaredAuthority.Changes = append(comparison.DeclaredAuthority.Changes, DeclaredAuthorityChange{
-				Function: id, Before: old.location, After: next.location,
+				Function: id, Kind: kind, Before: old.location, After: next.location,
 				Added: (next.declared &^ old.declared).Labels(), Removed: (old.declared &^ next.declared).Labels(),
 			})
 		}
@@ -136,19 +157,15 @@ func (a *analysis) authorityFacts() (map[AuthorityFunctionID]authorityFunctionFa
 				return nil, fmt.Errorf("ambiguous function declaration %q in %q", id.Name, id.Path)
 			}
 			summary := summaries[function]
-			if summary == nil {
-				return nil, fmt.Errorf("missing effect summary for %q in %q", id.Name, id.Path)
-			}
 			functionFacts := authorityFunctionFacts{
 				location: &AuthorityDeclarationLocation{Line: pos.Line, Column: pos.Column},
 				declared: summary.Declared,
 			}
 			if len(exposes) == 0 || exposes[function.Name] {
-				contract, err := a.projectFunctionContract(selectedFunction{owner: owner, summary: summary})
-				if err != nil {
-					return nil, err
+				fnType := checkedFunctionType(owner, function)
+				functionFacts.public = &authorityPublicFunction{
+					shape: a.functionSignatureShape(fnType, function), checkedType: fnType,
 				}
-				functionFacts.public = &contract.Signature
 			}
 			result[id] = functionFacts
 		}
@@ -156,13 +173,13 @@ func (a *analysis) authorityFacts() (map[AuthorityFunctionID]authorityFunctionFa
 	return result, nil
 }
 
-func (c *PublicSignatureComparison) add(id AuthorityFunctionID, before, after *Signature) {
+func (c *PublicSignatureComparison) add(id AuthorityFunctionID, before, after *authorityPublicFunction) {
 	if before == nil && after == nil {
 		return
 	}
-	reason := signatureUncertainty(before)
+	reason := before.uncertainty()
 	if reason == "" {
-		reason = signatureUncertainty(after)
+		reason = after.uncertainty()
 	}
 	var kind string
 	switch {
@@ -170,10 +187,10 @@ func (c *PublicSignatureComparison) add(id AuthorityFunctionID, before, after *S
 		kind = "added"
 	case after == nil:
 		kind = "removed"
+	case knownSignatureDifference(&before.shape, &after.shape):
+		kind = "modified"
 	case reason != "":
 		kind = "indeterminate"
-	case !samePublicSignature(before, after):
-		kind = "modified"
 	default:
 		return
 	}
@@ -186,14 +203,15 @@ func (c *PublicSignatureComparison) add(id AuthorityFunctionID, before, after *S
 		c.Status = ComparisonIndeterminate
 	}
 	c.Changes = append(c.Changes, PublicSignatureChange{
-		Function: id, Kind: kind, Before: before, After: after, Reason: reason,
+		Function: id, Kind: kind, Before: before.displaySignature(), After: after.displaySignature(), Reason: reason,
 	})
 }
 
-func signatureUncertainty(signature *Signature) string {
-	if signature == nil {
+func (f *authorityPublicFunction) uncertainty() string {
+	if f == nil {
 		return ""
 	}
+	signature := &f.shape
 	if len(signature.TypeParameters) != 0 {
 		return "generic signature equivalence is outside this comparison"
 	}
@@ -208,13 +226,36 @@ func signatureUncertainty(signature *Signature) string {
 	return ""
 }
 
-func samePublicSignature(a, b *Signature) bool {
-	// Display names can change with source aliases. Compare checked identities.
-	if a.Async != b.Async || !reflect.DeepEqual(a.ReturnTypeIdentity, b.ReturnTypeIdentity) {
+func knownSignatureDifference(a, b *Signature) bool {
+	if a.Async != b.Async || len(a.TypeParameters) != len(b.TypeParameters) ||
+		differentKnownTypes(a.ReturnTypeIdentity, b.ReturnTypeIdentity) {
+		return true
+	}
+	return !slices.EqualFunc(a.Parameters, b.Parameters, func(a, b Parameter) bool {
+		return a.Name == b.Name && a.HasDefault == b.HasDefault && a.Variadic == b.Variadic &&
+			!differentKnownTypes(a.TypeIdentity, b.TypeIdentity)
+	})
+}
+
+// Type parameters are symbolic. A spelling difference cannot establish a
+// change in a concrete type when the comparison lacks generic equivalence.
+func differentKnownTypes(a, b TypeIdentity) bool {
+	return !reflect.DeepEqual(a, b) && concreteTypeIdentity(a) && concreteTypeIdentity(b)
+}
+
+func concreteTypeIdentity(id TypeIdentity) bool {
+	if id.Kind == "" || id.Kind == "typeParameter" {
 		return false
 	}
-	return slices.EqualFunc(a.Parameters, b.Parameters, func(a, b Parameter) bool {
-		return a.Name == b.Name && a.HasDefault == b.HasDefault && a.Variadic == b.Variadic &&
-			reflect.DeepEqual(a.TypeIdentity, b.TypeIdentity)
-	})
+	for _, arg := range id.Arguments {
+		if !concreteTypeIdentity(arg) {
+			return false
+		}
+	}
+	for _, param := range id.Parameters {
+		if !concreteTypeIdentity(param) {
+			return false
+		}
+	}
+	return id.ReturnType == nil || concreteTypeIdentity(*id.ReturnType)
 }

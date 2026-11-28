@@ -68,7 +68,7 @@ Show declared grants, inferred effects and coverage separately. With complete ev
 
 ## Commands and status
 
-The CLI uses file-first commands. Versioned JSON is implemented for `check`, one-function `inspect`, and `callers` and `callees`. The authority commands below are proposals.
+The CLI accepts source entries for checks, semantic queries, and verified Go emission. The source authority comparison accepts two entries.
 
 ```text
 splash check app/main.splash --json
@@ -76,11 +76,12 @@ splash inspect app/main.splash billing.refund_customer --json
 splash callers app/main.splash billing.refund_customer --json --depth 2
 splash callees app/main.splash billing.refund_customer --json --transitive
 splash graph app/main.splash
-splash authority snapshot app/main.splash --json
-splash authority diff base.json head.json --json
+splash summary app/main.splash --json
+splash emit app/main.splash --json
+splash authority diff base/app/main.splash head/app/main.splash --json
 ```
 
-Machine queries cover source verification diagnostics, one function contract, and resolved caller and callee relationships. Root classification, approval facts, and richer declaration ranges are candidates for later queries. The manifest and diff follow once binding, policy completeness and lowering agree. The agent-facing schema stays separate from provider-specific tool formats.
+Machine queries cover source verification diagnostics, one function contract, and resolved caller and callee relationships. Root classification, approval facts, and richer declaration ranges are candidates for later queries. Persisted authority snapshots and comparisons over authenticated evidence remain proposed. The agent-facing schema stays separate from provider-specific tool formats.
 
 The full verification report design includes a schema version, source and analysis identities, entry scope, loaded files, phase status, property evidence, and an overall verdict. Report each property with its scope, status, and supporting or blocking evidence. Use `passed`, `failed`, `incomplete` and `notRun` for both phases and properties. One phase can establish several properties with different statuses.
 
@@ -434,7 +435,7 @@ Functions match by capture-relative file locator, declared module name and funct
 
 | Property | Comparison scope |
 | --- | --- |
-| `declaredAuthority` | Atomic declared labels on every checked function in the closure, including private functions. Equivalent label spellings such as `DB` and `DB.read, DB.write` compare equal. Each change contains added and removed labels and one-based source points in the corresponding captures. `Agent` is a structural entry marker included in the declared labels. |
+| `declaredAuthority` | Atomic declared labels on every checked function in the closure, including private functions. Equivalent label spellings such as `DB` and `DB.read, DB.write` compare equal. Each row distinguishes added, removed and modified declarations, even when a declaration has zero grants. Added and removed label lists measure grant changes, and the source points refer to the corresponding captures. `Agent` is a structural entry marker included in the declared labels. |
 | `publicSignatures` | Exposed functions, or all functions when the owner has no nonempty `expose` list. Compare checked parameter and return type identities, parameter names and order, default presence, variadic mode and async status. A change in nominal type owner is observable even when display names match. Generic signatures and unavailable checked identities leave signature evidence incomplete. |
 
 Each property reports `unchanged`, `changed`, or `indeterminate`. Public membership changes are established from the exposed declaration sets. A known change keeps the status `changed` when another signature is indeterminate. In that case `complete` is false and the report includes the uncertain entries and reasons alongside the known changes. Function body behavior, default expressions, type declaration layouts, inferred effects, approval paths, tool schemas and agent reachability require separate evidence.
