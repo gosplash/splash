@@ -64,13 +64,21 @@ func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effect
 
 	gated := g.ApprovalFunctions()
 	diags = append(diags, c.checkApprovalCallContexts(g, gated)...)
-	graphEffects := g.DeclaredEffects() &^ effects.Agent
+	var graphEffects effects.EffectSet
+	haveGraphEffects := false
+	sandboxEffects := func() effects.EffectSet {
+		if !haveGraphEffects {
+			graphEffects = g.DeclaredEffects() &^ effects.Agent
+			haveGraphEffects = true
+		}
+		return graphEffects
+	}
 	for _, module := range modules {
 		file := module.File
 		diags = append(diags, c.checkRedline(file, g, agentPaths)...)
 		diags = append(diags, c.checkApprove(file, g, agentReachable)...)
 		diags = append(diags, c.checkContainment(file, g, agentReachable, agentCallees)...)
-		diags = append(diags, c.checkSandbox(file, g, graphEffects)...)
+		diags = append(diags, c.checkSandbox(file, g, sandboxEffects)...)
 		diags = append(diags, c.checkBudget(file)...)
 	}
 	toolViolations, toolGaps := c.checkToolDataClassification(modules)
@@ -451,7 +459,7 @@ func parseEffectListArg(expr ast.Expr) (effects.EffectSet, []diagnostic.Diagnost
 // For each @sandbox function, it checks that every transitively reachable function's
 // effects satisfy the allow/deny lists. Agent is excluded from constraint checking
 // since it is a structural meta-effect, not a runtime capability.
-func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph, graphEffects effects.EffectSet) []diagnostic.Diagnostic {
+func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph, sandboxEffects func() effects.EffectSet) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 
 	for _, decl := range file.Declarations {
@@ -489,6 +497,7 @@ func (c *Checker) checkSandbox(file *ast.File, g *callgraph.Graph, graphEffects 
 
 		// If no node declares a forbidden effect, no reachable subset
 		// can violate this policy. Keep the exact walk for mixed graphs.
+		graphEffects := sandboxEffects()
 		if graphEffects&denySet == effects.None && (!hasAllow || graphEffects&^allowSet == effects.None) {
 			continue
 		}
