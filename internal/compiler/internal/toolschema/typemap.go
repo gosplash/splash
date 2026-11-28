@@ -3,7 +3,6 @@ package toolschema
 import (
 	"fmt"
 
-	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/types"
 )
 
@@ -58,21 +57,4 @@ func TypeToSchema(typ types.Type) (*SchemaProperty, error) {
 		return &SchemaProperty{Type: "array", Items: elem}, nil
 	}
 	return nil, fmt.Errorf("unsupported parameter type (%T)", typ)
-}
-
-// supportedParameterSyntax detects type arguments the current checker can
-// erase. Schema types still come exclusively from the checked signature.
-func supportedParameterSyntax(expr ast.TypeExpr, typ types.Type) bool {
-	switch expr := expr.(type) {
-	case *ast.NamedTypeExpr:
-		if len(expr.TypeArgs) != 0 {
-			list, ok := typ.(*types.ListType)
-			return ok && list != nil && len(expr.TypeArgs) == 1 && supportedParameterSyntax(expr.TypeArgs[0], list.Element)
-		}
-	case *ast.OptionalTypeExpr:
-		if optional, ok := typ.(*types.OptionalType); ok && optional != nil {
-			return supportedParameterSyntax(expr.Inner, optional.Inner)
-		}
-	}
-	return true
 }

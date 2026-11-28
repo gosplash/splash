@@ -166,14 +166,7 @@ func sensitiveFields(decl *ast.TypeDecl) []string {
 // checkToolDataClassification follows data-bearing return types using resolved
 // declaration identities and the owning modules' type evidence.
 func checkToolDataClassification(modules []Module) (violations, incomplete []diagnostic.Diagnostic) {
-	owners := make(map[*ast.TypeDecl]map[ast.Node]types.Type)
-	for _, module := range modules {
-		for _, declaration := range module.File.Declarations {
-			if record, ok := declaration.(*ast.TypeDecl); ok {
-				owners[record] = module.Types
-			}
-		}
-	}
+	var owners map[*ast.TypeDecl]map[ast.Node]types.Type
 	for _, module := range modules {
 		for _, declaration := range module.File.Declarations {
 			fn, ok := declaration.(*ast.FunctionDecl)
@@ -182,7 +175,14 @@ func checkToolDataClassification(modules []Module) (violations, incomplete []dia
 			}) {
 				continue
 			}
-			found, gap := checkToolReturnType(fn, module.Types[fn.ReturnType], owners)
+			if owners == nil {
+				owners = recordTypeOwners(modules)
+			}
+			var returnType types.Type
+			if signature, ok := module.Types[fn].(*types.FunctionType); ok && signature != nil {
+				returnType = signature.Return
+			}
+			found, gap := checkToolReturnType(fn, returnType, owners)
 			violations = append(violations, found...)
 			if gap != (token.Position{}) {
 				incomplete = append(incomplete, diagnostic.Errorf(gap,
@@ -192,6 +192,18 @@ func checkToolDataClassification(modules []Module) (violations, incomplete []dia
 		}
 	}
 	return violations, incomplete
+}
+
+func recordTypeOwners(modules []Module) map[*ast.TypeDecl]map[ast.Node]types.Type {
+	owners := make(map[*ast.TypeDecl]map[ast.Node]types.Type)
+	for _, module := range modules {
+		for _, declaration := range module.File.Declarations {
+			if record, ok := declaration.(*ast.TypeDecl); ok {
+				owners[record] = module.Types
+			}
+		}
+	}
+	return owners
 }
 
 // checkToolReturnType reports known violations even when part of the return
@@ -234,7 +246,11 @@ func checkToolReturnType(fn *ast.FunctionDecl, returnType types.Type, owners map
 				markGap(pos)
 			}
 			for _, field := range record.Fields {
-				visit(fieldTypes[field.Type], field.Position)
+				fieldType := fieldTypes[field.Type]
+				if !types.RetainsTypeArguments(field.Type, fieldType) {
+					markGap(field.Position)
+				}
+				visit(fieldType, field.Position)
 			}
 		case *types.EnumType:
 			if typ.Declaration == nil || slices.ContainsFunc(typ.Declaration.Variants, func(variant ast.EnumVariant) bool {
@@ -249,6 +265,9 @@ func checkToolReturnType(fn *ast.FunctionDecl, returnType types.Type, owners map
 		default:
 			markGap(pos)
 		}
+	}
+	if !types.RetainsTypeArguments(fn.ReturnType, returnType) {
+		markGap(fn.ReturnType.Pos())
 	}
 	visit(returnType, fn.ReturnType.Pos())
 	return violations, gap

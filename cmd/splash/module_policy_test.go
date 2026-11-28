@@ -152,3 +152,23 @@ expose count
 		})
 	}
 }
+
+func TestToolReturnCoverageRequiresResolvedTypeArguments(t *testing.T) {
+	binary := buildSplashCLI(t)
+	for _, src := range []string{
+		"tool fn values() -> List<Int<Missing>> {}",
+		"type Row { value: List<Int<Missing>> }\ntool fn row() -> Row {}",
+	} {
+		path := writeSplashFile(t, t.TempDir(), "main.splash", "module main\n"+src+"\n")
+		readCheckJSON(t, binary, path, "indeterminate")
+	}
+}
+
+func TestToolReturnClassificationUsesCallableSignature(t *testing.T) {
+	binary := buildSplashCLI(t)
+	path := writeSplashFile(t, t.TempDir(), "main.splash", `module main
+type Report { count: Int }
+tool fn Report() -> Report {}
+`)
+	readCheckJSON(t, binary, path, "verified")
+}
