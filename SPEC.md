@@ -390,7 +390,7 @@ Effects after `needs` are comma-separated. A function with no `needs` clause req
 
 ### 5.3 Effect Checking
 
-For a resolved direct or qualified call, the type checker requires the caller's declared capabilities to cover the callee's declared capabilities. This also applies to grants the callee's current body leaves unused. The structural `Agent` marker is excluded from this comparison.
+For a resolved direct or qualified call, source verification requires the caller's declared capabilities to cover the callee's declared capabilities. This also applies to grants the callee's current body leaves unused. The structural `Agent` marker is excluded from this comparison.
 
 ```splash
 fn bad() -> String {
@@ -400,7 +400,11 @@ fn bad() -> String {
 
 The checker also requires every known inferred effect to be covered by its function's declared capabilities. Inference starts from modeled operations and propagates along resolved calls to a fixed point, including recursive groups. A missing grant diagnostic identifies the modeled operation and one deterministic path to it. The frontend models calls to the imported `std/ai` adapter's `prompt` operation as `AI`. Provider execution is a separate runtime concern. Built-in `println` adds no capability in this vocabulary.
 
-Unresolved calls, unsupported source forms, and unmodeled adapter operations leave effect coverage incomplete for the affected function and its callers. Incomplete summaries retain known inferred effects. `splash effects` reports them separately from the unknown remainder. This inspection command can report an inferred effect even when `splash check` or artifact creation rejects the source. For functions with complete coverage, the report lists grants that neither the inferred effects nor the resolved callee contracts require. Narrowing a declaration remains a contract change. Incompleteness alone creates no additional artifact gate in this slice.
+Unresolved calls, unsupported source forms, and unmodeled adapter operations leave effect coverage incomplete for the affected function and its callers. Incomplete summaries retain known inferred effects. `splash effects` reports them separately from the unknown remainder, including on source that fails policy verification. Complete summaries may also list declared grants that neither the implementation nor resolved callee contracts require. Narrowing a declaration remains a contract change.
+
+`check`, `emit`, `build`, `tools`, and `run --backend vm` share the source policy check. Required source coverage includes functions declaring effects, agent and tool entry points, sandboxed functions, and their transitive calls. When the entry closure contains an approval declaration, source call coverage is also required throughout that closure for approval error propagation. An uncovered required source operation makes verification indeterminate and blocks these commands. A known violation takes precedence and the compiler still reports any uncovered required evidence.
+
+The compiler-injected Go approval adapter is a trusted host boundary for these source checks. Its effects remain unmodeled in `splash effects`. The checker still requires coverage of the Splash source around it. The VM has its own admission requirements. Ordinary callbacks outside the required policy scopes can still compile, with incomplete summaries available for inspection.
 
 ### 5.4 Effect Propagation Through `approve fn`
 

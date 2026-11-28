@@ -56,6 +56,7 @@ type Emitter struct {
 	indent             int
 	needsCoalesce      bool
 	needsApproval      bool
+	approvalHelperName string
 	moduleNamespaces   map[string]bool
 	declarationKey     func(*ast.FunctionDecl) string
 	functionNames      map[*ast.FunctionDecl]string
@@ -77,11 +78,12 @@ type Emitter struct {
 // New creates a ready-to-use Emitter.
 func New() *Emitter {
 	return &Emitter{
-		imports:          make(map[string]bool),
-		moduleNamespaces: make(map[string]bool),
-		approveFns:       make(map[string]bool),
-		approveCallers:   make(map[string]bool),
-		fnDecls:          make(map[string]*ast.FunctionDecl),
+		imports:            make(map[string]bool),
+		approvalHelperName: "splashApprove",
+		moduleNamespaces:   make(map[string]bool),
+		approveFns:         make(map[string]bool),
+		approveCallers:     make(map[string]bool),
+		fnDecls:            make(map[string]*ast.FunctionDecl),
 	}
 }
 
@@ -148,6 +150,12 @@ func (e *Emitter) prepareFunctionNames(f, entry *ast.File, localNames map[string
 		}
 		reserved[name] = true
 		e.functionNames[fn] = name
+	}
+
+	// Approval gates must call the generated helper even inside a source
+	// function that uses the same spelling for one of its bindings.
+	for index := 1; reserved[e.approvalHelperName] || localNames[e.approvalHelperName]; index++ {
+		e.approvalHelperName = fmt.Sprintf("_splash_approve_%d", index)
 	}
 }
 
@@ -256,7 +264,7 @@ func (e *Emitter) EmitFile(f *ast.File) string {
 		out.WriteString("\n")
 	}
 	if e.needsApproval {
-		out.WriteString(splashApprovalHelper)
+		out.WriteString(strings.Replace(splashApprovalHelper, "func splashApprove(", "func "+e.approvalHelperName+"(", 1))
 		out.WriteString("\n")
 	}
 

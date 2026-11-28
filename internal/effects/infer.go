@@ -9,13 +9,12 @@ import (
 )
 
 // FunctionFacts contains implementation evidence from one checked declaration.
-// Calls and operations are in source traversal order. Gap is the first place
-// where the frontend could not establish effect coverage, if any.
+// Calls, operations, and local coverage gaps are in source traversal order.
 type FunctionFacts struct {
 	Function   *ast.FunctionDecl
 	Calls      []ResolvedCall
 	Operations []Operation
-	Gap        *CoverageGap
+	Gaps       []CoverageGap
 }
 
 type ResolvedCall struct {
@@ -32,17 +31,22 @@ type Operation struct {
 type CoverageGap struct {
 	Reason   string
 	Position token.Position
+	// ApprovalBoundary identifies the compiler-injected Go host boundary.
+	// Source verification accounts for approval call edges independently.
+	ApprovalBoundary bool
 }
 
 // Summary distinguishes the known lower bound of the conservative effect
 // summary from the coverage needed to use it as an upper bound.
 type Summary struct {
-	Function        *ast.FunctionDecl
-	Declared        EffectSet
-	Inferred        EffectSet
-	Gap             *CoverageGap
-	requiredByCalls EffectSet
-	witness         map[EffectSet]effectStep
+	Function           *ast.FunctionDecl
+	Declared           EffectSet
+	Inferred           EffectSet
+	Gap                *CoverageGap // first representative transitive gap for inspection
+	DirectGaps         []CoverageGap
+	contractViolations []diagnostic.Diagnostic
+	requiredByCalls    EffectSet
+	witness            map[EffectSet]effectStep
 }
 
 type effectStep struct {
@@ -58,7 +62,10 @@ func Infer(facts []FunctionFacts) []*Summary {
 	summaries := make([]*Summary, 0, len(facts))
 	byFunction := make(map[*ast.FunctionDecl]*Summary, len(facts))
 	for _, fact := range facts {
-		summary := &Summary{Function: fact.Function, Declared: Parse(fact.Function.Effects), Gap: fact.Gap}
+		summary := &Summary{Function: fact.Function, Declared: Parse(fact.Function.Effects), DirectGaps: fact.Gaps}
+		if len(summary.DirectGaps) != 0 {
+			summary.Gap = &summary.DirectGaps[0]
+		}
 		summaries = append(summaries, summary)
 		byFunction[fact.Function] = summary
 	}
@@ -80,8 +87,15 @@ func Infer(facts []FunctionFacts) []*Summary {
 			if target := byFunction[call.Target]; target != nil {
 				summary.requiredByCalls |= target.Declared
 				callers[target] = append(callers[target], callerEdge{summary, call.Position})
-			} else if summary.Gap == nil {
-				summary.Gap = &CoverageGap{"resolved target has no effect summary", call.Position}
+				if missing := target.Declared &^ (summary.Declared | Agent); missing != None {
+					summary.contractViolations = append(summary.contractViolations, diagnostic.Errorf(call.Position,
+						"missing declared effect %s for call to %q (declared at %s)", missing, call.Target.Name, call.Target.Pos()))
+				}
+			} else {
+				summary.DirectGaps = append(summary.DirectGaps, CoverageGap{Reason: "resolved target has no effect summary", Position: call.Position})
+				if summary.Gap == nil || summary.Gap.ApprovalBoundary {
+					summary.Gap = &summary.DirectGaps[len(summary.DirectGaps)-1]
+				}
 			}
 		}
 		if summary.Gap != nil {
@@ -108,7 +122,10 @@ func Infer(facts []FunctionFacts) []*Summary {
 	for head := 0; head < len(incomplete); head++ {
 		current := incomplete[head]
 		for _, edge := range callers[current] {
-			if edge.caller.Gap == nil {
+			// A source gap must remain visible even when a caller also
+			// inherits an unmodeled approval host boundary.
+			previous := edge.caller.Gap
+			if previous == nil || (previous.ApprovalBoundary && !current.Gap.ApprovalBoundary) {
 				edge.caller.Gap = current.Gap
 				incomplete = append(incomplete, edge.caller)
 			}
@@ -138,7 +155,7 @@ func (s *Summary) add(effect EffectSet, step effectStep) {
 // unknown. Each witness follows a shortest resolved path to a modeled origin.
 func (s *Summary) Diagnostics() []diagnostic.Diagnostic {
 	missing := s.Inferred &^ s.Declared
-	var diags []diagnostic.Diagnostic
+	diags := append([]diagnostic.Diagnostic(nil), s.contractViolations...)
 	for _, effect := range atomicEffects {
 		if !missing.Has(effect.flag) {
 			continue

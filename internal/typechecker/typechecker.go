@@ -44,7 +44,6 @@ type TypeChecker struct {
 	constraintDecls map[string]*ast.ConstraintDecl
 	moduleFunctions map[*types.ModuleType]map[string]*ast.FunctionDecl
 	diags           []diagnostic.Diagnostic
-	currentEffects  effects.EffectSet
 	currentFacts    *effects.FunctionFacts
 	modules         *moduleState // nil if no loader configured
 }
@@ -406,19 +405,10 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	typed.EffectFacts = append(typed.EffectFacts, effects.FunctionFacts{Function: d})
 	tc.currentFacts = &typed.EffectFacts[len(typed.EffectFacts)-1]
 	defer func() { tc.currentFacts = nil }()
-	for _, annotation := range d.Annotations {
-		if annotation.Kind == ast.AnnotApprove {
-			tc.markEffectGap(annotation.Pos, "approval adapter has no modeled effect contract")
-		}
-	}
-	tc.currentEffects = effects.None
 	for _, effect := range d.Effects {
-		flag, known := effects.Lookup(effect.Name)
-		if !known {
+		if _, known := effects.Lookup(effect.Name); !known {
 			tc.errorf(effect.Pos, "unknown effect %q", effect.Name)
-			continue
 		}
-		tc.currentEffects |= flag
 	}
 	env := NewEnv(tc.globals)
 	typeParamEnv := make(map[string]types.Type)
@@ -434,7 +424,7 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	}
 	for i := range d.Params {
 		p := &d.Params[i]
-		if p.Default != nil {
+		if p.Default != nil && !literalDefault(p.Default) {
 			tc.markEffectGap(p.Default.Pos(), "parameter default was not analyzed")
 		}
 		paramType := tc.resolveTypeExpr(p.Type, typeParamEnv, true)
@@ -461,12 +451,32 @@ func (tc *TypeChecker) checkFunction(d *ast.FunctionDecl, typed *TypedFile) {
 	} else {
 		tc.markEffectGap(d.Pos(), "function body is unavailable")
 	}
+	if len(tc.currentFacts.Gaps) == 0 {
+		for _, annotation := range d.Annotations {
+			if annotation.Kind == ast.AnnotApprove {
+				tc.currentFacts.Gaps = append(tc.currentFacts.Gaps, effects.CoverageGap{
+					Reason:   "approval adapter has no modeled effect contract",
+					Position: annotation.Pos, ApprovalBoundary: true,
+				})
+				break
+			}
+		}
+	}
+}
+
+func literalDefault(expr ast.Expr) bool {
+	switch expr := expr.(type) {
+	case *ast.IntLiteral, *ast.FloatLiteral, *ast.StringLiteral, *ast.BoolLiteral, *ast.NoneLiteral:
+		return true
+	case *ast.UnaryExpr:
+		return literalDefault(expr.Operand)
+	default:
+		return false
+	}
 }
 
 func (tc *TypeChecker) markEffectGap(position token.Position, reason string) {
-	if tc.currentFacts.Gap == nil {
-		tc.currentFacts.Gap = &effects.CoverageGap{Reason: reason, Position: position}
-	}
+	tc.currentFacts.Gaps = append(tc.currentFacts.Gaps, effects.CoverageGap{Reason: reason, Position: position})
 }
 
 func (tc *TypeChecker) checkBlock(block *ast.BlockStmt, env *Env, typed *TypedFile, typeParamEnv map[string]types.Type, returnType types.Type) {
@@ -625,8 +635,13 @@ func (tc *TypeChecker) checkExpr(expr ast.Expr, env *Env, typed *TypedFile, type
 		if nt, ok := tc.resolveTypeName(e.TypeName, e.Pos(), true).(*types.NamedType); ok && nt.Declaration != nil {
 			result = nt
 			for _, field := range nt.Declaration.Fields {
-				if field.Default != nil {
-					tc.markEffectGap(field.Default.Pos(), "record field default was not analyzed")
+				if field.Default != nil && !literalDefault(field.Default) {
+					supplied := slices.ContainsFunc(e.Fields, func(value ast.StructField) bool {
+						return value.Name == field.Name
+					})
+					if !supplied {
+						tc.markEffectGap(field.Default.Pos(), "record field default was not analyzed")
+					}
 				}
 			}
 		} else {
@@ -682,14 +697,10 @@ func (tc *TypeChecker) checkCallExpr(e *ast.CallExpr, env *Env, typed *TypedFile
 	fnDecl := typed.FunctionReferences[e.Callee]
 	if fnDecl != nil {
 		tc.currentFacts.Calls = append(tc.currentFacts.Calls, effects.ResolvedCall{Target: fnDecl, Position: e.Pos()})
-		missing := effects.Parse(fnDecl.Effects) &^ (tc.currentEffects | effects.Agent)
-		if missing != effects.None {
-			tc.errorf(e.Pos(), "missing declared effect %s for call to %q (declared at %s)", missing, fnDecl.Name, fnDecl.Pos())
-		}
 	}
 	if fnDecl == nil && !println {
 		typed.UnresolvedCalls[e] = true
-		tc.markEffectGap(e.Pos(), "unresolved call")
+		tc.markEffectGap(e.Pos(), "unresolved call target")
 	}
 
 	ft, ok := calleeType.(*types.FunctionType)

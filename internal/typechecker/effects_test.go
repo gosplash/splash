@@ -3,6 +3,9 @@ package typechecker_test
 import (
 	"strings"
 	"testing"
+
+	"gosplash.dev/splash/internal/diagnostic"
+	"gosplash.dev/splash/internal/effects"
 )
 
 func TestDeclaredEffectContracts(t *testing.T) {
@@ -18,7 +21,7 @@ func TestDeclaredEffectContracts(t *testing.T) {
 		{"structural agent", "agent fn serve() {}\nfn caller() { serve() }", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			diags := check("module sample\n" + tc.source + "\n")
+			diags := effectDiagnostics("module sample\n"+tc.source+"\n", nil)
 			if tc.want == "" {
 				if hasError(diags) {
 					t.Fatalf("unexpected errors: %v", diags)
@@ -38,11 +41,26 @@ func TestDeclaredEffectContractUsesQualifiedCallee(t *testing.T) {
 		"left.splash":  "module left\nfn lookup() needs DB.read {}\n",
 		"right.splash": "module right\nfn lookup() needs DB.write {}\n",
 	}
-	if diags := checkWithImports(imports+"fn caller() needs DB.read { harmless.lookup() }\n", files); hasError(diags) {
+	if diags := effectDiagnostics(imports+"fn caller() needs DB.read { harmless.lookup() }\n", files); hasError(diags) {
 		t.Fatalf("read grant should cover left.lookup: %v", diags)
 	}
-	diags := checkWithImports(imports+"fn caller() needs DB.read { privileged.lookup() }\n", files)
+	diags := effectDiagnostics(imports+"fn caller() needs DB.read { privileged.lookup() }\n", files)
 	if len(diags) != 1 || diags[0].Pos.Line != 4 || !strings.Contains(diags[0].Message, "missing declared effect DB.write") {
 		t.Fatalf("want DB.write diagnostic at the qualified call: %v", diags)
 	}
+}
+
+func effectDiagnostics(source string, files map[string]string) []diagnostic.Diagnostic {
+	entry, imports, diags := checkTypedWithImports(source, files)
+	if len(diags) != 0 {
+		return diags
+	}
+	var facts []effects.FunctionFacts
+	for _, module := range append(imports, entry) {
+		facts = append(facts, module.EffectFacts...)
+	}
+	for _, summary := range effects.Infer(facts) {
+		diags = append(diags, summary.Diagnostics()...)
+	}
+	return diags
 }

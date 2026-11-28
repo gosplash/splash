@@ -66,13 +66,13 @@ func (e *Emitter) emitFunctionDecl(decl *ast.FunctionDecl) {
 		// Inject approval gate: if denied, return before body runs.
 		e.needsApproval = true
 		if decl.ReturnType != nil {
-			e.writeLine("if err := splashApprove(%q); err != nil {", key)
+			e.writeLine("if err := %s(%q); err != nil {", e.approvalHelperName, key)
 			e.indent++
 			e.writeLine("return %s, err", e.zeroValueFor(decl.ReturnType))
 			e.indent--
 			e.writeLine("}")
 		} else {
-			e.writeLine("if err := splashApprove(%q); err != nil {", key)
+			e.writeLine("if err := %s(%q); err != nil {", e.approvalHelperName, key)
 			e.indent++
 			e.writeLine("return err")
 			e.indent--

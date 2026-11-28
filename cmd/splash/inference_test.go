@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"gosplash.dev/splash/internal/safety"
 	"gosplash.dev/splash/internal/toolschema"
 )
 
@@ -161,8 +163,8 @@ fn caller() needs Net -> Int { return gate() }
 
 func TestEffectsPropagateUnsupportedSourceCoverage(t *testing.T) {
 	for _, tc := range []struct{ name, declarations, expression, reason string }{
-		{"parameter default", "fn leaf(n: Int = 1) needs DB.read -> Int { return n }", "leaf(1)", "parameter default was not analyzed"},
-		{"record default", "type Record { value: Int = 1 }\nfn leaf() needs DB.read -> Int { let r = Record { value: 1 }\nreturn r.value }", "leaf()", "record field default was not analyzed"},
+		{"parameter default", "fn leaf(n: Int = initial()) needs DB.read -> Int { return n }\nfn initial() -> Int { return 1 }", "leaf()", "parameter default was not analyzed"},
+		{"record default", "type Record { value: Int = initial() }\nfn leaf() needs DB.read -> Int { let r = Record {}\nreturn r.value }\nfn initial() -> Int { return 1 }", "leaf()", "record field default was not analyzed"},
 		{"match expression", "fn leaf() needs DB.read -> Int { return match 1 { 1 => 1 } }", "leaf()", "unsupported expression"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -171,6 +173,11 @@ func TestEffectsPropagateUnsupportedSourceCoverage(t *testing.T) {
 			out, err := captureStdout(t, func() error { return runEffects(path) })
 			if err != nil || strings.Count(out, tc.reason+" at "+path+":2:") != 2 || strings.Contains(out, "unused grants:") {
 				t.Fatalf("want propagated coverage gap at the source, got %v:\n%s", err, out)
+			}
+			_, diag, err := captureEffectCommand(t, func() error { return runCheck(path) })
+			if !errors.Is(err, safety.ErrIndeterminate) || !strings.Contains(diag, path+":2:") ||
+				!strings.Contains(diag, tc.reason) {
+				t.Fatalf("want indeterminate source verification, got %v:\n%s", err, diag)
 			}
 		})
 	}
