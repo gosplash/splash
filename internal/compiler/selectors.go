@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
 	"gosplash.dev/splash/internal/typechecker"
 )
@@ -19,6 +20,7 @@ type selectedFunction struct {
 }
 
 type selectorIndex struct {
+	err         error
 	entryModule string
 	entry       map[string]selectedFunction
 	imported    map[selectorKey]selectedFunction
@@ -29,20 +31,35 @@ func (p *analysis) indexSelectors() *selectorIndex {
 		entry := p.modules[len(p.modules)-1]
 		index := &selectorIndex{
 			entry:    make(map[string]selectedFunction, len(entry.EffectFacts)),
-			imported: make(map[selectorKey]selectedFunction, len(p.effects)-len(entry.EffectFacts)),
+			imported: make(map[selectorKey]selectedFunction, max(0, len(p.effects)-len(entry.EffectFacts))),
 		}
+		p.selectors = index
 		if entry.File.Module != nil {
 			index.entryModule = entry.File.Module.Name
 		}
-		// Infer returns one summary per fact in input order. Analyze passes
-		// the facts in this same module and declaration order.
-		next := 0
+		summaries := make(map[*ast.FunctionDecl]*effects.Summary, len(p.effects))
+		for _, summary := range p.effects {
+			if summary == nil || summary.Function == nil {
+				index.err = fmt.Errorf("invalid effect summary for function selectors")
+				return
+			}
+			if _, exists := summaries[summary.Function]; exists {
+				index.err = fmt.Errorf("duplicate effect summary for %q", summary.Function.Name)
+				return
+			}
+			summaries[summary.Function] = summary
+		}
 		for _, owner := range p.modules {
 			module := owner.File.Module
 			for _, fact := range owner.EffectFacts {
-				selected := selectedFunction{owner, p.effects[next]}
-				next++
 				name := fact.Function.Name
+				summary := summaries[fact.Function]
+				if summary == nil {
+					index.err = fmt.Errorf("missing effect summary for %q", functionSymbol(module, fact.Function))
+					return
+				}
+				delete(summaries, fact.Function)
+				selected := selectedFunction{owner, summary}
 				switch {
 				case owner == entry:
 					index.entry[name] = selected
@@ -55,7 +72,9 @@ func (p *analysis) indexSelectors() *selectorIndex {
 				}
 			}
 		}
-		p.selectors = index
+		if len(summaries) != 0 {
+			index.err = fmt.Errorf("effect summary has no analyzed declaration")
+		}
 	})
 	return p.selectors
 }
@@ -65,6 +84,9 @@ func (p *AnalyzedProgram) resolveFunction(query string) (selectedFunction, error
 		return selectedFunction{}, ErrInvalidAnalysis
 	}
 	index := p.snapshot.indexSelectors()
+	if index.err != nil {
+		return selectedFunction{}, index.err
+	}
 	module, name, qualified := strings.Cut(query, ".")
 	if !qualified {
 		if selected, exists := index.entry[module]; exists {

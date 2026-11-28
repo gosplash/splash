@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -34,6 +36,87 @@ agent fn status() -> Int { return 1 + %s.count() }
 	if err == nil || !strings.Contains(diagnostic, restricted+":4:") ||
 		!strings.Contains(diagnostic, `module has @containment(agent: "none")`) {
 		t.Fatalf("want containment failure attributed to imported archive.count, got %v: %s", err, diagnostic)
+	}
+}
+
+func TestContainmentAnnotationsMustBeValid(t *testing.T) {
+	binary := buildSplashCLI(t)
+	for _, tc := range []struct {
+		name, annotation, diagnostic string
+		line                         int
+	}{
+		{"unknown mode", `@containment(agent: "approved_ony")`, "unknown @containment agent policy", 1},
+		{"bare", "@containment", "requires one string argument", 1},
+		{"empty", "@containment()", "requires one string argument", 1},
+		{"non-string", "@containment(agent: true)", "requires one string argument", 1},
+		{"unknown argument", `@containment(mode: "none")`, "requires one string argument", 1},
+		{"extra argument", `@containment(agent: "none", other: "none")`, "requires one string argument", 1},
+		{"duplicate argument", `@containment(agent: "none", agent: "read_only")`, "duplicate @containment argument", 1},
+		{"duplicate annotation", "@containment(agent: \"none\")\n@containment(agent: \"read_only\")", "duplicate @containment annotation", 2},
+		{"none", `@containment(agent: "none")`, "", 1},
+		{"read only", `@containment(agent: "read_only")`, "", 1},
+		{"approved only", `@containment(agent: "approved_only")`, "", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeSplashFile(t, t.TempDir(), "app.splash", tc.annotation+"\nmodule app\nfn main() {}")
+			if tc.diagnostic == "" {
+				readCheckJSON(t, binary, path, "verified")
+				return
+			}
+			findings, report := readCheckJSON(t, binary, path, "rejected")
+			if len(findings) != 1 || !strings.Contains(findings[0].Message, tc.diagnostic) {
+				t.Fatalf("want %q, got %+v", tc.diagnostic, findings)
+			}
+			if tc.name == "duplicate argument" {
+				if findings[0].Code != "PARSE_ERROR" || findings[0].Phase != "parse" || !strings.Contains(string(report), `"effectCoverage":null`) {
+					t.Fatalf("want parse failure before analysis, got %s", report)
+				}
+			} else if findings[0].Code != "POLICY_VIOLATION" || findings[0].Phase != "policy" ||
+				findings[0].PolicyRuleID != "containment.invalid_annotation" ||
+				!strings.Contains(string(report), `"effectCoverage":{"status":"complete"}`) {
+				t.Fatalf("want containment rejection with complete effect coverage, got %s", report)
+			}
+			if findings[0].Source == nil || findings[0].Source.Start.File != path || findings[0].Source.Start.Line != tc.line {
+				t.Fatalf("diagnostic should point to the invalid annotation: %+v", findings[0])
+			}
+		})
+	}
+}
+
+func TestContainmentAnnotationsMustBeOnModule(t *testing.T) {
+	binary := buildSplashCLI(t)
+	for _, source := range []string{
+		"module app\n@containment(agent: \"none\")\nfn main() {}",
+		"module app\ntype Record { @containment(agent: \"none\") value: Int }",
+	} {
+		path := writeSplashFile(t, t.TempDir(), "app.splash", source)
+		findings, _ := readCheckJSON(t, binary, path, "rejected")
+		if len(findings) != 1 || !strings.Contains(findings[0].Message, "only applies to a module declaration") {
+			t.Fatalf("want module-only diagnostic, got %+v", findings)
+		}
+	}
+}
+
+func TestMalformedImportedContainmentBlocksEmission(t *testing.T) {
+	binary := buildSplashCLI(t)
+	dir := t.TempDir()
+	const librarySource = "@containment(agent: %q)\nmodule library\nfn unused() {}\n"
+	library := writeSplashFile(t, dir, "library.splash", fmt.Sprintf(librarySource, "none"))
+	path := writeSplashFile(t, dir, "app.splash", "module app\nuse library\nfn main() {}")
+	if output, err := exec.Command(binary, "emit", path).Output(); err != nil || len(output) == 0 {
+		t.Fatalf("valid containment should permit emission, got %q, %v", output, err)
+	}
+
+	writeSplashFile(t, dir, "library.splash", fmt.Sprintf(librarySource, "unknown"))
+	command := exec.Command(binary, "emit", path)
+	output, err := command.Output()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || len(output) != 0 {
+		t.Fatalf("emit should fail without generating Go source, got %q, %v", output, err)
+	}
+	stderr := string(exit.Stderr)
+	if !strings.Contains(stderr, library+":1:") || !strings.Contains(stderr, "unknown @containment agent policy") {
+		t.Fatalf("want diagnostic for malformed policy in the imported file, got %s", stderr)
 	}
 }
 

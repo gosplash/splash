@@ -124,7 +124,7 @@ Policy producers also attach a stable `policyRuleId` to `POLICY_VIOLATION` and `
 | --- | --- |
 | Approval | `approval.call_context`, `approval.required` |
 | Redline | `redline.agent_reachable` |
-| Containment | `containment.none`, `containment.read_only`, `containment.approved_only` |
+| Containment | `containment.invalid_annotation`, `containment.none`, `containment.read_only`, `containment.approved_only` |
 | Tool data classification | `tool.classified_return`, `tool.return_coverage` |
 | Sandbox | `sandbox.duplicate`, `sandbox.invalid_effect_list`, `sandbox.denied_effect`, `sandbox.effect_not_allowed` |
 | Budget | `budget.max_cost_literal`, `budget.max_calls_literal` |
@@ -260,6 +260,24 @@ go test ./cmd/splash -run '^$' -bench '^BenchmarkCheck_Pipeline_' -benchtime 200
 
 For the pre-index baseline, copy the newer first-inspect benchmark case onto a temporary checkout at `7b757c3`. This isolates the harness difference from the compiler change. These results were recorded before restacking the compiler review fixes.
 
+#### Digest-enabled JSON commands
+
+At `ac450a4`, both inputs contain the same 2,000-function chain, policy declarations, and query target. The larger input appends 2 MiB of line comments. This varies captured bytes at fixed graph size and report volume.
+
+| Operation | 100,058 source bytes | 2,197,210 source bytes | JSON response size |
+| --- | ---: | ---: | ---: |
+| `check --json` | 9.20 ms | 13.72 ms | 434 bytes |
+| `inspect bench.f1000 --json` | 7.96 ms | 13.27 ms | 774 bytes |
+| `callers bench.f1000 --json --depth 4` | 7.98 ms | 14.63 ms | 3,386 bytes |
+| First identity computation on a prepared analysis | 45.44 µs | 1.04 ms | |
+
+Apple M5, macOS 27.0.1 (26A434), Go 1.26.3 arm64. Each value is the median of five ten-iteration runs. CLI measurements include fresh process launch, source loading, analysis, digest computation, query or verification, and JSON output capture and comparison. The executable and OS caches are primed. Each measured CLI response matches the validated reference byte for byte. Temporary path lengths affect response size. The isolated identity benchmark excludes analysis and recomputes the digests for each new capture.
+
+```sh
+go test ./cmd/splash -run '^$' \
+  -bench '^Benchmark(SemanticJSONCLI|CapturedIdentity)$' -benchtime=10x -count=5
+```
+
 ## Snapshot and artifact provenance
 
 Check, inspect, and dependency reports expose `identity.sourceId` and `identity.analysisId` for one successful capture. The analysis computes them lazily from captured data.
@@ -267,7 +285,7 @@ Check, inspect, and dependency reports expose `identity.sourceId` and `identity.
 - `splash-source-v1:sha256:<hex>` identifies the file locators and exact bytes of the captured closure. File locators are lexical paths relative to the entry file’s directory, with forward slash separators. Relocating the whole source tree or spelling the same lexical entry path differently preserves the ID when the capture is equivalent. If an entry spelled through a symlink and a cleaned import would share a locator, the entry keeps a reserved `./` prefix to distinguish the two captures. Unloaded files, symlink targets, and filesystem metadata are outside the manifest.
 - `splash-analysis-v1:sha256:<hex>` binds the source ID, the entry locator, and the compiler’s analysis rules version. The current resolver and built-in boundaries use fixed rules, so their inputs come from this manifest and rules version. The query, direction, depth, display paths, running binary build, verification rules, backend, and runtime are outside this ID’s scope.
 
-Each v1 manifest starts with its full ID prefix as a domain marker. Strings use an unsigned base-128 varint byte length followed by their bytes. The source manifest appends each locator in byte order, followed by the 32 raw bytes of its SHA-256 content digest. The analysis manifest appends the source ID string, entry locator, and rules version string in that order. Each final digest is lowercase hex. The rules version starts at `1` and must change when front-end semantics, import binding, or the modeled call and effect rules change. A manifest encoding or normalization change requires a new corresponding format version. Add any future configurable analysis inputs to the manifest before claiming that it binds those inputs.
+Each v1 manifest starts with its full ID prefix as a domain marker. Strings use an unsigned base-128 varint byte length followed by their bytes. The source manifest appends each locator in byte order, followed by the 32 raw bytes of its SHA-256 content digest. The analysis manifest appends the source ID string, entry locator, and rules version string in that order. Each final digest is lowercase hex. The analysis rules version is `2`, reflecting stricter containment annotation parsing. Update it whenever front-end semantics, import binding, or the modeled call and effect rules change. A manifest encoding or normalization change requires a new corresponding format version. Add any future configurable analysis inputs to the manifest before claiming that it binds those inputs.
 
 These digests support content and input comparison. Authenticity requires trusted reanalysis or authenticated evidence from a protected verifier. Persisted artifact provenance remains proposed. It would also bind the concrete compiler and backend builds, artifact kind and digest, and applicable build inputs such as generated source, Go toolchain, target, flags, and native dependencies.
 
