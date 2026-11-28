@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -42,18 +43,19 @@ func TestContainmentAnnotationsMustBeValid(t *testing.T) {
 	binary := buildSplashCLI(t)
 	for _, tc := range []struct {
 		name, annotation, diagnostic string
+		line                         int
 	}{
-		{"unknown mode", `@containment(agent: "approved_ony")`, "unknown @containment agent policy"},
-		{"bare", "@containment", "requires one string argument"},
-		{"empty", "@containment()", "requires one string argument"},
-		{"non-string", "@containment(agent: true)", "requires one string argument"},
-		{"unknown argument", `@containment(mode: "none")`, "requires one string argument"},
-		{"extra argument", `@containment(agent: "none", other: "none")`, "requires one string argument"},
-		{"duplicate argument", `@containment(agent: "none", agent: "read_only")`, "duplicate @containment argument"},
-		{"duplicate annotation", "@containment(agent: \"none\")\n@containment(agent: \"read_only\")", "duplicate @containment annotation"},
-		{"none", `@containment(agent: "none")`, ""},
-		{"read only", `@containment(agent: "read_only")`, ""},
-		{"approved only", `@containment(agent: "approved_only")`, ""},
+		{"unknown mode", `@containment(agent: "approved_ony")`, "unknown @containment agent policy", 1},
+		{"bare", "@containment", "requires one string argument", 1},
+		{"empty", "@containment()", "requires one string argument", 1},
+		{"non-string", "@containment(agent: true)", "requires one string argument", 1},
+		{"unknown argument", `@containment(mode: "none")`, "requires one string argument", 1},
+		{"extra argument", `@containment(agent: "none", other: "none")`, "requires one string argument", 1},
+		{"duplicate argument", `@containment(agent: "none", agent: "read_only")`, "duplicate @containment argument", 1},
+		{"duplicate annotation", "@containment(agent: \"none\")\n@containment(agent: \"read_only\")", "duplicate @containment annotation", 2},
+		{"none", `@containment(agent: "none")`, "", 1},
+		{"read only", `@containment(agent: "read_only")`, "", 1},
+		{"approved only", `@containment(agent: "approved_only")`, "", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeSplashFile(t, t.TempDir(), "app.splash", tc.annotation+"\nmodule app\nfn main() {}")
@@ -61,11 +63,20 @@ func TestContainmentAnnotationsMustBeValid(t *testing.T) {
 				readCheckJSON(t, binary, path, "verified")
 				return
 			}
-			findings, _ := readCheckJSON(t, binary, path, "rejected")
+			findings, report := readCheckJSON(t, binary, path, "rejected")
 			if len(findings) != 1 || !strings.Contains(findings[0].Message, tc.diagnostic) {
 				t.Fatalf("want %q, got %+v", tc.diagnostic, findings)
 			}
-			if findings[0].Source == nil || findings[0].Source.Start.File != path {
+			if tc.name == "duplicate argument" {
+				if findings[0].Code != "PARSE_ERROR" || findings[0].Phase != "parse" || !strings.Contains(string(report), `"effectCoverage":null`) {
+					t.Fatalf("want parse failure before analysis, got %s", report)
+				}
+			} else if findings[0].Code != "POLICY_VIOLATION" || findings[0].Phase != "policy" ||
+				findings[0].PolicyRuleID != "containment.invalid_annotation" ||
+				!strings.Contains(string(report), `"effectCoverage":{"status":"complete"}`) {
+				t.Fatalf("want containment rejection with complete effect coverage, got %s", report)
+			}
+			if findings[0].Source == nil || findings[0].Source.Start.File != path || findings[0].Source.Start.Line != tc.line {
 				t.Fatalf("diagnostic should point to the invalid annotation: %+v", findings[0])
 			}
 		})
@@ -89,14 +100,23 @@ func TestContainmentAnnotationsMustBeOnModule(t *testing.T) {
 func TestMalformedImportedContainmentBlocksEmission(t *testing.T) {
 	binary := buildSplashCLI(t)
 	dir := t.TempDir()
-	writeSplashFile(t, dir, "library.splash", `@containment(agent: "unknown")
-module library
-fn unused() {}
-`)
+	const librarySource = "@containment(agent: %q)\nmodule library\nfn unused() {}\n"
+	library := writeSplashFile(t, dir, "library.splash", fmt.Sprintf(librarySource, "none"))
 	path := writeSplashFile(t, dir, "app.splash", "module app\nuse library\nfn main() {}")
+	if output, err := exec.Command(binary, "emit", path).Output(); err != nil || len(output) == 0 {
+		t.Fatalf("valid containment should permit emission, got %q, %v", output, err)
+	}
+
+	writeSplashFile(t, dir, "library.splash", fmt.Sprintf(librarySource, "unknown"))
 	command := exec.Command(binary, "emit", path)
-	if output, err := command.Output(); err == nil || len(output) != 0 {
+	output, err := command.Output()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || len(output) != 0 {
 		t.Fatalf("emit should fail without generating Go source, got %q, %v", output, err)
+	}
+	stderr := string(exit.Stderr)
+	if !strings.Contains(stderr, library+":1:") || !strings.Contains(stderr, "unknown @containment agent policy") {
+		t.Fatalf("want diagnostic for malformed policy in the imported file, got %s", stderr)
 	}
 }
 

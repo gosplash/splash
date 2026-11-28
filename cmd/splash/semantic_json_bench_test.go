@@ -22,7 +22,8 @@ func semanticJSONSources() []struct{ name, source string } {
 }
 
 // BenchmarkSemanticJSONCLI times fresh processes with warm OS caches and a
-// primed binary. CLI build and expected-response validation are untimed.
+// primed binary. CLI build and reference preparation are untimed. Each timed
+// iteration includes comparison with the reference response.
 func BenchmarkSemanticJSONCLI(b *testing.B) {
 	binary := buildSplashCLI(b)
 	for _, fixture := range semanticJSONSources() {

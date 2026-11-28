@@ -58,6 +58,7 @@ func (p *analysis) indexSelectors() *selectorIndex {
 					index.err = fmt.Errorf("missing effect summary for %q", functionSymbol(module, fact.Function))
 					return
 				}
+				delete(summaries, fact.Function)
 				selected := selectedFunction{owner, summary}
 				switch {
 				case owner == entry:
@@ -70,6 +71,9 @@ func (p *analysis) indexSelectors() *selectorIndex {
 					index.imported[key] = selected
 				}
 			}
+		}
+		if len(summaries) != 0 {
+			index.err = fmt.Errorf("effect summary has no analyzed declaration")
 		}
 	})
 	return p.selectors

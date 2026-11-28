@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/effects"
 )
 
@@ -97,6 +99,28 @@ func TestSelectorsAssociateEffectsByDeclaration(t *testing.T) {
 		contract, err := p.InspectFunction(tc.query)
 		if err != nil || contract.Symbol != tc.symbol || contract.Declared != tc.authority {
 			t.Errorf("inspect %q: got %+v, %v", tc.query, contract, err)
+		}
+	}
+}
+
+func TestSelectorsRejectUnmatchedEffectSummaries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "main.splash")
+	if err := os.WriteFile(path, []byte("fn main() {}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p, diagnostics, err := Analyze(path)
+	if err != nil {
+		t.Fatalf("analyze: %v, %v", err, diagnostics)
+	}
+	p.snapshot.effects = append(p.snapshot.effects, &effects.Summary{
+		Function:   &ast.FunctionDecl{Name: "foreign"},
+		DirectGaps: []effects.CoverageGap{{Reason: "internal test"}},
+	})
+	_, inspectErr := p.InspectFunction("main")
+	_, callersErr := p.Dependencies("main", Callers, 1)
+	for _, err := range []error{inspectErr, callersErr} {
+		if err == nil || !strings.Contains(err.Error(), "no analyzed declaration") {
+			t.Fatalf("want unmatched effect summary error, got %v", err)
 		}
 	}
 }
