@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"gosplash.dev/splash/internal/compiler"
+	"gosplash.dev/splash/internal/safety"
 )
 
 // Each sandbox reaches the same diamond chain and approval boundary. Alternate
@@ -71,6 +73,19 @@ func BenchmarkRejectedPolicyChain(b *testing.B) {
 	for _, n := range []int{100, 1000, 2000, 10000} {
 		b.Run(fmt.Sprintf("Functions%d", n), func(b *testing.B) {
 			path := writeTempSplash(b, rejectedPolicyChain(n))
+			program, diagnostics, err := compiler.Analyze(path)
+			if err != nil {
+				b.Fatalf("analyze rejection fixture: %v, %v", err, diagnostics)
+			}
+			_, result, err := compiler.Verify(program)
+			truncated := false
+			for _, diagnostic := range result.Violations {
+				truncated = truncated || diagnostic.WitnessTruncated
+			}
+			if !errors.Is(err, safety.ErrRejected) || len(result.Violations) != 2*n+1 || !truncated {
+				b.Fatalf("unexpected fixture verdict %v, %d violations, truncated=%t", err, len(result.Violations), truncated)
+			}
+
 			var output outputByteCount
 			b.ReportAllocs()
 			for b.Loop() {
