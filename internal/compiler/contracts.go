@@ -86,12 +86,12 @@ func functionSymbol(module *ast.ModuleDecl, declaration *ast.FunctionDecl) strin
 func (a *analysis) functionSignature(fnType *types.FunctionType, declaration *ast.FunctionDecl) Signature {
 	signature := Signature{
 		Parameters: make([]Parameter, 0, len(declaration.Params)),
-		ReturnType: fnType.Return.TypeName(), ReturnTypeIdentity: a.typeIdentity(fnType.Return),
+		ReturnType: fnType.Return.TypeName(), ReturnTypeIdentity: a.signatureTypeIdentity(declaration.ReturnType, fnType.Return),
 		Async: declaration.IsAsync,
 	}
 	for i, param := range declaration.Params {
 		signature.Parameters = append(signature.Parameters, Parameter{
-			Name: param.Name, Type: fnType.Params[i].TypeName(), TypeIdentity: a.typeIdentity(fnType.Params[i]),
+			Name: param.Name, Type: fnType.Params[i].TypeName(), TypeIdentity: a.signatureTypeIdentity(param.Type, fnType.Params[i]),
 			HasDefault: param.Default != nil, Variadic: param.Variadic,
 		})
 	}

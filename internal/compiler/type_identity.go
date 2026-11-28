@@ -1,6 +1,9 @@
 package compiler
 
-import "gosplash.dev/splash/internal/types"
+import (
+	"gosplash.dev/splash/internal/ast"
+	"gosplash.dev/splash/internal/types"
+)
 
 // TypeIdentity is a detached representation of a checked signature type.
 // Nominal names are scoped by the path of the bound declaration.
@@ -11,6 +14,13 @@ type TypeIdentity struct {
 	Arguments  []TypeIdentity `json:"arguments,omitempty"`
 	Parameters []TypeIdentity `json:"parameters,omitempty"`
 	ReturnType *TypeIdentity  `json:"returnType,omitempty"`
+}
+
+func (a *analysis) signatureTypeIdentity(expr ast.TypeExpr, checked types.Type) TypeIdentity {
+	if !types.RetainsTypeArguments(expr, checked) {
+		return TypeIdentity{}
+	}
+	return a.typeIdentity(checked)
 }
 
 func (a *analysis) typeIdentity(typ types.Type) TypeIdentity {

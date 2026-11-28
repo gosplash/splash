@@ -132,7 +132,7 @@ Policy producers also attach a stable `policyRuleId` to `POLICY_VIOLATION` and `
 
 Path diagnostics report `witnessLength` and `witnessTruncated`. An effect witness counts call or operation steps and shows at most eight, keeping the first seven calls and the origin operation when truncated. A redline path counts function names, including both endpoints, and appears in the message. When truncated, it shows the agent root and the seven names nearest the violation. Messages identify how many entries were omitted. Every individual finding still appears in the report.
 
-A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. The report currently omits phase-level coverage, snapshot identities, causal diagnostic links, and repair suggestions. Clients should tolerate additive fields and codes within v1.
+A witness step has a `kind` of `call` or `operation` and a display `target`. Source sites identify the relevant calls. For a resolved call, `declaration` points to the actual target, including when accessed through an import alias. Interpret `verified` against the compiler's current entry-closure checks. Backend admission and functional correctness are separate outcomes. The report currently omits phase-level coverage, causal diagnostic links, and repair suggestions. Clients should tolerate additive fields and codes within v1.
 
 The policy scaling benchmarks cover a rejected chain and overlapping sandbox, agent, and approval closures. The chain includes analysis, verification, and JSON encoding, with the writer counting bytes only. The overlapping-roots benchmark reuses captured analysis and times verification. In the `7b757c3` baseline profile on Apple M5 and Go 1.26.3, sandbox checks accounted for 1.23 s of 1.45 s sampled within verification and 82.13% of total sampled allocation space. The sandbox traversal still visits each root's reachable set independently. The profiled harness was only the overlapping-policy portion of `cmd/splash/policy_bench_test.go` copied onto a temporary `7b757c3` checkout. It generates a shared diamond graph with agent roots and an approval-gated tail. Collect the profile there with `go test ./cmd/splash -run '^$' -bench '^BenchmarkOverlappingPolicyRoots$' -benchmem -benchtime 300ms -count 3 -cpuprofile /tmp/splash-policy.cpu -memprofile /tmp/splash-policy.mem -o /tmp/splash-policy.test`.
 
@@ -167,7 +167,7 @@ The existing signature display fields `type` and `returnType` remain strings. A 
 | `optional`, `list`, `result` | `arguments` carries the inner type, element type, or the success and error types in that order. |
 | `function` | `parameters` carries ordered argument types and is omitted for zero arguments. `returnType` carries the result type. |
 
-Within an entry closure’s layout, a bound record or enum keeps the same locator through import aliases and edits that leave its path and declared name intact. Same-name nominal types in different files have distinct locators. Compare analysis identities when the exact snapshot matters. Unresolved types and named types without checked declaration bindings, such as injected adapter types, retain their display string. A compound identity is omitted if a component is unavailable.
+Within an entry closure’s layout, a bound record or enum keeps its locator through import aliases and edits that leave its path and declared name intact. The same collision rule as the source manifest can add a reserved `./` prefix when an entry path spelled through a symlink collides with an imported path. Same-name nominal types in different files have distinct locators. Compare analysis identities when the exact snapshot matters. Unresolved types and named types without checked declaration bindings, such as injected adapter types, retain their display string. A compound identity is omitted if a component is unavailable or the frontend discarded an explicit type application.
 
 #### Inspection performance baseline
 
@@ -253,6 +253,8 @@ go test ./cmd/splash -run '^$' -bench '^Benchmark(Inspect|Dependencies)$/(^Looku
 go test ./cmd/splash -run '^$' -bench '^Benchmark(Inspect|Dependencies)$/First' -benchtime 50x -count 5 -benchmem
 go test ./cmd/splash -run '^$' -bench '^BenchmarkCheck_Pipeline_' -benchtime 200ms -count 5 -benchmem
 ```
+
+For the pre-index baseline, copy the newer first-inspect benchmark case onto a temporary checkout at `7b757c3`. This isolates the harness difference from the compiler change. These results were recorded before restacking the compiler review fixes.
 
 ## Snapshot and artifact provenance
 

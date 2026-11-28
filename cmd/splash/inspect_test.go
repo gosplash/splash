@@ -133,6 +133,7 @@ use right as two
 use bridge
 fn nested(cb: fn(List<one.Item?>) -> Result<one.Item, two.Item>) {}
 fn opaque(x: Mystery) {}
+fn erased(x: fn(List<Int<Missing>>) -> String) {}
 fn main() {}
 `)
 	}
@@ -180,6 +181,10 @@ fn main() {}
 	opaque, _ := readInspectJSON(t, binary, entry, "app.opaque", true)
 	if got := opaque.Contract.Signature.Parameters[0]; got.Type != "Unknown" || got.TypeIdentity != nil {
 		t.Errorf("expected display only for unsupported checked type: %+v", got)
+	}
+	erased, _ := readInspectJSON(t, binary, entry, "app.erased", true)
+	if got := erased.Contract.Signature.Parameters[0]; got.TypeIdentity != nil {
+		t.Errorf("erased type arguments must not produce identity: %+v", got)
 	}
 	dependencyOut, err := exec.Command(binary, "callees", entry, "app.main", "--json").Output()
 	var dependency inspectTestReport
