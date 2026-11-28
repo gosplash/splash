@@ -140,6 +140,10 @@ The policy scaling benchmarks cover a rejected chain and overlapping sandbox, ag
 go test ./cmd/splash -run '^$' -bench 'Benchmark(RejectedPolicyChain|OverlappingPolicyRoots)$' -benchtime 300ms -count 3 -benchmem
 ```
 
+The sandbox checker skips a root's walk when the union of declared graph effects contains no possible violation of its policy. The exact reachable-set check still runs when that test finds a possible violation. This optimization leaves required coverage checks in place.
+
+With the overlapping-policy harness above, comparing `4ba7f72` to `ce1d14f` on Apple M5 and Go 1.26.3, the 256-root, 128-layer fixture's median verification time fell from 12.89 ms to 0.53 ms. Allocated bytes per verification fell from 11,645,440 to 567,700. The separate 2,000-function check pipeline without sandbox annotations measured 6.13 ms and 6.16 ms, with the same median allocation count. Each median uses three 200 ms benchmark runs. This fixture declares no effect outside its sandbox allow list. The measurement excludes source analysis and does not characterize mixed graphs that need exact walks.
+
 ### Inspect JSON v1
 
 `splash inspect app/main.splash inventory.reconcile --json` resolves one function in the analyzed entry and its loaded imports. A qualified selector uses the declared module name and the function name. A bare selector searches the entry file only, including an entry without a module declaration. Imported functions in files without a module declaration have no v1 selector. Import aliases belong to their source files. If two files with the same declared module name both define the requested function, inspection reports ambiguity. The function and its effects are linked by the resolved declaration, and the report uses the same captured snapshot and semantic facts that source verification consumes.
