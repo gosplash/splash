@@ -262,14 +262,14 @@ For the pre-index baseline, copy the newer first-inspect benchmark case onto a t
 
 #### Digest-enabled JSON commands
 
-At `c5abcc9`, both inputs contain the same 2,000-function chain, policy declarations, and query target. The larger input appends 2 MiB of line comments. This varies captured bytes at fixed graph size and report volume.
+At `ac450a4`, both inputs contain the same 2,000-function chain, policy declarations, and query target. The larger input appends 2 MiB of line comments. This varies captured bytes at fixed graph size and report volume.
 
 | Operation | 100,058 source bytes | 2,197,210 source bytes | JSON response size |
 | --- | ---: | ---: | ---: |
-| `check --json` | 8.80 ms | 12.90 ms | 434 bytes |
-| `inspect bench.f1000 --json` | 7.67 ms | 12.15 ms | 774 bytes |
-| `callers bench.f1000 --json --depth 4` | 7.77 ms | 12.34 ms | 3,386 bytes |
-| First identity computation on a prepared analysis | 38.15 µs | 804.66 µs | |
+| `check --json` | 9.20 ms | 13.72 ms | 434 bytes |
+| `inspect bench.f1000 --json` | 7.96 ms | 13.27 ms | 774 bytes |
+| `callers bench.f1000 --json --depth 4` | 7.98 ms | 14.63 ms | 3,386 bytes |
+| First identity computation on a prepared analysis | 45.44 µs | 1.04 ms | |
 
 Apple M5, macOS 27.0.1 (26A434), Go 1.26.3 arm64. Each value is the median of five ten-iteration runs. CLI measurements include fresh process launch, source loading, analysis, digest computation, query or verification, and JSON output capture and comparison. The executable and OS caches are primed. Each measured CLI response matches the validated reference byte for byte. Temporary path lengths affect response size. The isolated identity benchmark excludes analysis and recomputes the digests for each new capture.
 
