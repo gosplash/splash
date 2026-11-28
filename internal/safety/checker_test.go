@@ -10,6 +10,7 @@ import (
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
 	"gosplash.dev/splash/internal/safety"
+	"gosplash.dev/splash/internal/typechecker"
 )
 
 func TestSandboxRejectsUnknownEffectLabels(t *testing.T) {
@@ -62,7 +63,8 @@ func check(src string) []diagnostic.Diagnostic {
 	file, _ := p.ParseFile()
 	g := callgraph.Build(file)
 	c := safety.New()
-	return c.Check(file, g, nil)
+	module, _ := typechecker.New().Check(file)
+	return c.Check([]safety.Module{{File: file, Types: module.Types}}, g, nil)
 }
 
 func hasError(diags []diagnostic.Diagnostic) bool {

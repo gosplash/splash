@@ -3,22 +3,30 @@
 package safety
 
 import (
+	"slices"
 	"strings"
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/callgraph"
 	"gosplash.dev/splash/internal/diagnostic"
 	"gosplash.dev/splash/internal/effects"
+	"gosplash.dev/splash/internal/types"
 )
 
-// Checker runs safety enforcement passes over a parsed file and its call graph.
+// Checker runs safety enforcement passes over typed modules and their call graph.
 type Checker struct{}
 
 // New creates a new Checker.
 func New() *Checker { return &Checker{} }
 
+// Module carries owned syntax and types resolved by shared analysis.
+type Module struct {
+	File  *ast.File
+	Types map[ast.Node]types.Type
+}
+
 // Check runs all enforcement passes and returns any violations as diagnostics.
-func (c *Checker) Check(file *ast.File, g *callgraph.Graph, inferred []*effects.Summary) []diagnostic.Diagnostic {
+func (c *Checker) Check(modules []Module, g *callgraph.Graph, inferred []*effects.Summary) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 
 	roots := g.AgentRoots()
@@ -27,12 +35,15 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph, inferred []*effects.
 
 	diags = append(diags, c.checkUnresolvedCalls(g, roots)...)
 	diags = append(diags, c.checkApprovalCallContexts(g)...)
-	diags = append(diags, c.checkRedline(file, g, agentParents)...)
-	diags = append(diags, c.checkApprove(file, g, agentReachable)...)
-	diags = append(diags, c.checkContainment(file, g, agentReachable)...)
-	diags = append(diags, c.checkToolDataClassification(file)...)
-	diags = append(diags, c.checkSandbox(file, g)...)
-	diags = append(diags, c.checkBudget(file)...)
+	for _, module := range modules {
+		file := module.File
+		diags = append(diags, c.checkRedline(file, g, agentParents)...)
+		diags = append(diags, c.checkApprove(file, g, agentReachable)...)
+		diags = append(diags, c.checkContainment(file, g, agentReachable)...)
+		diags = append(diags, c.checkToolDataClassification(module)...)
+		diags = append(diags, c.checkSandbox(file, g)...)
+		diags = append(diags, c.checkBudget(file)...)
+	}
 	for _, summary := range inferred {
 		diags = append(diags, summary.Diagnostics()...)
 	}
@@ -107,64 +118,32 @@ func sensitiveFields(decl *ast.TypeDecl) []string {
 // checkToolDataClassification emits an error for every tool function whose
 // return type contains @sensitive or @restricted fields.
 // PII in a tool's return value flows directly into the AI agent's context window.
-func (c *Checker) checkToolDataClassification(file *ast.File) []diagnostic.Diagnostic {
-	// Build a map of type name → sensitive field names for fast lookup.
-	typeFields := make(map[string][]string)
-	for _, decl := range file.Declarations {
-		td, ok := decl.(*ast.TypeDecl)
-		if !ok {
-			continue
-		}
-		if sf := sensitiveFields(td); len(sf) > 0 {
-			typeFields[td.Name] = sf
-		}
-	}
-
+func (c *Checker) checkToolDataClassification(module Module) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
-	for _, decl := range file.Declarations {
-		fn, ok := decl.(*ast.FunctionDecl)
-		if !ok {
+	for _, declaration := range module.File.Declarations {
+		fn, ok := declaration.(*ast.FunctionDecl)
+		if !ok || !slices.ContainsFunc(fn.Annotations, func(ann ast.Annotation) bool {
+			return ann.Kind == ast.AnnotTool
+		}) {
 			continue
 		}
-		// Only check tool functions.
-		hasTool := false
-		for _, ann := range fn.Annotations {
-			if ann.Kind == ast.AnnotTool {
-				hasTool = true
-				break
-			}
+		returnType := module.Types[fn.ReturnType]
+		if optional, ok := returnType.(*types.OptionalType); ok {
+			returnType = optional.Inner
 		}
-		if !hasTool {
+		record, ok := returnType.(*types.NamedType)
+		if !ok || record.Declaration == nil {
 			continue
 		}
-		// Unwrap optional return type: User? → User
-		retType := fn.ReturnType
-		if opt, ok := retType.(*ast.OptionalTypeExpr); ok {
-			retType = opt.Inner
-		}
-		named, ok := retType.(*ast.NamedTypeExpr)
-		if !ok {
-			continue
-		}
-		typeName := stripQualifier(named.Name)
-		if sf, bad := typeFields[typeName]; bad {
+		if fields := sensitiveFields(record.Declaration); len(fields) > 0 {
 			diags = append(diags, diagnostic.Errorf(
 				fn.Position,
 				"tool fn %q returns type %s which contains sensitive or restricted fields (%s) — PII would flow into the AI agent's context",
-				fn.Name,
-				typeName,
-				strings.Join(sf, ", "),
+				fn.Name, record.TypeName(), strings.Join(fields, ", "),
 			))
 		}
 	}
 	return diags
-}
-
-func stripQualifier(name string) string {
-	if idx := strings.LastIndex(name, "."); idx >= 0 {
-		return name[idx+1:]
-	}
-	return name
 }
 
 // checkRedline emits an error for every redline function that is agent-reachable.
