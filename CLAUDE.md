@@ -56,7 +56,7 @@ To add a new check:
 2. Add `checkFoo(file, g)` method to `checker.go`
 3. Call it from `Check()`
 
-Do not import `codegen` from safety. Do not import `typechecker` from safety. The safety checker works directly on AST + call graph.
+Keep safety independent of code generation and type checking. `Check` consumes the AST, call graph, and inferred effect summaries supplied by shared analysis. Parser-only fixtures pass `nil` for inference evidence.
 
 ### `internal/codegen`
 `Backend` interface + `GoBackend` implementation. The `Emitter` is the internal implementation — don't expose more of it. `Options` carries per-compilation settings (currently `ApprovalCallers`). Adding a new codegen option means adding a field to `Options` — nothing else in the CLI needs to change.
@@ -109,7 +109,7 @@ Tests check that generated Go source contains expected substrings. Use `contains
 
 ## Settled Design Decisions
 
-**Effect checking is static.** No dynamic effect dispatch. Effects are declared, not inferred.
+**Effect checking is static.** Source contracts declare authority. Infer effects only from resolved calls and modeled operations. Carry incomplete coverage separately from known effects.
 
 **Safety is pre-codegen.** The Go backend sees a verified AST. No enforcement happens in generated Go code (except `@approve` gate dispatch, which is explicit runtime behavior, not enforcement).
 

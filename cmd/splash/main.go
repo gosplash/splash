@@ -112,6 +112,7 @@ type analyzedProgram struct {
 	modules []*typechecker.TypedFile
 	merged  *ast.File
 	graph   *callgraph.Graph
+	effects []*effects.Summary
 
 	functionReferences map[ast.Expr]*ast.FunctionDecl
 	printlnCalls       map[*ast.CallExpr]bool
@@ -163,14 +164,17 @@ func analyzeProgram(path string) (*analyzedProgram, error) {
 	program.printlnCalls = make(map[*ast.CallExpr]bool)
 	program.localNames = make(map[string]bool)
 	unresolved := make(map[*ast.CallExpr]bool)
+	var effectFacts []effects.FunctionFacts
 	for _, module := range program.modules {
 		files = append(files, module.File)
 		maps.Copy(program.functionReferences, module.FunctionReferences)
 		maps.Copy(program.printlnCalls, module.PrintlnCalls)
 		maps.Copy(program.localNames, module.LocalNames)
 		maps.Copy(unresolved, module.UnresolvedCalls)
+		effectFacts = append(effectFacts, module.EffectFacts...)
 	}
 	program.graph = callgraph.BuildResolved(files, program.functionReferences, unresolved)
+	program.effects = effects.Infer(effectFacts)
 	return program, nil
 }
 
@@ -188,7 +192,7 @@ func runCheck(path string) error {
 }
 
 func (p *analyzedProgram) safetyDiagnostics() []diagnostic.Diagnostic {
-	return safety.New().Check(p.merged, p.graph)
+	return safety.New().Check(p.merged, p.graph, p.effects)
 }
 
 func (p *analyzedProgram) reportSafetyErrors() bool {
@@ -388,9 +392,27 @@ func runEffects(path string) error {
 		return err
 	}
 
+	summaries := make(map[string]*effects.Summary, len(program.effects))
+	for _, summary := range program.effects {
+		summaries[program.graph.FunctionKey(summary.Function)] = summary
+	}
 	fmt.Println("effects:")
 	for _, node := range program.graph.Nodes() {
-		fmt.Printf("- %s: %s\n", node.Name, node.Effects.String())
+		summary := summaries[node.Name]
+		fmt.Printf("- %s: %s (declared)\n", node.Name, summary.Declared)
+		if summary.Gap != nil {
+			if summary.Inferred == effects.None {
+				fmt.Println("  inferred: unknown")
+			} else {
+				fmt.Printf("  inferred: %s (known)\n", summary.Inferred)
+			}
+			fmt.Printf("  coverage: incomplete (%s at %s)\n", summary.Gap.Reason, summary.Gap.Position)
+			continue
+		}
+		fmt.Printf("  inferred: %s\n  coverage: complete\n", summary.Inferred)
+		if unused := summary.UnusedGrants(); unused != effects.None {
+			fmt.Printf("  unused grants: %s\n", unused)
+		}
 	}
 	return nil
 }

@@ -352,7 +352,7 @@ The type checker infers types for `let` bindings when no annotation is given. Ex
 
 ### 4.5 Effect Propagation
 
-For resolved named calls, the declared compatibility rule in [§5.3](#53-effect-checking) carries capability requirements along a call chain. Conservative inference from operations and checking unresolved targets are separate from this rule.
+For resolved named calls, the declared compatibility rule in [§5.3](#53-effect-checking) carries capability requirements along a call chain. The separate implementation conformance rule propagates effects from modeled operations.
 
 ---
 
@@ -397,6 +397,10 @@ fn bad() -> String {
     return summarize(1)   // error: missing DB.read, AI
 }
 ```
+
+The checker also requires every known inferred effect to be covered by its function's declared capabilities. Inference starts from modeled operations and propagates along resolved calls to a fixed point, including recursive groups. A missing grant diagnostic identifies the modeled operation and one deterministic path to it. The frontend models calls to the imported `std/ai` adapter's `prompt` operation as `AI`. Provider execution is a separate runtime concern. Built-in `println` adds no capability in this vocabulary.
+
+Unresolved calls, unsupported source forms, and unmodeled adapter operations leave effect coverage incomplete for the affected function and its callers. Incomplete summaries retain known inferred effects. `splash effects` reports them separately from the unknown remainder. This inspection command can report an inferred effect even when `splash check` or artifact creation rejects the source. For functions with complete coverage, the report lists grants that neither the inferred effects nor the resolved callee contracts require. Narrowing a declaration remains a contract change. Incompleteness alone creates no additional artifact gate in this slice.
 
 ### 5.4 Effect Propagation Through `approve fn`
 
@@ -609,7 +613,7 @@ fn run() needs Agent, Net -> Charge {
 use std/ai
 ```
 
-Provides:
+The compiler recognizes this source interface. Provider execution and backend error propagation are proposed runtime behavior.
 
 | Symbol           | Type                                         | Description                        |
 |------------------|----------------------------------------------|------------------------------------|
@@ -618,7 +622,7 @@ Provides:
 
 `ai.prompt<T>` is a generic function call: `ai.prompt<Report>("Summarize this")`.
 
-`ai.prompt<T>` returns `T` directly in Splash — there is no `Result` wrapper in the language surface. Failures propagate as Go errors to the nearest `needs Agent` boundary, where they surface as the agent entry point's error return. See [Section 11.8](#118-fn-main-and-the-agent-error-boundary).
+`ai.prompt<T>` has type `T` in source analysis. The proposed Go runtime propagates failures to the nearest `needs Agent` boundary as the agent entry point's error return. See [Section 11.8](#118-fn-main-and-the-agent-error-boundary).
 
 The `AI` effect is required in `needs` to call `ai.prompt`.
 
@@ -689,16 +693,11 @@ Splash `enum` declarations become Go type aliases with constants. Variants with 
 
 ### 11.4 The Agent Error Boundary
 
-`needs Agent` functions define the error surface of agent execution. Two kinds of runtime failures propagate to this boundary:
-
-1. **`approve fn` denials** — when the `ApprovalAdapter` rejects a call, the error propagates through all transitive callers up to the `needs Agent` function.
-2. **AI call failures** — when `ai.prompt<T>` fails (network error, model error, timeout), the error propagates the same way.
-
-In Splash source, neither failure is visible. Functions declare their return types without error handling. The compiler injects the error propagation in generated Go.
+`needs Agent` functions define the error surface of agent execution. When the `ApprovalAdapter` denies an `approve fn` call, generated Go propagates the error through transitive callers to the `needs Agent` function. Splash source signatures leave this propagation implicit.
 
 Any function annotated with `approve fn` — and all transitive callers up to the `needs Agent` boundary — have their return type widened from `T` to `(T, error)` in the generated Go. The call to `splashApprove("fn_name")` is injected as the first statement.
 
-**The symmetry:** error propagation follows capability propagation. Effects flow up the call graph to the Agent boundary; errors flow up the same path to the same boundary.
+The proposed AI runtime would route provider failures, including network errors and timeouts, to the same error boundary. Current source analysis models the `AI` effect of `ai.prompt<T>`. The Go backend emits an ordinary call for it.
 
 ### 11.5 `tool fn` Functions
 

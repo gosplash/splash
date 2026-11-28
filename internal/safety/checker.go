@@ -18,7 +18,7 @@ type Checker struct{}
 func New() *Checker { return &Checker{} }
 
 // Check runs all enforcement passes and returns any violations as diagnostics.
-func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnostic {
+func (c *Checker) Check(file *ast.File, g *callgraph.Graph, inferred []*effects.Summary) []diagnostic.Diagnostic {
 	var diags []diagnostic.Diagnostic
 
 	roots := g.AgentRoots()
@@ -33,6 +33,9 @@ func (c *Checker) Check(file *ast.File, g *callgraph.Graph) []diagnostic.Diagnos
 	diags = append(diags, c.checkToolDataClassification(file)...)
 	diags = append(diags, c.checkSandbox(file, g)...)
 	diags = append(diags, c.checkBudget(file)...)
+	for _, summary := range inferred {
+		diags = append(diags, summary.Diagnostics()...)
+	}
 
 	return diags
 }
