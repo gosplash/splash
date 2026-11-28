@@ -6,7 +6,7 @@ This file is the working context for AI coding assistants. Read it before editin
 
 ## What This Repo Is
 
-A compiler for the Splash language, written in Go. Splash transpiles to Go. The compiler's job is to enforce safety properties — effects, data classification, agent reachability — before the Go backend sees the AST. Every safety guarantee is a compile-time property. There is no runtime enforcement layer (except `@approve` adapter dispatch, which is opt-in and explicit).
+A compiler for Splash, written in Go, with a Go backend and an experimental VM. Source policy checks run before either backend sees the analyzed program. VM admission, validation, and runtime limits have separate checks. Go approval delegates to the configured host adapter.
 
 ---
 
@@ -14,7 +14,7 @@ A compiler for the Splash language, written in Go. Splash transpiles to Go. The 
 
 1. **Run `go test ./...`** — all tests must pass before and after your change.
 2. **Write the failing test first.** Every new enforcement check, codegen behavior, or language feature has a test. See test patterns below.
-3. **Use existing packages for changes.** The execution architecture defines separate `internal/ir`, `internal/lowering`, `internal/bytecode`, and `internal/vm` packages. See [the IR and VM design](docs/design/splash-ir-and-vm.md) when changing their interfaces.
+3. **Use existing packages for changes.** The execution architecture defines separate `internal/compiler/internal/lowering`, `internal/ir`, `internal/bytecode`, and `internal/vm` packages. See [the IR and VM design](docs/design/splash-ir-and-vm.md) when changing their interfaces.
 4. **Don't create helpers for one-off uses.** No premature abstraction.
 5. **Don't add error handling for things that can't fail.** Trust internal invariants.
 
@@ -26,7 +26,7 @@ A compiler for the Splash language, written in Go. Splash transpiles to Go. The 
 Tokenizes `.splash` source. Do not add language semantics here. If a new token kind is needed, add it to `internal/token`.
 
 ### `internal/parser`
-Pratt parser. Produces `*ast.File` and validates that integer literals fit the AST's `int64` representation. Put operand typing and resolved call contract checks in `internal/typechecker`. Put graph-based policy checks in `internal/safety`.
+Pratt parser. Produces `*ast.File` and validates that integer literals fit the AST's `int64` representation. Put operand typing and binding in `internal/typechecker`. Resolved call contracts use its evidence in `internal/effects`. Put graph-based policy checks in `internal/safety`.
 
 ### `internal/ast`
 AST node types and annotation kinds. `annotation.go` has `AnnotationKind` constants and the string→kind lookup map. When adding a new annotation, add the constant and the string mapping — that's all. No logic here.
@@ -37,7 +37,7 @@ AST node types and annotation kinds. `annotation.go` has `AnnotationKind` consta
 ### `internal/typechecker`
 Type inference, constraint satisfaction, `use` import resolution. The type checker runs before safety checks. It should not enforce `@redline` or `@approve` — those belong in the safety checker. It does enforce `@sensitive` on `println` (logging constraint) because that's a type-system property, not a call graph property.
 
-`SetFileLoader(baseDir, readFileFn)` must be called before `Check()` if the file uses `use` declarations. `LoadedFiles()` returns imported files for `mergeFiles` in the CLI.
+`SetFileLoader(baseDir, readFileFn)` must be called before `Check()` if the file uses `use` declarations. `LoadedTypedFiles()` returns imported modules to the compiler in dependency order.
 
 ### `internal/callgraph`
 Call graph construction and reachability. `Build()` walks the AST. Do not add enforcement logic here — the graph is a data structure. Safety checks belong in `internal/safety`.
@@ -58,18 +58,21 @@ To add a new check:
 
 Keep safety independent of code generation and type checking. `Check` consumes module-owned ASTs, resolved types, the call graph, and inferred effect summaries supplied by shared analysis. Parser-only fixtures pass `nil` for inference evidence.
 
-### `internal/codegen`
+### `internal/compiler`
+Owns captured source and resolved evidence. `Analyze` returns an inspectable `AnalyzedProgram`. `Verify` mints `VerifiedProgram` using the shared source policy checks. All source artifact entry points require that handle. Keep inspection projections detached from compiler state, and keep raw source artifact producers within `internal/compiler/internal`.
+
+### `internal/compiler/internal/codegen`
 `Backend` interface + `GoBackend` implementation. The `Emitter` is the internal implementation — don't expose more of it. `Options` carries per-compilation settings (currently `ApprovalCallers`). Adding a new codegen option means adding a field to `Options` — nothing else in the CLI needs to change.
 
 The `Emitter` has per-function state (`inApprovalFn`, `currentFnReturnType`, `currentFnIsMain`) cleared after each function. If adding new per-function codegen state, follow this pattern.
 
-`@approve` cascade: the CLI computes `approveFns` + `g.Callers(approveFns)` and passes the result as `Options.ApprovalCallers`. The emitter uses this to widen return types and inject error propagation. The emitter does NOT import callgraph — the CLI bridges them.
+`@approve` cascade: the compiler computes `approveFns` + `g.Callers(approveFns)` and passes the result as `Options.ApprovalCallers`. The emitter uses this to widen return types and inject error propagation. The emitter does NOT import callgraph — the compiler bridges them.
 
-### `internal/toolschema`
+### `internal/compiler/internal/toolschema`
 Extracts `ToolSchema` (JSON Schema) from `@tool` functions. `Extract(file)` returns all tools. `ExtractReachable(file, reachable)` filters to agent-reachable tools. The schema maps Splash types to JSON Schema types — add new type mappings in `typeToSchema()`.
 
 ### `cmd/splash/main.go`
-CLI wiring only. `parseFile`, `runCheck`, `runEmit`, `runBuild`, `runTools`. Each command follows the same pattern: parse → type check → call graph → safety check → codegen. Do not add business logic here. `mergeFiles` handles multi-file module merging for codegen.
+CLI wiring only. Route `check`, `emit`, `build`, `tools`, and VM `run` through `compiler.Verify`. Graph, effects, and approvals use detached projections of the analysis. Keep compiler policy in `internal/compiler` and `internal/safety`.
 
 ---
 
@@ -99,7 +102,7 @@ func TestFoo_CleanCase(t *testing.T) {
 
 Always test both the violation and the clean path.
 
-### Codegen tests (`internal/codegen/codegen_test.go`)
+### Codegen tests (`internal/compiler/internal/codegen/codegen_test.go`)
 Tests check that generated Go source contains expected substrings. Use `containsStr(src, substr)`. For `@approve` cascade tests, use `emitSrcWithApproval(src)` which builds the call graph and sets `ApprovalCallers` before emitting.
 
 ### Type checker tests (`internal/typechecker/typechecker_test.go`)
@@ -111,7 +114,7 @@ Tests check that generated Go source contains expected substrings. Use `contains
 
 **Effect checking is static.** Source contracts declare authority. Infer effects only from resolved calls and modeled operations. Carry incomplete coverage separately from known effects.
 
-**Safety is pre-codegen.** The Go backend sees a verified AST. No enforcement happens in generated Go code (except `@approve` gate dispatch, which is explicit runtime behavior, not enforcement).
+**Source policy precedes lowering.** Go emission, VM lowering, and tool export take a `VerifiedProgram`. Native builds, VM admission, and runtime checks keep their own failure modes.
 
 **No escape hatches yet.** There is no `@unsafe` or `@suppress`. `@bypass` is on the v0.2 roadmap with required justification and audit logging.
 
@@ -121,7 +124,7 @@ Tests check that generated Go source contains expected substrings. Use `contains
 
 **Multi-file modules use flat symbol injection.** `use billing` makes `billing`'s exported symbols available without a namespace prefix. Cycles are rejected. The `expose` list controls what's injected.
 
-**The CLI bridges callgraph and codegen.** `internal/codegen` does not import `internal/callgraph`. The CLI computes what codegen needs and passes it via `Options`.
+**The compiler bridges callgraph and codegen.** It passes resolved facts to private Go lowering via `Options`.
 
 **`Backend` interface is the LLVM extension point.** Code generation targets `Backend`. The current implementation is `GoBackend`. A new backend implements `Backend` and adds a factory function — the CLI and safety model are unchanged.
 

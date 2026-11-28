@@ -9,7 +9,7 @@ import (
 
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/callgraph"
-	"gosplash.dev/splash/internal/codegen"
+	"gosplash.dev/splash/internal/compiler/internal/codegen"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
 )

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gosplash.dev/splash/internal/compiler"
 )
 
 // genCheckSrc generates a Splash program suitable for end-to-end splash check
@@ -39,14 +41,12 @@ func genCheckSrc(n int) string {
 // checkPipeline runs the full splash check pipeline without printing output.
 // This is the benchmarkable equivalent of runCheck.
 func checkPipeline(path string) error {
-	program, err := analyzeProgram(path)
+	program, _, err := compiler.Analyze(path)
 	if err != nil {
 		return err
 	}
-	if result := program.safetyDiagnostics(); len(result.Violations) != 0 || len(result.Incomplete) != 0 {
-		return fmt.Errorf("safety errors")
-	}
-	return nil
+	_, _, err = compiler.Verify(program)
+	return err
 }
 
 // BenchmarkCheck_Pipeline_* measures the full splash check pipeline:

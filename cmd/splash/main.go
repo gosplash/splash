@@ -2,26 +2,13 @@ package main
 
 import (
 	"fmt"
-	"io"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 
-	"gosplash.dev/splash/internal/ast"
-	"gosplash.dev/splash/internal/bytecode"
-	"gosplash.dev/splash/internal/callgraph"
-	"gosplash.dev/splash/internal/codegen"
+	"gosplash.dev/splash/internal/compiler"
 	"gosplash.dev/splash/internal/effects"
-	"gosplash.dev/splash/internal/lexer"
-	"gosplash.dev/splash/internal/lowering"
-	"gosplash.dev/splash/internal/parser"
-	"gosplash.dev/splash/internal/safety"
-	"gosplash.dev/splash/internal/toolschema"
-	"gosplash.dev/splash/internal/typechecker"
-	"gosplash.dev/splash/internal/vm"
 )
 
 func main() {
@@ -61,7 +48,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "tools":
-		format := toolschema.FormatOpenAI // default
+		format := compiler.FormatOpenAI // default
 		toolFile := ""
 		args := os.Args[2:]
 		for i := 0; i < len(args); i++ {
@@ -70,7 +57,7 @@ func main() {
 					fmt.Fprintln(os.Stderr, "--format requires a value: anthropic or openai")
 					os.Exit(1)
 				}
-				format = toolschema.Format(args[i+1])
+				format = compiler.ToolFormat(args[i+1])
 				i++
 			} else if !strings.HasPrefix(args[i], "-") {
 				toolFile = args[i]
@@ -105,76 +92,23 @@ func main() {
 	}
 }
 
-// analyzedProgram owns the captured source, typed modules, and resolved calls.
-type analyzedProgram struct {
-	sources map[string]string
-	modules []*typechecker.TypedFile
-	merged  *ast.File
-	graph   *callgraph.Graph
-	effects []*effects.Summary
-
-	functionReferences map[ast.Expr]*ast.FunctionDecl
-	printlnCalls       map[*ast.CallExpr]bool
-	localNames         map[string]bool
+func analyzeProgram(path string) (*compiler.AnalyzedProgram, error) {
+	program, diagnostics, err := compiler.Analyze(path)
+	for _, diagnostic := range diagnostics {
+		fmt.Fprintln(os.Stderr, diagnostic)
+	}
+	return program, err
 }
 
-func analyzeProgram(path string) (*analyzedProgram, error) {
-	program := &analyzedProgram{sources: make(map[string]string)}
-	read := func(path string) ([]byte, error) {
-		if source, ok := program.sources[path]; ok {
-			return []byte(source), nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		program.sources[path] = string(data)
-		return data, nil
+func verifyProgram(program *compiler.AnalyzedProgram) (*compiler.VerifiedProgram, error) {
+	verified, result, err := compiler.Verify(program)
+	for _, diagnostic := range result.Violations {
+		fmt.Fprintln(os.Stderr, diagnostic)
 	}
-
-	src, err := read(path)
-	if err != nil {
-		return nil, err
+	for _, diagnostic := range result.Incomplete {
+		fmt.Fprintln(os.Stderr, diagnostic)
 	}
-	toks := lexer.New(path, string(src)).Tokenize()
-	p := parser.New(path, toks)
-	f, diags := p.ParseFile()
-	for _, d := range diags {
-		fmt.Fprintln(os.Stderr, d)
-	}
-	if len(diags) > 0 {
-		return nil, fmt.Errorf("parse errors in %s", path)
-	}
-
-	tc := typechecker.New()
-	tc.SetFileLoader(filepath.Dir(path), read)
-	entry, typeErrs := tc.Check(f)
-	for _, d := range typeErrs {
-		fmt.Fprintln(os.Stderr, d)
-	}
-	if len(typeErrs) > 0 {
-		return nil, fmt.Errorf("type errors")
-	}
-
-	program.modules = append(tc.LoadedTypedFiles(), entry)
-	program.merged = mergeFiles(program.modules)
-	files := make([]*ast.File, 0, len(program.modules))
-	program.functionReferences = make(map[ast.Expr]*ast.FunctionDecl)
-	program.printlnCalls = make(map[*ast.CallExpr]bool)
-	program.localNames = make(map[string]bool)
-	unresolved := make(map[*ast.CallExpr]bool)
-	var effectFacts []effects.FunctionFacts
-	for _, module := range program.modules {
-		files = append(files, module.File)
-		maps.Copy(program.functionReferences, module.FunctionReferences)
-		maps.Copy(program.printlnCalls, module.PrintlnCalls)
-		maps.Copy(program.localNames, module.LocalNames)
-		maps.Copy(unresolved, module.UnresolvedCalls)
-		effectFacts = append(effectFacts, module.EffectFacts...)
-	}
-	program.graph = callgraph.BuildResolved(files, program.functionReferences, unresolved)
-	program.effects = effects.Infer(effectFacts)
-	return program, nil
+	return verified, err
 }
 
 func runCheck(path string) error {
@@ -183,37 +117,11 @@ func runCheck(path string) error {
 		return err
 	}
 
-	if err := program.verifySafety(); err != nil {
+	if _, err := verifyProgram(program); err != nil {
 		return fmt.Errorf("check failed: %w", err)
 	}
 	fmt.Printf("%s: ok\n", path)
 	return nil
-}
-
-func (p *analyzedProgram) safetyDiagnostics() safety.Result {
-	modules := make([]safety.Module, 0, len(p.modules))
-	for _, module := range p.modules {
-		modules = append(modules, safety.Module{File: module.File, Types: module.Types})
-	}
-	return safety.New().Check(modules, p.graph, p.effects)
-}
-
-func (p *analyzedProgram) verifySafety() error {
-	result := p.safetyDiagnostics()
-	for _, diagnostic := range result.Violations {
-		fmt.Fprintln(os.Stderr, diagnostic)
-	}
-	for _, diagnostic := range result.Incomplete {
-		fmt.Fprintln(os.Stderr, diagnostic)
-	}
-	switch {
-	case len(result.Violations) > 0:
-		return safety.ErrRejected
-	case len(result.Incomplete) > 0:
-		return safety.ErrIndeterminate
-	default:
-		return nil
-	}
 }
 
 func runEmit(path string) error {
@@ -222,69 +130,16 @@ func runEmit(path string) error {
 		return err
 	}
 
-	goSrc, err := program.emitGo()
+	verified, err := verifyProgram(program)
+	if err != nil {
+		return err
+	}
+	goSrc, err := verified.EmitGo()
 	if err != nil {
 		return err
 	}
 	fmt.Print(goSrc)
 	return nil
-}
-
-func (p *analyzedProgram) emitGo() (string, error) {
-	if err := p.verifySafety(); err != nil {
-		return "", err
-	}
-	return codegen.NewGoBackend().Emit(p.merged, codegen.Options{
-		ApprovalCallers:    p.graph.Callers(p.graph.ApprovalFunctions()),
-		FunctionKey:        p.graph.FunctionKey,
-		FunctionReferences: p.functionReferences,
-		PrintlnCalls:       p.printlnCalls,
-		LocalNames:         p.localNames,
-		Entry:              p.modules[len(p.modules)-1].File,
-	}), nil
-}
-
-// runVM executes the captured program through the experimental VM backend.
-func (p *analyzedProgram) runVM(output io.Writer, limits vm.Limits) error {
-	if err := p.verifySafety(); err != nil {
-		return err
-	}
-	program, err := lowering.LowerVM(p.modules)
-	if err != nil {
-		return err
-	}
-	executable, err := bytecode.Lower(program)
-	if err != nil {
-		return err
-	}
-	runtime, err := vm.New(executable, output, limits)
-	if err != nil {
-		return err
-	}
-	return runtime.RunMain()
-}
-
-// mergeFiles builds a combined ast.File where all imported files' declarations
-// come first (in load order), followed by the main file's declarations.
-// The main file's module declaration and package name are preserved.
-// This ensures imported types are defined before the main file references them
-// in the generated Go output.
-func mergeFiles(modules []*typechecker.TypedFile) *ast.File {
-	main := modules[len(modules)-1].File
-	if len(modules) == 1 {
-		return main
-	}
-	merged := &ast.File{
-		Module:   main.Module,
-		Exposes:  main.Exposes,
-		Position: main.Position,
-	}
-	for _, module := range modules {
-		f := module.File
-		merged.Uses = append(merged.Uses, f.Uses...)
-		merged.Declarations = append(merged.Declarations, f.Declarations...)
-	}
-	return merged
 }
 
 func runBuild(path, out string) error {
@@ -298,14 +153,13 @@ func runBuild(path, out string) error {
 		return err
 	}
 
-	goSrc, err := program.emitGo()
+	verified, err := verifyProgram(program)
 	if err != nil {
 		return err
 	}
-
-	// splash build always produces an executable — package must be main
-	if module := program.merged.Module; module != nil && module.Name != "main" {
-		goSrc = strings.Replace(goSrc, "package "+module.Name+"\n", "package main\n", 1)
+	goSrc, err := verified.EmitExecutableGo()
+	if err != nil {
+		return err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "splash-build-*")
@@ -329,30 +183,17 @@ func runBuild(path, out string) error {
 	return buildCmd.Run()
 }
 
-func runTools(path string, format toolschema.Format) error {
+func runTools(path string, format compiler.ToolFormat) error {
 	program, err := analyzeProgram(path)
 	if err != nil {
 		return err
 	}
 
-	if err := program.verifySafety(); err != nil {
+	verified, err := verifyProgram(program)
+	if err != nil {
 		return fmt.Errorf("tool export: %w", err)
 	}
-
-	// Each tool declaration is an agent root, and the safety check above
-	// rejects the entire export when the modeled graph violates policy.
-	schemas := toolschema.Extract(program.merged)
-	names := make(map[string]bool)
-	for _, schema := range schemas {
-		if names[schema.Name] {
-			return fmt.Errorf("duplicate exported tool name %q", schema.Name)
-		}
-		names[schema.Name] = true
-	}
-	if schemas == nil {
-		schemas = []toolschema.ToolSchema{}
-	}
-	out, err := toolschema.Serialize(schemas, format)
+	out, err := verified.ExportTools(format)
 	if err != nil {
 		return err
 	}
@@ -366,8 +207,7 @@ func runGraph(path string) error {
 		return err
 	}
 
-	g := program.graph
-	roots := g.AgentRoots()
+	roots := program.AgentRoots()
 
 	fmt.Println("agent roots:")
 	if len(roots) == 0 {
@@ -380,12 +220,16 @@ func runGraph(path string) error {
 
 	fmt.Println()
 	fmt.Println("functions:")
-	for _, node := range g.Nodes() {
-		fmt.Printf("- %s [effects: %s]%s\n", node.Name, node.Effects.String(), graphFlags(node))
-		if len(node.UnresolvedCalls) > 0 {
-			fmt.Printf("  unresolved call sites: %d\n", len(node.UnresolvedCalls))
+	for _, node := range program.Functions() {
+		flags := ""
+		if len(node.Flags) > 0 {
+			flags = " [" + strings.Join(node.Flags, "] [") + "]"
 		}
-		callees := node.Callees()
+		fmt.Printf("- %s [effects: %s]%s\n", node.Name, node.Declared, flags)
+		if node.UnresolvedCalls > 0 {
+			fmt.Printf("  unresolved call sites: %d\n", node.UnresolvedCalls)
+		}
+		callees := node.Callees
 		if len(callees) == 0 {
 			fmt.Println("  calls: none")
 			continue
@@ -405,14 +249,9 @@ func runEffects(path string) error {
 		return err
 	}
 
-	summaries := make(map[string]*effects.Summary, len(program.effects))
-	for _, summary := range program.effects {
-		summaries[program.graph.FunctionKey(summary.Function)] = summary
-	}
 	fmt.Println("effects:")
-	for _, node := range program.graph.Nodes() {
-		summary := summaries[node.Name]
-		fmt.Printf("- %s: %s (declared)\n", node.Name, summary.Declared)
+	for _, summary := range program.Functions() {
+		fmt.Printf("- %s: %s (declared)\n", summary.Name, summary.Declared)
 		if summary.Gap != nil {
 			if summary.Inferred == effects.None {
 				fmt.Println("  inferred: unknown")
@@ -423,7 +262,7 @@ func runEffects(path string) error {
 			continue
 		}
 		fmt.Printf("  inferred: %s\n  coverage: complete\n", summary.Inferred)
-		if unused := summary.UnusedGrants(); unused != effects.None {
+		if unused := summary.Unused; unused != effects.None {
 			fmt.Printf("  unused grants: %s\n", unused)
 		}
 	}
@@ -436,14 +275,13 @@ func runApprovals(path string) error {
 		return err
 	}
 
-	approveFns := program.graph.ApprovalFunctions()
-	callers := program.graph.Callers(approveFns)
+	approveFns, callers := program.Approvals()
 
 	fmt.Println("approval-gated functions:")
 	if len(approveFns) == 0 {
 		fmt.Println("- none")
 	} else {
-		for _, name := range sortedKeys(approveFns) {
+		for _, name := range approveFns {
 			fmt.Printf("- %s\n", name)
 		}
 	}
@@ -453,38 +291,9 @@ func runApprovals(path string) error {
 	if len(callers) == 0 {
 		fmt.Println("- none")
 	} else {
-		for _, name := range sortedKeys(callers) {
+		for _, name := range callers {
 			fmt.Printf("- %s\n", name)
 		}
 	}
 	return nil
-}
-
-func graphFlags(node *callgraph.Node) string {
-	var flags []string
-	if node.Effects.Has(effects.Agent) {
-		flags = append(flags, "agent")
-	}
-	if node.HasAnnotation(ast.AnnotTool) {
-		flags = append(flags, "tool")
-	}
-	if node.HasAnnotation(ast.AnnotApprove) {
-		flags = append(flags, "approve")
-	}
-	if node.HasAnnotation(ast.AnnotRedline) {
-		flags = append(flags, "redline")
-	}
-	if len(flags) == 0 {
-		return ""
-	}
-	return " [" + strings.Join(flags, "] [") + "]"
-}
-
-func sortedKeys(set map[string]bool) []string {
-	keys := make([]string, 0, len(set))
-	for key := range set {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
 }

@@ -15,7 +15,8 @@ Splash is an early statically typed language for backend and control-plane softw
 | Inferred effects and coverage | `splash effects` reports declared grants, modeled effects and coverage separately. The compiler propagates modeled effects through resolved calls, including recursion, and rejects known effects outside declared authority. The first external contract covers `std/ai.prompt`. |
 | Required policy coverage | `check`, `emit`, `build`, `tools`, and VM `run` report indeterminate verification when required source coverage is missing. The shared gate preserves known violations and leaves effect inspection available. |
 | Approval and classification | Implemented for selected checks and lowering forms. Request-bound approval and general classified-data flow enforcement are proposed. |
-| Semantic queries, verified artifact types and authority comparisons | Proposed. The CLI currently shares its initial analysis representation and existing safety checks on artifact paths. |
+| Verified source artifact boundary | The compiler requires an encapsulated `VerifiedProgram` for Go emission, VM lowering, and tool export. It authorizes the captured source under the shared policy checks. |
+| Semantic queries and authority comparisons | Proposed. Graph, effect, and approval inspection use detached projections of the analyzed program. |
 | TTCS and cost evaluation | Experimental methodology. Comparative authoring results are pending. |
 
 See the [repository assessment](docs/design/repository-assessment.md) for scoped evidence and the [status vocabulary](docs/design/product-and-roadmap.md#public-implementation-status) for how to read these labels.
@@ -85,8 +86,13 @@ internal/
   typechecker/              type inference, constraint checking, use-imports
   callgraph/                call graph, Reachable(), Callers(), Parents(), PathTo()
   safety/                   redline fn, approve fn, @containment, @sandbox, @budget, @sensitive
-  codegen/                  Backend interface, GoBackend, Emitter
-  toolschema/               tool fn → JSON Schema extraction
+  compiler/                 captured analysis, verification, and artifact APIs
+    internal/codegen/       private Go emitter
+    internal/lowering/      private Splash source to VM IR lowering
+    internal/toolschema/    private tool schema generation
+  ir/                       typed VM intermediate representation
+  bytecode/                 lowering and validation of VM instructions
+  vm/                       execution and runtime limits
   diagnostic/               Diagnostic type (Error/Warning + position)
   types/                    data classification lattice
 examples/                   native and illustrative Splash examples
@@ -105,11 +111,13 @@ source (.splash)
   → TypeChecker  type inference and selected constraint checks
   → CallGraph    build directed call graph, compute agent roots + reachability
   → SafetyChecker  redline fn, approve fn, @containment, @sandbox, @budget, @sensitive/@restricted
-  → Emitter      checked source projection → Go source
-  → go build     Go source → native binary
+  → VerifiedProgram
+      → Go source → go build
+      → VM admission → IR → validated bytecode → execution
+      → tool manifest
 ```
 
-The CLI shares one analysis entry point. `splash check`, `splash run`, `splash emit`, `splash build`, and `splash tools` run the implemented safety checks. `splash build` invokes `go build`. `splash run --backend vm` lowers the admitted program to typed IR and validated bytecode, then executes it in-process.
+The CLI shares analysis and verification across `check`, `emit`, `build`, `tools`, and VM `run`. A verified handle stays bound to the captured source. Native compilation and VM admission can still fail after source verification succeeds.
 
 ---
 
@@ -259,14 +267,13 @@ The default `ApprovalAdapter` prompts on stdin. Generated Go accepts a custom ad
 - `callgraph.PathTo(parents, target)` — reconstruct call path for error messages
 
 **`internal/safety`**
-- `New().Check(file, graph)` — runs all passes, returns `[]diagnostic.Diagnostic`
+- `New().Check(modules, graph, effects)` returns known violations and missing required source evidence.
 - Add a new safety pass by adding a `checkFoo` method and calling it from `Check`
 
-**`internal/codegen`**
-- `Backend` interface: `Emit(f *ast.File, opts Options) string`
-- `NewGoBackend() Backend` — returns the Go emitter
-- `Options.ApprovalCallers map[string]bool` — transitive callers of `approve fn` functions (set by CLI after callgraph analysis)
-- To add a new backend: implement `Backend`, add a factory function, wire in CLI
+**`internal/compiler`**
+- `Analyze(path)` captures source and resolved semantic facts.
+- `Verify(analyzed)` issues a `VerifiedProgram` after the required source checks pass.
+- Artifact entry points accept only that handle. The Go emitter, VM lowerer, and tool schema generator are private dependencies.
 
 **`internal/typechecker`**
 - `tc.SetFileLoader(baseDir, readFileFn)` — enables `use` import resolution

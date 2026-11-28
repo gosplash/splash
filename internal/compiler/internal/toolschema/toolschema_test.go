@@ -9,7 +9,7 @@ import (
 	"gosplash.dev/splash/internal/ast"
 	"gosplash.dev/splash/internal/lexer"
 	"gosplash.dev/splash/internal/parser"
-	"gosplash.dev/splash/internal/toolschema"
+	"gosplash.dev/splash/internal/compiler/internal/toolschema"
 )
 
 // helpers

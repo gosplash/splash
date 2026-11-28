@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"gosplash.dev/splash/internal/compiler"
 	"gosplash.dev/splash/internal/safety"
-	"gosplash.dev/splash/internal/toolschema"
 )
 
 func TestEffectsInferThroughRecursiveCalls(t *testing.T) {
@@ -104,7 +104,7 @@ fn start(cb: fn() -> Int) -> Int { return repeat(1) + cb() }
 		"emit":  func() error { return runEmit(path) },
 		"build": func() error { return runBuild(path, artifact) },
 		"run":   func() error { return runVMCommand([]string{path, "--backend", "vm"}, os.Stdout) },
-		"tools": func() error { return runTools(path, toolschema.FormatOpenAI) },
+		"tools": func() error { return runTools(path, compiler.FormatOpenAI) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			output, diagnostic, err := captureEffectCommand(t, command)

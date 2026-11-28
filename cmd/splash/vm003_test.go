@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"gosplash.dev/splash/internal/lowering"
+	"gosplash.dev/splash/internal/compiler"
 	"gosplash.dev/splash/internal/vm"
 )
 
@@ -90,8 +90,9 @@ func TestVM003InvoiceOracle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			verified := requireVerified(t, program)
 			t.Run("VM", func(t *testing.T) {
-				assertOracle(t, runVM003(t, program), test.wantMismatch)
+				assertOracle(t, runVM003(t, verified), test.wantMismatch)
 			})
 			t.Run("VM CLI without Go", func(t *testing.T) {
 				command := exec.Command(binary, "run", "probe.splash", "--backend", "vm")
@@ -104,7 +105,7 @@ func TestVM003InvoiceOracle(t *testing.T) {
 				assertOracle(t, string(output), test.wantMismatch)
 			})
 			t.Run("Go backend", func(t *testing.T) {
-				assertOracle(t, runVM003GeneratedGo(t, program), test.wantMismatch)
+				assertOracle(t, runVM003GeneratedGo(t, verified), test.wantMismatch)
 			})
 			t.Run("native Go fixture", func(t *testing.T) {
 				goSource := readVM003Fixture(t, filepath.Join(fixture, test.lane, "testdata", "go", "invoice.go"))
@@ -155,14 +156,15 @@ fn main() {
 	if err != nil {
 		t.Fatal(err)
 	}
+	verified := requireVerified(t, program)
 	const want = "enabled\ncount\nlabel\n42\nfixture\ntrue\n"
 	t.Run("VM", func(t *testing.T) {
-		if got := runVM003(t, program); got != want {
+		if got := runVM003(t, verified); got != want {
 			t.Fatalf("VM printed %q, want %q", got, want)
 		}
 	})
 	t.Run("Go backend", func(t *testing.T) {
-		if got := runVM003GeneratedGo(t, program); got != want {
+		if got := runVM003GeneratedGo(t, verified); got != want {
 			t.Fatalf("Go printed %q, want %q", got, want)
 		}
 	})
@@ -230,8 +232,9 @@ fn main() {
 	if err != nil {
 		t.Fatal(err)
 	}
+	verified := requireVerified(t, program)
 	const want = "42\ninvoice\n9\nqualified\n100\n"
-	if got := runVM003(t, program); got != want {
+	if got := runVM003(t, verified); got != want {
 		t.Fatalf("VM printed %q, want %q", got, want)
 	}
 }
@@ -256,8 +259,8 @@ func TestVM003RejectsUnsupportedRecordFieldsBeforeOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer
-			err = program.runVM(&output, vm.Limits{Instructions: 1000, Frames: 8})
-			var admission *lowering.AdmissionError
+			err = requireVerified(t, program).RunVM(&output, vm.Limits{Instructions: 1000, Frames: 8})
+			var admission *compiler.VMAdmissionError
 			if !errors.As(err, &admission) || admission.Source.File != path || admission.Source.Line != 3 {
 				t.Fatalf("want unsupported record field diagnostic at %s:3, got %v", path, err)
 			}
@@ -280,8 +283,8 @@ func TestVM003RejectsTypeArgumentsOnMonomorphicTypes(t *testing.T) {
 			t.Fatal(err)
 		}
 		var output bytes.Buffer
-		var admission *lowering.AdmissionError
-		err = program.runVM(&output, vm.Limits{Instructions: 1000, Frames: 8})
+		var admission *compiler.VMAdmissionError
+		err = requireVerified(t, program).RunVM(&output, vm.Limits{Instructions: 1000, Frames: 8})
 		if !errors.As(err, &admission) || admission.Source.File != path || output.Len() != 0 {
 			t.Fatalf("want admission error before execution for %q, got %v and output %q", source, err, output.String())
 		}
@@ -297,24 +300,20 @@ func readVM003Fixture(t *testing.T, path string) []byte {
 	return source
 }
 
-func runVM003(t *testing.T, program *analyzedProgram) string {
+func runVM003(t *testing.T, program *compiler.VerifiedProgram) string {
 	t.Helper()
 	var output bytes.Buffer
-	if err := program.runVM(&output, vm.Limits{Instructions: 1000, Frames: 8}); err != nil {
+	if err := program.RunVM(&output, vm.Limits{Instructions: 1000, Frames: 8}); err != nil {
 		t.Fatal(err)
 	}
 	return output.String()
 }
 
-func runVM003GeneratedGo(t *testing.T, program *analyzedProgram) string {
+func runVM003GeneratedGo(t *testing.T, program *compiler.VerifiedProgram) string {
 	t.Helper()
-	source, err := program.emitGo()
+	source, err := program.EmitExecutableGo()
 	if err != nil {
 		t.Fatal(err)
-	}
-	// Match the package normalization done by splash build for executable output.
-	if module := program.merged.Module; module != nil && module.Name != "main" {
-		source = strings.Replace(source, "package "+module.Name+"\n", "package main\n", 1)
 	}
 	generated := writeSplashFile(t, t.TempDir(), "generated.go", source)
 	output, err := exec.Command("go", "run", generated).CombinedOutput()
